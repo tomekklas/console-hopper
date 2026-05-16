@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "plugin": "Console Hopper",
+    "version": "1.0",
+    "description": "AWS Landing Zone / Control Tower starter config. Two example organisations, four standard account types (Management / Security / Logging / Network), three role-name filters, eight service deep-links. Edit the labels and patterns to match your real org, then paste this whole document into the extension's Import Settings dialog."
+  },
+  "settings": {
+    "aws_theme": "auto",
+    "aws_compact_mode": false,
+    "aws_recent_limit": 10,
+    "aws_tab_group_mode": "role",
+    "aws_region": "us-east-1",
+    "aws_homepage_url": "",
+
+    "aws_env_patterns": [
+      { "id": "prod", "label": "PROD", "color": "#dc3545", "patterns": ["prod", "production"] },
+      { "id": "test", "label": "TEST", "color": "#ffc107", "patterns": ["test", "staging", "stg"] },
+      { "id": "dev",  "label": "DEV",  "color": "#28a745", "patterns": ["dev", "development", "sandbox"] }
+    ],
+
+    "aws_org_patterns": [
+      { "id": "platform", "label": "Platform", "color": "#0073bb", "patterns": ["platform", "core"] },
+      { "id": "apps",     "label": "Apps",     "color": "#6610f2", "patterns": ["app", "product"] }
+    ],
+
+    "aws_type_patterns": [
+      { "id": "management", "label": "Management", "color": "#dc3545", "patterns": ["management", "master", "payer", "billing"] },
+      { "id": "security",   "label": "Security",   "color": "#dc3545", "patterns": ["security", "audit"] },
+      { "id": "logging",    "label": "Logging",    "color": "#dc3545", "patterns": ["log", "logging", "logarchive"] },
+      { "id": "network",    "label": "Network",    "color": "#6c757d", "patterns": ["network", "transit", "shared-services"] }
+    ],
+
+    "aws_role_patterns": [
+      { "id": "admin",     "label": "Admin",     "color": "#dc3545", "patterns": ["admin", "administrator"] },
+      { "id": "poweruser", "label": "PowerUser", "color": "#0073bb", "patterns": ["poweruser", "power-user"] },
+      { "id": "readonly",  "label": "ReadOnly",  "color": "#28a745", "patterns": ["readonly", "read-only", "viewonly"] }
+    ],
+
+    "aws_services": [
+      { "id": "cloudwatch",     "name": "CloudWatch",     "path": "cloudwatch/home?region={region}" },
+      { "id": "s3",             "name": "S3",             "path": "s3/home?region={region}" },
+      { "id": "ec2",            "name": "EC2",            "path": "ec2/home?region={region}" },
+      { "id": "iam",            "name": "IAM",            "path": "iam/home" },
+      { "id": "lambda",         "name": "Lambda",         "path": "lambda/home?region={region}" },
+      { "id": "cloudformation", "name": "CloudFormation", "path": "cloudformation/home?region={region}" },
+      { "id": "vpc",            "name": "VPC",            "path": "vpcconsole/home?region={region}" },
+      { "id": "rds",            "name": "RDS",            "path": "rds/home?region={region}" }
+    ],
+
+    "aws_custom_shortcuts": [
+      { "label": "Sandbox", "search": "sandbox" }
+    ],
+
+    "aws_signin_role_keywords": ["admin", "administrator"],
+    "aws_signin_type_ids":      ["management", "security"]
+  }
+}
