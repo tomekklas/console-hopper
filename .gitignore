@@ -1,0 +1,10 @@
+# build artifacts
+*.pem
+*.crx
+*.zip
+
+# editor / OS dross
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
