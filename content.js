@@ -1800,6 +1800,18 @@
             border-color: #3182ce !important;
         }
 
+        /* The generic dark rule above sets a uniform border, which would
+           otherwise clobber the per-entry env/org/type color (lower specificity
+           in the light-mode [data-color] rule). Restore the colored border in
+           dark mode with a more specific selector. */
+        body.tm_theme_dark .tm_filter_button[data-color] {
+            border-color: var(--tm-fb-color, #6b7280) !important;
+        }
+        body.tm_theme_dark .tm_filter_button[data-color].active {
+            background-color: var(--tm-fb-color, #3182ce) !important;
+            border-color: var(--tm-fb-color, #3182ce) !important;
+        }
+
         body.tm_theme_dark #tm_search_input {
             background-color: #4a5568 !important;
             color: #e9ecef !important;
