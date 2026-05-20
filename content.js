@@ -2040,13 +2040,22 @@
         }
 
         .tm_filter_button:hover {
-            background-color: #f8f9fa !important;
+            background-color: #e9ecef !important;
         }
 
         .tm_filter_button.active {
             background-color: #0073bb !important;
             color: #fff !important;
             border-color: #0073bb !important;
+        }
+
+        /* Active chips otherwise have no hover affordance — the .active
+           background wins over :hover at the same specificity. Use a
+           brightness filter so the same rule covers every active state
+           (built-in blue, per-entry --tm-fb-color, and the dark-theme
+           variants) without per-colour overrides. */
+        .tm_filter_button.active:hover {
+            filter: brightness(0.9) !important;
         }
 
         /* Per-entry color (env/org/type/role) is applied inline at render
@@ -2080,7 +2089,12 @@
         #tm_actions_container {
             position: fixed !important;
             top: 20px !important;
-            right: -120px !important;
+            /* Width is fixed so the hidden offset is predictable — the
+               container's natural width follows the longest button label
+               and was leaving ~80px of body sticking out at -120px. */
+            width: 220px !important;
+            right: -220px !important;
+            box-sizing: border-box !important;
             z-index: 1000 !important;
             display: flex !important;
             flex-direction: column !important;
