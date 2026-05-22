@@ -131,5 +131,9 @@ Issues and pull requests welcome at
 
 ## License
 
+Released under the [MIT License](LICENSE).
+
+## Trademarks
+
 This extension is not affiliated with Amazon Web Services. "AWS" is a
 trademark of Amazon.com, Inc.

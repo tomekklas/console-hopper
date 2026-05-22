@@ -5,6 +5,13 @@ All notable changes to Console Hopper are listed here. Dates are in
 
 ## 1.0.1 — 2026-05-22
 
+### Added
+
+- MIT `LICENSE` file at the repo root. Code is now released under the
+  MIT License — previously the public repo had no explicit licence,
+  which legally meant "all rights reserved" and contradicted the
+  open-source impression a public repo gives.
+
 ### Fixed
 
 - Dark mode: restored the per-entry coloured borders on filter chips
