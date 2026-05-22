@@ -270,7 +270,7 @@ tabs apart at a glance.
 - [x] No remote code (`eval`, `new Function`, `fetch`, XHR, WebSocket, external `<script>` — all absent).
 - [x] No `<all_urls>` or other broad host permissions.
 - [x] User-facing description (manifest) fits inside the 132-char limit.
-- [ ] Bump `version` in `manifest.json` for every resubmission (Chrome
+- [x] Bump `version` in `manifest.json` for every resubmission (Chrome
       reviewers won't re-accept the same version).
 - [ ] Zip the project root (everything except `.git/`, `.DS_Store`,
       `STORE_LISTING.md`, and `README.md` if you'd rather not include
