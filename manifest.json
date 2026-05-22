@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Console Hopper",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "For AWS: hop between consoles fast — SAML role-picker filters, deep-link services, env-coloured tabs, tab groups.",
   "icons": {
     "16":  "icons/icon16.png",

@@ -3,6 +3,18 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.0.2 — 2026-05-22
+
+### Changed
+
+- Footer / console-log / settings-export version now read from
+  `manifest.json` at runtime via `chrome.runtime.getManifest()`,
+  instead of from a hardcoded `SCRIPT_VERSION` constant that had
+  drifted from the manifest (the constant said `1.0` even on 1.0.0
+  and 1.0.1 installs). One source of truth going forward.
+
+---
+
 ## 1.0.1 — 2026-05-22
 
 ### Added
