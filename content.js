@@ -10,7 +10,7 @@
   // from chrome.storage via the "Manage …" side-menu modals. The defaults
   // below are intentionally generic so the plugin works in any AWS org.
   const CONFIG = {
-    SCRIPT_VERSION: "1.0",
+    SCRIPT_VERSION: chrome.runtime.getManifest().version,
     SCRIPT_HOMEPAGE_DEFAULT: "",
     DEFAULT_AWS_REGION: "us-east-1",
     STS_DURATION: 43200, // 12 hours
