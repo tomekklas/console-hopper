@@ -12,6 +12,17 @@ All notable changes to Console Hopper are listed here. Dates are in
   dark-theme rule was overriding the inline `--tm-fb-color` border with
   a uniform grey, so all chips looked identical in dark mode. The same
   fix also restores the coloured fill on the active state.
+- Filter chip hover feedback: the light-mode hover background was too
+  close to white to be perceptible, and active chips had no hover state
+  at all. Bumped the idle hover shade and added a brightness-based
+  hover for active chips that works across both themes and any
+  per-entry colour.
+- Side action menu now hides fully off-viewport, exposing only the
+  "…" handle on the right edge. The previous offset (`right: -120px`)
+  was tuned for a narrower container; longer button labels grew the
+  panel past that, leaving roughly half of it sticking out. The
+  container now has a fixed width so the slide-out geometry is
+  predictable.
 
 ---
 
