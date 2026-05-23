@@ -96,7 +96,8 @@ console-hopper/
 ├── icons/                  # icon16/32/48/128.png
 ├── samples/                # Importable starter configs (e.g. AWS LZ)
 ├── store-assets/           # Screenshots + promo tiles (not in submission zip)
-├── build.sh                # Build the Chrome Web Store submission zip
+├── package.json            # Dev tooling (esbuild build, ESLint, vitest)
+├── scripts/build.mjs       # Build the Chrome Web Store submission zip
 ├── PRIVACY.md              # Privacy policy
 ├── STORE_LISTING.md        # Chrome Web Store form values + checklist
 └── README.md
@@ -111,13 +112,19 @@ console-hopper/
 ## Building a release zip
 
 ```bash
-./build.sh
+npm install   # first time only
+npm run build
 ```
 
-Produces `console-hopper.zip` in the repo root, containing only the
-files that ship in the installed extension (no docs, no
-`store-assets/`, no `samples/`, no `.git/`). Prints the file list and
-size so a typo in the excludes can't silently leak files.
+Bundles a minified copy of the extension under `dist/` and zips it into
+`console-hopper.zip` in the repo root, containing only the files that ship in
+the installed extension (no docs, no `store-assets/`, no `samples/`, no
+`.git/`). Validates `manifest.json` and prints the file list and size so a typo
+in the excludes can't silently leak files.
+
+The editable source stays at the repo root — load it unpacked via
+`chrome://extensions/` for development, or load `dist/` to test the built
+package.
 
 See [`STORE_LISTING.md`](STORE_LISTING.md) for the Chrome Web Store
 submission values (name, summary, description, permissions

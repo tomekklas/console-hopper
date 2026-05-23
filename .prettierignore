@@ -1,0 +1,11 @@
+# Prettier is scoped to new tooling/test code (see package.json "format").
+# The shipped extension scripts keep their existing hand-tuned formatting until
+# they are modularized (Stage 4 of ROADMAP.md); don't reformat them wholesale.
+dist/
+lib/
+node_modules/
+content.js
+background.js
+console-decorator.js
+*.min.js
+*.zip

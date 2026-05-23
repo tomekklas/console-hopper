@@ -272,10 +272,9 @@ tabs apart at a glance.
 - [x] User-facing description (manifest) fits inside the 132-char limit.
 - [x] Bump `version` in `manifest.json` for every resubmission (Chrome
       reviewers won't re-accept the same version).
-- [ ] Zip the project root (everything except `.git/`, `.DS_Store`,
-      `STORE_LISTING.md`, and `README.md` if you'd rather not include
-      docs). The store wants the **contents** zipped, not the wrapping
-      directory.
+- [x] `npm run build` packages the **contents** (not the wrapping directory)
+      into `console-hopper.zip`, excluding docs, `store-assets/`, `samples/`,
+      and `.git/`.
 - [ ] Test the zipped build by loading it via "Load unpacked" in a
       clean Chrome profile.
 - [x] Five 1280×800 screenshots ready in `store-assets/`.
@@ -289,9 +288,10 @@ tabs apart at a glance.
 ## Build the submission zip
 
 ```bash
-./build.sh
+npm install   # first time only
+npm run build
 ```
 
-Produces `console-hopper.zip` and prints the file listing + size, so a
-broken exclude rule shows up immediately. The script does its own
-manifest JSON syntax check before zipping.
+Bundles a minified `dist/` and produces `console-hopper.zip`, printing the file
+listing + size so a broken exclude rule shows up immediately. The build
+validates `manifest.json` before zipping.

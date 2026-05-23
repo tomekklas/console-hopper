@@ -1,0 +1,30 @@
+{
+  "name": "console-hopper",
+  "version": "1.0.2",
+  "description": "Chrome extension that turns the AWS SAML role-picker into a fast, filterable launcher and decorates AWS console tabs.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/tomekklas/console-hopper",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tomekklas/console-hopper.git"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "format": "prettier --write \"scripts/**/*.{js,mjs}\" \"test/**/*.{js,mjs}\"",
+    "format:check": "prettier --check \"scripts/**/*.{js,mjs}\" \"test/**/*.{js,mjs}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.11.0",
+    "prettier": "^3.3.3",
+    "vitest": "^4.1.8"
+  }
+}

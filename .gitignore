@@ -2,6 +2,10 @@
 *.pem
 *.crx
 *.zip
+dist/
+
+# node tooling
+node_modules/
 
 # editor / OS dross
 .DS_Store
