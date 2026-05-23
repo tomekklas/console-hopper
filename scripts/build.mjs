@@ -60,6 +60,11 @@ async function main() {
       target: TARGET,
       legalComments: "none",
       loader: "js",
+      // Verbose logs go through debug() -> console.log (gated on DEBUG, false in
+      // shipped source). Marking console.log pure lets the minifier drop those
+      // dead calls entirely; console.warn / console.error are left intact so
+      // genuine failures still surface in a user's console.
+      pure: ["console.log"],
     });
     writeFileSync(join(dist, file), result.code);
   }

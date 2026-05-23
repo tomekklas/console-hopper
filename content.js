@@ -113,6 +113,15 @@
   };
 
   // === UTILITY FUNCTIONS ===
+  // Verbose logging is opt-in: flip DEBUG to true during development. With it
+  // false the minified production build folds `if (DEBUG)` away, so these calls
+  // never reach a user's console. Genuine problems still use console.warn /
+  // console.error directly so they remain visible for bug reports.
+  const DEBUG = false;
+  const debug = (...args) => {
+    if (DEBUG) console.log("[hop]", ...args);
+  };
+
   const debounce = (func, delay) => {
     let timeoutId;
     return function (...args) {
@@ -178,7 +187,7 @@
     }
   });
 
-  console.log(`Console Hopper v${CONFIG.SCRIPT_VERSION}`);
+  debug(`Console Hopper v${CONFIG.SCRIPT_VERSION}`);
 
   // Global filter state
   let activeFilters = {
@@ -815,16 +824,16 @@
   // === FAVORITES MANAGEMENT ===
   const FavoritesManager = {
     async loadCache() {
-      console.log("Loading favorites into cache...");
+      debug("Loading favorites into cache...");
       favoritesCache = await StorageManager.getFavorites();
-      console.log("Favorites cache loaded:", favoritesCache);
+      debug("Favorites cache loaded:", favoritesCache);
     },
 
     async saveFavorites(favorites) {
       const saved = await StorageManager.saveFavorites(favorites);
       if (saved !== false) {
         favoritesCache = [...favorites];
-        console.log("Updated favorites cache:", favoritesCache);
+        debug("Updated favorites cache:", favoritesCache);
         return true;
       } else {
         showToast("Failed to save favorites", "error");
@@ -837,7 +846,7 @@
     },
 
     async toggleFavorite(roleArn, accountName, roleName) {
-      console.log(
+      debug(
         `toggleFavorite called: ${roleArn}, ${accountName}, ${roleName}`
       );
       const favorites = [...favoritesCache];
@@ -866,8 +875,8 @@
     },
 
     async updateButtons() {
-      console.log("Updating favorite buttons...");
-      console.log("Current favorites cache for button update:", favoritesCache);
+      debug("Updating favorite buttons...");
+      debug("Current favorites cache for button update:", favoritesCache);
 
       getCachedElement(CONFIG.SELECTORS.FAVORITE_BUTTONS).each(function () {
         const $button = $(this);
@@ -885,16 +894,16 @@
   // === SHORTCUTS MANAGEMENT ===
   const ShortcutsManager = {
     async loadCache() {
-      console.log("Loading custom shortcuts into cache...");
+      debug("Loading custom shortcuts into cache...");
       customShortcutsCache = await StorageManager.getCustomShortcuts();
-      console.log("Custom shortcuts cache loaded:", customShortcutsCache);
+      debug("Custom shortcuts cache loaded:", customShortcutsCache);
     },
 
     async saveShortcuts(shortcuts) {
       const saved = await StorageManager.saveCustomShortcuts(shortcuts);
       if (saved !== false) {
         customShortcutsCache = [...shortcuts];
-        console.log("Updated shortcuts cache:", customShortcutsCache);
+        debug("Updated shortcuts cache:", customShortcutsCache);
         return true;
       } else {
         showToast("Failed to save shortcuts", "error");
@@ -930,7 +939,7 @@
   const CompactManager = {
     async loadSetting() {
       compactMode = await StorageManager.getCompactMode();
-      console.log("Loaded compact mode:", compactMode);
+      debug("Loaded compact mode:", compactMode);
     },
 
     async saveSetting(compact) {
@@ -948,10 +957,10 @@
     apply() {
       if (compactMode) {
         $("body").addClass("tm_compact_mode");
-        console.log("Applied compact mode");
+        debug("Applied compact mode");
       } else {
         $("body").removeClass("tm_compact_mode");
-        console.log("Removed compact mode");
+        debug("Removed compact mode");
       }
     },
 
@@ -968,22 +977,22 @@
 
   const ServicesManager = {
     async loadCache() {
-      console.log("Loading services into cache...");
+      debug("Loading services into cache...");
       servicesCache = await StorageManager.getServices();
-      console.log("Services cache loaded:", servicesCache);
+      debug("Services cache loaded:", servicesCache);
     },
 
     async loadLastServicesCache() {
       const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAST_SERVICE);
       lastServicesCache = result[CONFIG.STORAGE_KEYS.LAST_SERVICE] ?? {};
-      console.log("Last services cache loaded:", lastServicesCache);
+      debug("Last services cache loaded:", lastServicesCache);
     },
 
     async saveServices(services) {
       const saved = await StorageManager.saveServices(services);
       if (saved !== false) {
         servicesCache = [...services];
-        console.log("Updated services cache:", servicesCache);
+        debug("Updated services cache:", servicesCache);
         return true;
       } else {
         showToast("Failed to save services", "error");
@@ -1078,7 +1087,7 @@
   const makeEntryManager = ({ cacheGet, cacheSet, storageGet, storageSave, label }) => ({
     async loadCache() {
       cacheSet(await storageGet());
-      console.log(`${label} cache loaded:`, cacheGet());
+      debug(`${label} cache loaded:`, cacheGet());
     },
     async save(entries) {
       const saved = await storageSave(entries);
@@ -1200,7 +1209,7 @@
       homepageUrlCache = await StorageManager.getHomepageUrl();
       signinConfirmRoleKeywordsCache = await StorageManager.getSigninConfirmRoleKeywords();
       signinConfirmTypeIdsCache = await StorageManager.getSigninConfirmTypeIds();
-      console.log("General settings cache loaded:", {
+      debug("General settings cache loaded:", {
         region: awsRegionCache,
         homepage: homepageUrlCache,
         signinRoleKeywords: signinConfirmRoleKeywordsCache,
@@ -1239,7 +1248,7 @@
     async loadCache() {
       recentRolesCache = await StorageManager.getRecentRoles();
       recentLimit = await StorageManager.getRecentLimit();
-      console.log("Recent roles cache loaded:", recentRolesCache, "limit:", recentLimit);
+      debug("Recent roles cache loaded:", recentRolesCache, "limit:", recentLimit);
     },
 
     async recordSignIn(roleArn) {
@@ -1289,7 +1298,7 @@
 
     async loadCache() {
       roleOrderCache = await StorageManager.getRoleOrder();
-      console.log("Role order cache loaded:", roleOrderCache.length, "entries");
+      debug("Role order cache loaded:", roleOrderCache.length, "entries");
     },
 
     // Move every .saml-role into a single ordered container so drag-and-drop
@@ -1493,7 +1502,7 @@
       let visibleCount = 0;
       let totalCount = 0;
 
-      console.log("Applying filters:", activeFilters, "Search:", searchTerm);
+      debug("Applying filters:", activeFilters, "Search:", searchTerm);
 
       getCachedElement(CONFIG.SELECTORS.SAML_ROLES).each(function () {
         const $role = $(this);
@@ -1507,7 +1516,7 @@
         }
       });
 
-      console.log(`Visible: ${visibleCount}, Total: ${totalCount}`);
+      debug(`Visible: ${visibleCount}, Total: ${totalCount}`);
 
       applyEnvironmentStyling();
 
@@ -2773,7 +2782,7 @@
     const accountName = $role.find(".tm_account_name").text().trim();
     const roleName = $role.find(".tm_role_name").text().trim();
 
-    console.log("Favorite button clicked:", roleArn, accountName, roleName);
+    debug("Favorite button clicked:", roleArn, accountName, roleName);
     await FavoritesManager.toggleFavorite(roleArn, accountName, roleName);
   });
 
@@ -4745,7 +4754,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const group = $button.data("group");
     const filter = $button.data("filter");
 
-    console.log(`Filter clicked: ${group}:${filter}`);
+    debug(`Filter clicked: ${group}:${filter}`);
 
     $button.toggleClass("active");
 
@@ -4757,7 +4766,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       activeFilters[group] = activeFilters[group].filter((f) => f !== filter);
     }
 
-    console.log("Updated filters:", activeFilters);
+    debug("Updated filters:", activeFilters);
 
     FilterManager.applyFilters();
   });
@@ -4778,7 +4787,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     mediaQuery.addListener((e) => {
       if (currentTheme === "auto") {
-        console.log("System theme changed:", e.matches ? "dark" : "light");
+        debug("System theme changed:", e.matches ? "dark" : "light");
         ThemeManager.applyTheme("auto");
       }
     });
@@ -4795,7 +4804,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // Initialize theme
   try {
     currentTheme = await StorageManager.getTheme();
-    console.log("Loaded theme:", currentTheme);
+    debug("Loaded theme:", currentTheme);
     await ThemeManager.applyTheme(currentTheme);
   } catch (e) {
     console.error("Error loading theme:", e);
@@ -4804,35 +4813,35 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   }
 
   // Load favorites cache and initialize UI
-  console.log("Initializing favorites...");
+  debug("Initializing favorites...");
   try {
     await FavoritesManager.loadCache();
-    console.log("Favorites cache initialized:", favoritesCache);
+    debug("Favorites cache initialized:", favoritesCache);
     await FavoritesManager.updateButtons();
-    console.log("Favorite buttons updated successfully");
+    debug("Favorite buttons updated successfully");
   } catch (e) {
     console.error("Error during favorites initialization:", e);
   }
 
   // Load custom shortcuts cache and update UI
-  console.log("Initializing custom shortcuts...");
+  debug("Initializing custom shortcuts...");
   try {
     await ShortcutsManager.loadCache();
-    console.log("Custom shortcuts cache initialized:", customShortcutsCache);
+    debug("Custom shortcuts cache initialized:", customShortcutsCache);
     ShortcutsManager.updateSection();
-    console.log("Shortcuts section updated successfully");
+    debug("Shortcuts section updated successfully");
   } catch (e) {
     console.error("Error during custom shortcuts initialization:", e);
   }
 
   // Initialize compact mode
-  console.log("Initializing compact mode...");
+  debug("Initializing compact mode...");
   try {
     await CompactManager.loadSetting();
-    console.log("Loaded compact mode:", compactMode);
+    debug("Loaded compact mode:", compactMode);
     CompactManager.apply();
     CompactManager.updateButton();
-    console.log("Compact mode applied successfully");
+    debug("Compact mode applied successfully");
   } catch (e) {
     console.error("Error during compact mode initialization:", e);
   }
@@ -4859,8 +4868,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // Apply initial environment-based styling
   applyEnvironmentStyling();
 
-  showToast("Console Hopper loaded successfully!", "success", 3000);
-  console.log(`Added buttons to ${$(".tm_role_buttons").length} roles`);
+  debug(`Added buttons to ${$(".tm_role_buttons").length} roles`);
 
   // First-run welcome — only on the very first load after install.
   try {
