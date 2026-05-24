@@ -24,7 +24,8 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
 ## Quick start
 
 1. **Install** — from the Chrome Web Store *(link coming once published)*,
-   or load this folder unpacked via `chrome://extensions/`.
+   or build from source (`npm install && npm run build`) and load the
+   `dist/` folder unpacked via `chrome://extensions/`.
 2. **Open your AWS SAML sign-in URL** (`https://signin.aws.amazon.com/saml`
    or your IdP's redirect target). The role picker is now Console Hopper.
 3. **Configure** — hover the right edge of the page to open the side
@@ -89,7 +90,10 @@ policy: [`PRIVACY.md`](PRIVACY.md).
 ```
 console-hopper/
 ├── manifest.json           # Manifest V3
-├── content.js              # Main script (injected into the SAML page)
+├── src/content/            # Content-script ES modules (bundled → dist/content.js)
+│   ├── index.js            #   main script injected into the SAML page
+│   ├── dom.js              #   minimal jQuery-subset DOM shim
+│   └── util.js             #   pure helpers (escaping, matchers, parsing)
 ├── console-decorator.js    # Sets favicon + title on AWS console pages
 ├── background.js           # Service worker (tab grouping)
 ├── icons/                  # icon16/32/48/128.png
@@ -97,6 +101,7 @@ console-hopper/
 ├── store-assets/           # Screenshots + promo tiles (not in submission zip)
 ├── package.json            # Dev tooling (esbuild build, ESLint, vitest)
 ├── scripts/build.mjs       # Build the Chrome Web Store submission zip
+├── test/                   # vitest unit tests (util + dom shim)
 ├── PRIVACY.md              # Privacy policy
 ├── STORE_LISTING.md        # Chrome Web Store form values + checklist
 └── README.md
@@ -104,9 +109,10 @@ console-hopper/
 
 ## Install from source
 
-1. `chrome://extensions/`
-2. Enable **Developer mode** (top right).
-3. **Load unpacked** → select this directory.
+1. `npm install` then `npm run build` (produces `dist/`).
+2. `chrome://extensions/`
+3. Enable **Developer mode** (top right).
+4. **Load unpacked** → select the `dist/` directory.
 
 ## Building a release zip
 

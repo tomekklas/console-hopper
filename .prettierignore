@@ -1,10 +1,9 @@
 # Prettier is scoped to new tooling/test code (see package.json "format").
-# The shipped extension scripts keep their existing hand-tuned formatting until
-# they are modularized (Stage 4 of ROADMAP.md); don't reformat them wholesale.
+# The large legacy content script keeps its existing hand-tuned formatting;
+# don't reformat it wholesale.
 dist/
-lib/
 node_modules/
-content.js
+src/content/index.js
 background.js
 console-decorator.js
 *.min.js

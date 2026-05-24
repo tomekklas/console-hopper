@@ -27,9 +27,9 @@ const dist = join(root, "dist");
 // Browsers that ship Manifest V3; keeps esbuild from down-levelling modern JS.
 const TARGET = ["chrome110"];
 
-// Scripts esbuild minifies. (Stage 4 of ROADMAP.md will switch content.js to a
-// bundled entry once it imports ES modules; until then this is minify-only.)
-const SCRIPTS = ["content.js", "background.js", "console-decorator.js"];
+// content.js is bundled from src/content/ ES modules (see below). These
+// standalone classic scripts have no imports — minify them in place.
+const CLASSIC_SCRIPTS = ["background.js", "console-decorator.js"];
 
 // Static files copied verbatim into the package.
 const STATIC = ["manifest.json", "icons"];
@@ -46,7 +46,10 @@ function readManifest() {
 
 async function main() {
   const manifest = readManifest();
-  const out = `${manifest.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}.zip`;
+  const out = `${manifest.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")}.zip`;
   const outZip = join(root, out);
 
   console.log(`building ${manifest.name} v${manifest.version} → ${out}`);
@@ -54,16 +57,29 @@ async function main() {
   rmSync(dist, { recursive: true, force: true });
   mkdirSync(dist, { recursive: true });
 
-  for (const file of SCRIPTS) {
+  // Bundle the content script (src/content ES modules) into one classic IIFE.
+  // Verbose logs go through debug() -> console.log (gated on DEBUG, false in
+  // shipped source). Marking console.log pure lets the minifier drop those dead
+  // calls entirely; console.warn / console.error are left intact so genuine
+  // failures still surface in a user's console.
+  await esbuild.build({
+    entryPoints: [join(root, "src/content/index.js")],
+    bundle: true,
+    format: "iife",
+    target: TARGET,
+    minify: true,
+    legalComments: "none",
+    pure: ["console.log"],
+    outfile: join(dist, "content.js"),
+  });
+
+  // Minify the standalone classic scripts.
+  for (const file of CLASSIC_SCRIPTS) {
     const result = await esbuild.transform(readFileSync(join(root, file)), {
       minify: true,
       target: TARGET,
       legalComments: "none",
       loader: "js",
-      // Verbose logs go through debug() -> console.log (gated on DEBUG, false in
-      // shipped source). Marking console.log pure lets the minifier drop those
-      // dead calls entirely; console.warn / console.error are left intact so
-      // genuine failures still surface in a user's console.
       pure: ["console.log"],
     });
     writeFileSync(join(dist, file), result.code);
@@ -82,7 +98,9 @@ async function main() {
   console.log(execFileSync("unzip", ["-l", outZip], { encoding: "utf8" }));
   console.log("=== size ===");
   console.log(execFileSync("ls", ["-lh", outZip], { encoding: "utf8" }).trim());
-  console.log("\nready to upload at https://chrome.google.com/webstore/devconsole");
+  console.log(
+    "\nready to upload at https://chrome.google.com/webstore/devconsole"
+  );
 }
 
 main().catch((err) => {

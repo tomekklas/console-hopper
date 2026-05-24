@@ -93,23 +93,22 @@ Stage 4's tests landing right after. **Verify:** every interaction (filter chips
 search, favorites, drag-reorder, all 6 modals, deep-link sign-in, new-tab sign-in)
 works exactly as before; bundle ~85KB smaller.
 
-### Stage 4 — Modularize + unit tests *(internal)*
+### Stage 4 — Modularize + unit tests *(internal)* — done (focused scope)
 
-**Goal:** make the monolith testable and navigable.
+**Goal:** make the logic testable; establish the `src/` → `dist/` build.
 
-- Split `content.js` into ES modules along its existing section banners
-  (`// === STORAGE MANAGERS ===`, `// === OPTIMIZED FILTERING ===`, etc.):
-  `config.js`, `dom.js` (the vanilla helpers), `storage.js`, `managers/*.js`,
-  `render.js`, `filtering.js`, `dnd.js` (FLIP/drag), `signin.js`, `modals.js`,
-  `index.js` (the IIFE entry). esbuild bundles them back to one file.
-- Add **vitest** unit tests for the pure logic, which is already nicely isolated:
-  `escapeHtml`, `matchesAnyPattern`, `EnvironmentsManager.classify` (ID-exact
-  pass-1 precedence), `AccountTypesManager`/`OrganizationsManager.matches`,
-  `parseAccountInfo` (the `Account: name (id)` parser), `resolveTitle` +
-  `hashString`/`colorFor` (background.js), `buildDestination` (the `#hop=` payload).
+- Source now lives in `src/content/`, bundled by esbuild into a single classic
+  `dist/content.js`. Dev loads `dist/` after `npm run build`.
+- Extracted first (the chosen focused scope): `dom.js` (the jQuery-subset shim)
+  and `util.js` (pure helpers — `escapeHtml`/`sanitizeInput`, `parseAccountInfo`,
+  `matchesAnyPattern`, `matchesRolePatterns`). The rest stays in `index.js` and
+  can be split further incrementally (render / filtering / dnd / modals).
+- **vitest** unit tests in `test/`: `util.test.js` (node) + `dom.test.js`
+  (jsdom) — 25 tests covering the pure logic and the shim.
 
-**Risk:** low-medium (mechanical splits; bundler proves wiring). **Verify:**
-`npm test` green; built bundle behaves identically.
+**Verify:** `npm run lint` (0 errors), `npm test` (25 pass), `npm run build`.
+Remaining per-feature splits + tests for the managers/`buildDestination`/
+`resolveTitle`/`hashString` can land opportunistically later.
 
 ### Stage 5 — Shadow DOM isolation *(Improvement #1)*
 

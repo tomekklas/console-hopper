@@ -11,18 +11,16 @@ import prettier from "eslint-config-prettier";
 
 export default [
   {
-    ignores: ["dist/**", "lib/**", "node_modules/**", "*.zip"],
+    ignores: ["dist/**", "node_modules/**", "*.zip"],
   },
   js.configs.recommended,
   {
-    files: ["content.js", "background.js", "console-decorator.js"],
+    // Standalone classic content scripts loaded directly by the manifest.
+    files: ["background.js", "console-decorator.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "script",
-      globals: {
-        ...globals.browser,
-        ...globals.webextensions,
-      },
+      globals: { ...globals.browser, ...globals.webextensions },
     },
     rules: {
       "no-unused-vars": "warn",
@@ -30,7 +28,30 @@ export default [
     },
   },
   {
-    files: ["scripts/**/*.{js,mjs}", "test/**/*.{js,mjs}", "*.config.{js,mjs}"],
+    // Content-script ES modules (bundled by esbuild into dist/content.js).
+    files: ["src/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.browser, ...globals.webextensions },
+    },
+    rules: {
+      "no-unused-vars": "warn",
+      "no-empty": ["error", { allowEmptyCatch: true }],
+    },
+  },
+  {
+    // Unit tests run under vitest in a jsdom environment (browser + node).
+    files: ["test/**/*.{js,mjs}"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
+    // Build tooling / config.
+    files: ["scripts/**/*.{js,mjs}", "*.config.{js,mjs}"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
