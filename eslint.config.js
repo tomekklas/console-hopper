@@ -22,8 +22,6 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.webextensions,
-        $: "readonly",
-        jQuery: "readonly",
       },
     },
     rules: {

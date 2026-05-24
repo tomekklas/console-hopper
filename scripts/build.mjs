@@ -32,7 +32,7 @@ const TARGET = ["chrome110"];
 const SCRIPTS = ["content.js", "background.js", "console-decorator.js"];
 
 // Static files copied verbatim into the package.
-const STATIC = ["manifest.json", "icons", "lib"];
+const STATIC = ["manifest.json", "icons"];
 
 function readManifest() {
   const text = readFileSync(join(root, "manifest.json"), "utf8");

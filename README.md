@@ -92,7 +92,6 @@ console-hopper/
 ├── content.js              # Main script (injected into the SAML page)
 ├── console-decorator.js    # Sets favicon + title on AWS console pages
 ├── background.js           # Service worker (tab grouping)
-├── lib/jquery.min.js       # Bundled jQuery 3.7.1
 ├── icons/                  # icon16/32/48/128.png
 ├── samples/                # Importable starter configs (e.g. AWS LZ)
 ├── store-assets/           # Screenshots + promo tiles (not in submission zip)

@@ -24,7 +24,6 @@
         "https://*.signin.aws.amazon.com/saml"
       ],
       "js": [
-        "lib/jquery.min.js",
         "content.js"
       ],
       "run_at": "document_end"
