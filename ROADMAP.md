@@ -37,6 +37,25 @@ the 57 `console.*` calls).
 
 ---
 
+## Status (as of 1.1.0)
+
+Stages 1–4 (improvement **#2, toolchain**) are **shipped in 1.1.0**: build + CI,
+console cleanup, jQuery removed (zip 95K → 48K), `src/` modules + 25 tests.
+
+The other two headline improvements were re-evaluated against the actual code:
+
+- **#1 Shadow DOM — dropped (poor architectural fit).** Console Hopper injects
+  its controls *into* AWS's light-DOM `.saml-role` rows and styles those rows,
+  and the toolbar lives inside the SAML `<form>`. A shadow root can't enclose
+  any of that, so most of the 1,171 `!important` would have to stay regardless.
+  Combined with "AWS won't change that page" (so the CSS-stability rationale is
+  moot), it isn't worth the risk/effort. Isolating just the 6 standalone modals
+  remains a small optional future item.
+- **#3 Accessibility — skipped** by owner decision.
+
+1.1.0 is a clean, self-contained release. Further ideas live in "Deferred to
+v2+" below (the console env-colour banner is the standout).
+
 ## Staged execution
 
 Each stage is self-contained, behavior-preserving unless noted, and shippable on
