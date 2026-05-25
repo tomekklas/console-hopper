@@ -3,6 +3,24 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.1.0 — 2026-06-02
+
+### Changed
+
+- Removed the bundled jQuery dependency in favour of a small built-in DOM
+  helper. The installed extension is now ~50% smaller (submission package
+  95K → 48K) with no change in behaviour.
+- The "loaded successfully" toast no longer pops on every visit to the
+  sign-in page, and verbose debug logging no longer prints to the browser
+  console in the shipped build. Genuine warnings and errors are unchanged.
+
+### Internal
+
+- Added a build toolchain (esbuild bundle + minify), ESLint, Prettier, and a
+  vitest test suite, wired into GitHub Actions CI. Source now lives in `src/`
+  and is bundled into the shipped `content.js` — load the built `dist/` folder
+  when developing (see README). No user-facing behaviour change.
+
 ## 1.0.2 — 2026-05-22
 
 ### Changed
