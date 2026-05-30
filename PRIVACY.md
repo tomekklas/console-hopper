@@ -52,8 +52,10 @@ The extension does **not**:
   server controlled by the authors or by anyone else
 - Use cookies, fingerprinting, analytics, error reporting, or any
   third-party SDK
-- Read, transmit, or modify your AWS credentials, SAML assertions,
-  session tokens, or any authentication material
+- Read or transmit your AWS credentials, SAML assertions, session
+  tokens, or any authentication material. (The optional **Clear AWS
+  Sessions** button deletes AWS session cookies on your device when you
+  click it — to sign you out — but never reads or transmits them.)
 - Read content from pages outside the AWS sign-in and AWS console
   domains listed above
 - Collect personally identifiable information, health, financial,
@@ -67,7 +69,8 @@ The extension does **not**:
 | `storage` | To persist your settings (themes, favourites, filters …) locally in `chrome.storage.local`. |
 | `tabs` | To read the calling tab's id and window in the service worker, so a newly opened AWS console tab can be placed into the correct Chrome tab group. |
 | `tabGroups` | To create and update Chrome tab groups that visually cluster AWS console tabs by account, role, or organisation. |
-| Host access to AWS SAML / console URLs | To inject the enhanced UI on the SAML sign-in page and to set the per-tab favicon and title on AWS console pages. |
+| `cookies` | To delete AWS authentication cookies when you click **Clear AWS Sessions**, signing you out of all AWS consoles at once. The extension only deletes these cookies — it never reads their contents or sends them anywhere. |
+| Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, and clear AWS session cookies. |
 
 ## Sharing
 

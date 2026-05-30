@@ -12,7 +12,12 @@
   "permissions": [
     "storage",
     "tabs",
-    "tabGroups"
+    "tabGroups",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://aws.amazon.com/*",
+    "https://*.aws.amazon.com/*"
   ],
   "background": {
     "service_worker": "background.js"

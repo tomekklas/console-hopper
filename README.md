@@ -75,7 +75,8 @@ account types.
 |---|---|
 | `storage` | Persist user preferences in `chrome.storage.local`. |
 | `tabs`, `tabGroups` | Drop new console tabs into Chrome tab groups. |
-| Host: `*.signin.aws.amazon.com/saml`, `*.console.aws.amazon.com/*` | Enhance the role picker; decorate console tabs. |
+| `cookies` | Delete AWS authentication cookies for the **Clear AWS Sessions** button. Cookies are only deleted — never read or transmitted. |
+| Host: `*.aws.amazon.com/*` (incl. `signin.` and `console.`) | Enhance the role picker, decorate console tabs, and clear AWS session cookies. |
 
 No `<all_urls>`, no remote code, no telemetry, no external requests of
 any kind. Everything stays in your browser.

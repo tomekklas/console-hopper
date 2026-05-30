@@ -12,6 +12,11 @@ All notable changes to Console Hopper are listed here. Dates are in
   the General Settings region and remembers your last pick per role — just like
   the service dropdown. Configure which regions appear (and their order) via the
   new **Manage Regions** panel.
+- **Clear AWS Sessions.** A confirm-gated side-menu button that signs you out of
+  all open AWS consoles by clearing AWS authentication cookies. Cookies only —
+  your console favorites and settings are kept. Adds the `cookies` permission and
+  `https://*.aws.amazon.com/*` host access (cookies are only deleted, never read
+  or transmitted).
 
 ### Changed
 

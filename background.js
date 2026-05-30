@@ -96,3 +96,40 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   );
   // No response needed.
 });
+
+// Clear all AWS console sessions by deleting AWS auth cookies. This touches
+// cookies ONLY — never localStorage — so console UI preferences such as the
+// favorites bar are kept (they live in localStorage or server-side). Scoped to
+// aws.amazon.com and its subdomains (signin / console) via host_permissions.
+const AWS_COOKIE_DOMAINS = ["aws.amazon.com"];
+
+async function clearAwsSessions() {
+  let removed = 0;
+  for (const domain of AWS_COOKIE_DOMAINS) {
+    let cookies = [];
+    try {
+      cookies = await chrome.cookies.getAll({ domain });
+    } catch {
+      continue; // no host permission for this domain, or none set
+    }
+    for (const c of cookies) {
+      const host = c.domain.replace(/^\./, "");
+      const url = `${c.secure ? "https" : "http"}://${host}${c.path}`;
+      try {
+        await chrome.cookies.remove({ url, name: c.name, storeId: c.storeId });
+        removed++;
+      } catch {
+        // A cookie that can't be removed individually is skipped.
+      }
+    }
+  }
+  return removed;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_clear_sessions") return;
+  clearAwsSessions()
+    .then((count) => sendResponse({ ok: true, count }))
+    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  return true; // keep the message channel open for the async response
+});

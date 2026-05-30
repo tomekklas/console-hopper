@@ -1793,6 +1793,7 @@ import {
             <a href="#" class="tm_action_button" id="tm_import_settings">Import Settings</a>
             <a href="#" class="tm_action_button" id="tm_reset_order">Reset Order</a>
             <a href="#" class="tm_action_button" id="tm_reset_recent">Reset Recent</a>
+            <a href="#" class="tm_action_button" id="tm_clear_sessions">Clear AWS Sessions</a>
             <a href="#" class="tm_action_button" id="tm_keyboard_help">Keyboard Shortcuts</a>
             <a href="#" class="tm_action_button" id="tm_about">Help / About</a>
         </div>
@@ -2939,6 +2940,11 @@ import {
     showRegionsModal();
   });
 
+  $("body").on("click", "#tm_clear_sessions", function (e) {
+    e.preventDefault();
+    showClearSessionsModal();
+  });
+
   // Show shortcuts management modal
   const showShortcutsModal = () => {
     const currentShortcuts = customShortcutsCache
@@ -3236,6 +3242,69 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           "success",
           CONFIG.TOAST_DURATION
         );
+      }
+    });
+  };
+
+  // Confirm-gated "Clear AWS Sessions": asks the service worker to delete AWS
+  // auth cookies (cookies only — favorites / console settings are untouched).
+  const showClearSessionsModal = () => {
+    const modalHTML = `
+            <div id="tm_clear_sessions_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 20px !important;
+                    max-width: 460px !important; width: 90% !important;
+                ">
+                    <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Clear all AWS sessions?</h3>
+                    <p style="margin: 0 0 18px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.5 !important;">
+                        This signs you out of every open AWS console by clearing AWS
+                        authentication cookies. Your console favorites and settings are
+                        kept — you'll just need to pick a role and sign in again.
+                    </p>
+                    <div style="text-align: right !important;">
+                        <button id="tm_clear_sessions_cancel" type="button" style="
+                            padding: 8px 16px !important; margin-right: 10px !important;
+                            border: 1px solid #ccc !important; background: white !important;
+                            border-radius: 4px !important; cursor: pointer !important;
+                        ">Cancel</button>
+                        <button id="tm_clear_sessions_confirm" type="button" style="
+                            padding: 8px 16px !important; border: 1px solid #dc3545 !important;
+                            background: #dc3545 !important; color: white !important;
+                            border-radius: 4px !important; cursor: pointer !important;
+                        ">Clear sessions</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    $("#tm_clear_sessions_cancel, #tm_clear_sessions_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_clear_sessions_modal").remove();
+    });
+
+    $("#tm_clear_sessions_confirm").on("click", function () {
+      $("#tm_clear_sessions_modal").remove();
+      try {
+        chrome.runtime.sendMessage({ type: "hop_clear_sessions" }, (resp) => {
+          if (chrome.runtime.lastError || !resp || !resp.ok) {
+            showToast("Couldn't clear AWS sessions", "error", CONFIG.TOAST_DURATION);
+            return;
+          }
+          const n = resp.count;
+          showToast(
+            `Cleared ${n} AWS cookie${n === 1 ? "" : "s"} — you're signed out`,
+            "success",
+            CONFIG.TOAST_DURATION
+          );
+        });
+      } catch {
+        showToast("Couldn't clear AWS sessions", "error", CONFIG.TOAST_DURATION);
       }
     });
   };

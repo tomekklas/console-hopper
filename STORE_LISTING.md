@@ -170,7 +170,9 @@ keyboard navigation and tab grouping, so users who have access to
 many AWS accounts via SAML SSO can find and sign into the right
 role faster. It also decorates AWS console tabs with a coloured
 favicon and account-name title prefix so multiple open consoles
-stay visually distinguishable.
+stay visually distinguishable. A one-click "Clear AWS Sessions" button
+signs the user out of all AWS consoles by deleting AWS authentication
+cookies (cookies only — never read or transmitted).
 ```
 
 ### Data usage disclosure
@@ -224,6 +226,22 @@ group. Tab URLs or content are not transmitted.
 Creates and updates Chrome tab groups so AWS console tabs cluster
 visually by account + role (or by organisation, or by a user-supplied
 ticket tag), emulating a Firefox-containers-style visual experience.
+```
+
+### `cookies`
+```
+Used only by the "Clear AWS Sessions" button to delete AWS
+authentication cookies (on aws.amazon.com and its sign-in / console
+subdomains) so the user can sign out of all AWS console sessions at
+once. The extension only deletes these cookies; it never reads their
+contents or transmits them.
+```
+
+### Host permission: `https://aws.amazon.com/*`, `https://*.aws.amazon.com/*`
+```
+Grants the cookies API access to delete AWS authentication cookies for
+the "Clear AWS Sessions" feature. Scoped to aws.amazon.com — no other
+sites.
 ```
 
 ### Host permission: `https://signin.aws.amazon.com/saml`, `https://*.signin.aws.amazon.com/saml`
