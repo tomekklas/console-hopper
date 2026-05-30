@@ -5,6 +5,14 @@ All notable changes to Console Hopper are listed here. Dates are in
 
 ## 1.1.0 — 2026-06-02
 
+### Added
+
+- **Per-row region picker.** Each role row now has a region dropdown beside the
+  service picker, choosing which AWS region that sign-in targets. It defaults to
+  the General Settings region and remembers your last pick per role — just like
+  the service dropdown. Configure which regions appear (and their order) via the
+  new **Manage Regions** panel.
+
 ### Changed
 
 - Removed the bundled jQuery dependency in favour of a small built-in DOM

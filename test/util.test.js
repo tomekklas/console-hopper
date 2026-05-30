@@ -5,6 +5,9 @@ import {
   parseAccountInfo,
   matchesAnyPattern,
   matchesRolePatterns,
+  parseRegionLines,
+  formatRegionLines,
+  normalizeRegionList,
 } from "../src/content/util.js";
 
 describe("escapeHtml", () => {
@@ -66,5 +69,60 @@ describe("matchesRolePatterns", () => {
   });
   it("returns false for empty pattern lists", () => {
     expect(matchesRolePatterns([], "AdminRole")).toBe(false);
+  });
+});
+
+describe("parseRegionLines", () => {
+  it("parses plain codes and 'code: Label' lines, preserving order", () => {
+    expect(
+      parseRegionLines("us-east-1: US East (N. Virginia)\neu-west-1\n")
+    ).toEqual([
+      { id: "us-east-1", label: "US East (N. Virginia)" },
+      { id: "eu-west-1", label: "eu-west-1" },
+    ]);
+  });
+  it("lowercases codes, trims, skips blanks and invalid codes, dedupes", () => {
+    expect(
+      parseRegionLines("  US-WEST-2  \n\nnot a region!\nus-west-2: dup")
+    ).toEqual([{ id: "us-west-2", label: "us-west-2" }]);
+  });
+  it("handles empty input", () => {
+    expect(parseRegionLines("")).toEqual([]);
+    expect(parseRegionLines(null)).toEqual([]);
+  });
+});
+
+describe("formatRegionLines", () => {
+  it("is the inverse of parseRegionLines and omits redundant labels", () => {
+    const list = [
+      { id: "us-east-1", label: "US East (N. Virginia)" },
+      { id: "eu-west-1", label: "eu-west-1" },
+    ];
+    expect(formatRegionLines(list)).toBe(
+      "us-east-1: US East (N. Virginia)\neu-west-1"
+    );
+    expect(parseRegionLines(formatRegionLines(list))).toEqual(list);
+  });
+});
+
+describe("normalizeRegionList", () => {
+  it("keeps valid entries, drops junk, dedupes, defaults the label to the id", () => {
+    expect(
+      normalizeRegionList([
+        { id: "US-EAST-1", label: "  " },
+        { id: "us-east-1", label: "dup" },
+        { id: "bad region" },
+        null,
+        "nope",
+        { id: "eu-west-1", label: "Ireland" },
+      ])
+    ).toEqual([
+      { id: "us-east-1", label: "us-east-1" },
+      { id: "eu-west-1", label: "Ireland" },
+    ]);
+  });
+  it("returns [] for non-arrays", () => {
+    expect(normalizeRegionList(null)).toEqual([]);
+    expect(normalizeRegionList("x")).toEqual([]);
   });
 });

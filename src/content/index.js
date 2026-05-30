@@ -9,6 +9,9 @@ import {
   parseAccountInfo,
   matchesAnyPattern,
   matchesRolePatterns,
+  parseRegionLines,
+  formatRegionLines,
+  normalizeRegionList,
 } from "./util.js";
 
 (async function () {
@@ -35,6 +38,7 @@ import {
       COMPACT_MODE: "aws_compact_mode",
       SERVICES: "aws_services",
       LAST_SERVICE: "aws_last_service",
+      LAST_REGION: "aws_last_region",
       ENV_PATTERNS: "aws_env_patterns",
       ORG_PATTERNS: "aws_org_patterns",
       TYPE_PATTERNS: "aws_type_patterns",
@@ -45,6 +49,7 @@ import {
       TAB_GROUP_TAG: "aws_tab_group_tag",
       TAB_GROUP_MODE: "aws_tab_group_mode",
       AWS_REGION: "aws_region",
+      REGION_LIST: "aws_region_list",
       HOMEPAGE_URL: "aws_homepage_url",
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
@@ -99,6 +104,20 @@ import {
       { id: "cloudformation", name: "CloudFormation", path: "cloudformation/home?region={region}" },
       { id: "vpc",            name: "VPC",            path: "vpcconsole/home?region={region}" },
       { id: "rds",            name: "RDS",            path: "rds/home?region={region}" },
+    ],
+    // Regions offered by the toolbar region switcher (order = dropdown order).
+    // The default selection is the General Settings region; this list just
+    // controls which regions are quick-pickable. Editable via Manage Regions.
+    DEFAULT_REGION_LIST: [
+      { id: "us-east-1", label: "US East (N. Virginia)" },
+      { id: "us-east-2", label: "US East (Ohio)" },
+      { id: "us-west-2", label: "US West (Oregon)" },
+      { id: "eu-west-1", label: "Europe (Ireland)" },
+      { id: "eu-west-2", label: "Europe (London)" },
+      { id: "eu-central-1", label: "Europe (Frankfurt)" },
+      { id: "ap-southeast-1", label: "Asia Pacific (Singapore)" },
+      { id: "ap-southeast-2", label: "Asia Pacific (Sydney)" },
+      { id: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
     ],
     THEMES: {
       light: { name: "Light", icon: "☀️", next: "dark" },
@@ -476,6 +495,32 @@ import {
       }, false);
     },
 
+    async getRegionList() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.REGION_LIST);
+        return result[CONFIG.STORAGE_KEYS.REGION_LIST] ?? null;
+      }, null);
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          console.error("Error parsing region list:", e);
+          parsed = null;
+        }
+      }
+      const list = normalizeRegionList(parsed);
+      return list.length ? list : normalizeRegionList(CONFIG.DEFAULT_REGION_LIST);
+    },
+    async saveRegionList(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.REGION_LIST]: JSON.stringify(list),
+        });
+        return true;
+      }, false);
+    },
+
     async getHomepageUrl() {
       return await safeStorageOperation(async () => {
         const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.HOMEPAGE_URL);
@@ -670,6 +715,23 @@ import {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.LAST_SERVICE]: updated
+        });
+        return true;
+      }, false);
+    },
+
+    async saveLastRegion(roleArn, region) {
+      const lastRegions = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAST_REGION);
+        return result[CONFIG.STORAGE_KEYS.LAST_REGION] ?? {};
+      }, {});
+
+      const updated = typeof lastRegions === "object" ? lastRegions : {};
+      updated[roleArn] = region;
+
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.LAST_REGION]: updated
         });
         return true;
       }, false);
@@ -1019,6 +1081,69 @@ import {
       return `
         <select class="tm_service_dropdown" data-role-arn="${safeRoleArn}" data-account-id="${safeAccountId}">
           <option value="">Console only</option>
+          ${optionsHTML}
+        </select>
+      `;
+    },
+  };
+
+  // === REGIONS ===
+  // regionListCache  — the regions offered in each role row's region dropdown.
+  // lastRegionsCache — per-role last-picked region (roleArn -> code), mirroring
+  //                    the per-role last-service memory. A row defaults to the
+  //                    General Settings region until the user picks one for it.
+  let regionListCache = [];
+  let lastRegionsCache = {};
+
+  const RegionsManager = {
+    async loadCache() {
+      regionListCache = await StorageManager.getRegionList();
+      debug("Region list cache loaded:", regionListCache);
+    },
+    async loadLastRegionsCache() {
+      const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAST_REGION);
+      lastRegionsCache = result[CONFIG.STORAGE_KEYS.LAST_REGION] ?? {};
+      debug("Last regions cache loaded:", lastRegionsCache);
+    },
+    async saveRegions(list) {
+      const saved = await StorageManager.saveRegionList(list);
+      if (saved !== false) {
+        regionListCache = [...list];
+        return true;
+      }
+      showToast("Failed to save regions", "error");
+      return false;
+    },
+    async saveLastRegion(roleArn, region) {
+      lastRegionsCache[roleArn] = region;
+      await StorageManager.saveLastRegion(roleArn, region);
+    },
+    getLastRegionSync(roleArn) {
+      return lastRegionsCache[roleArn] || "";
+    },
+    list() {
+      return regionListCache;
+    },
+
+    // The per-row region <select>: options come from the configured list (order
+    // preserved); the selection is this role's last-picked region, else the
+    // General Settings region. The selected region is always present even if it
+    // isn't in the list, so a sign-in never targets a missing region.
+    generateRegionDropdownHTML(roleArn) {
+      const def = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+      const selected = this.getLastRegionSync(roleArn) || def;
+      const list = regionListCache.slice();
+      if (!list.some((r) => r.id === selected)) {
+        list.unshift({ id: selected, label: selected });
+      }
+      const optionsHTML = list
+        .map(
+          (r) =>
+            `<option value="${escapeHtml(r.id)}"${r.id === selected ? " selected" : ""}>${escapeHtml(r.label)}</option>`
+        )
+        .join("");
+      return `
+        <select class="tm_region_dropdown" data-role-arn="${escapeHtml(roleArn)}" title="AWS region for this sign-in">
           ${optionsHTML}
         </select>
       `;
@@ -1507,10 +1632,10 @@ import {
   // global one, and so multi-session routing (when enabled) kicks in directly.
   // Appends a URL fragment payload (env/account/role) so the console-side
   // decorator script can color and label the resulting tab.
-  const buildDestination = (servicePath, labelPayload) => {
-    const region = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
-    const host = `https://${region}.console.aws.amazon.com`;
-    const path = (servicePath || "").replace(/\{region\}/g, region);
+  const buildDestination = (servicePath, labelPayload, region) => {
+    const r = region || GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    const host = `https://${r}.console.aws.amazon.com`;
+    const path = (servicePath || "").replace(/\{region\}/g, r);
     const base = path ? `${host}/${path}` : `${host}/`;
     if (!labelPayload) return base;
     try {
@@ -1662,6 +1787,7 @@ import {
             <a href="#" class="tm_action_button" id="tm_manage_types">Manage Account Types</a>
             <a href="#" class="tm_action_button" id="tm_manage_role_names">Manage Role Names</a>
             <a href="#" class="tm_action_button" id="tm_manage_services">Manage Services</a>
+            <a href="#" class="tm_action_button" id="tm_manage_regions">Manage Regions</a>
             <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
             <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
             <a href="#" class="tm_action_button" id="tm_import_settings">Import Settings</a>
@@ -2373,6 +2499,31 @@ import {
             border-color: #3182ce !important;
         }
 
+        .tm_region_dropdown {
+            padding: 6px 12px !important;
+            border: 1px solid #ccc !important;
+            border-radius: 4px !important;
+            background: #fff !important;
+            color: #16191f !important;
+            cursor: pointer !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            min-width: 120px !important;
+            transition: all 0.2s ease !important;
+        }
+        .tm_region_dropdown:hover { border-color: #0073bb !important; }
+        .tm_region_dropdown:focus {
+            outline: none !important;
+            border-color: #0073bb !important;
+            box-shadow: 0 0 0 2px rgba(0, 115, 187, 0.2) !important;
+        }
+        body.tm_theme_dark .tm_region_dropdown {
+            background-color: #4a5568 !important;
+            color: #e9ecef !important;
+            border-color: #6b7280 !important;
+        }
+        body.tm_theme_dark .tm_region_dropdown:hover { border-color: #3182ce !important; }
+
         .tm_favorite_button {
             padding: 4px 8px !important;
             border: 1px solid #ffc107 !important;
@@ -2564,6 +2715,8 @@ import {
   // Load services and last selections before transforming roles (needed for dropdown generation)
   await ServicesManager.loadCache();
   await ServicesManager.loadLastServicesCache();
+  await RegionsManager.loadCache();
+  await RegionsManager.loadLastRegionsCache();
   // Pattern caches must be loaded before filtering / styling kicks in.
   await EnvironmentsManager.loadCache();
   await OrganizationsManager.loadCache();
@@ -2618,6 +2771,7 @@ import {
                     <button class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
                     <button class="tm_role_button" data-action="copy-account-id" data-account-id="${safeAccountId}">Copy Account ID</button>
                     ${ServicesManager.generateDropdownHTML(roleArn, accountInfo.id)}
+                    ${RegionsManager.generateRegionDropdownHTML(roleArn)}
                     <button class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in (hold ⌘/Ctrl or middle-click for a new tab)">Sign In</button>
                 </div>
             `;
@@ -2657,6 +2811,7 @@ import {
     const roleArn = $button.data("role-arn");
     const $role = $button.closest(".saml-role");
     const servicePath = $role.find(".tm_service_dropdown").val();
+    const region = $role.find(".tm_region_dropdown").val();
     const roleName = $role.find(".tm_role_name").text().trim();
     const accountName = $role.find(".tm_account_name").text().trim();
     const accountId = $role.find(".tm_account_id").text().trim();
@@ -2668,6 +2823,8 @@ import {
       const ok = await confirmSensitiveSignIn(accountName, accountId, roleName, reasons);
       if (!ok) return;
     }
+
+    if (region) await RegionsManager.saveLastRegion(roleArn, region);
 
     if (servicePath) {
       await ServicesManager.saveLastService(roleArn, servicePath);
@@ -2703,7 +2860,17 @@ import {
       }
     }
     await RecentRolesManager.recordSignIn(roleArn);
-    signInToRole(roleArn, buildDestination(servicePath, labelPayload), { newTab });
+    signInToRole(roleArn, buildDestination(servicePath, labelPayload, region), {
+      newTab,
+    });
+  });
+
+  // --- Handle region dropdown change (just remember, don't sign in) ---
+  $("body").on("change", ".tm_region_dropdown", async function () {
+    const $dropdown = $(this);
+    const region = $dropdown.val();
+    const roleArn = $dropdown.data("role-arn");
+    if (region) await RegionsManager.saveLastRegion(roleArn, region);
   });
 
   // --- Handle service dropdown change (just remember, don't sign in) ---
@@ -2765,6 +2932,11 @@ import {
   $("body").on("click", "#tm_manage_services", function (e) {
     e.preventDefault();
     showServicesModal();
+  });
+
+  $("body").on("click", "#tm_manage_regions", function (e) {
+    e.preventDefault();
+    showRegionsModal();
   });
 
   // Show shortcuts management modal
@@ -2990,6 +3162,80 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (saved) {
         $("#tm_services_modal").remove();
         showToast("Services saved! Refresh page to see changes in dropdowns.", "success", CONFIG.TOAST_DURATION);
+      }
+    });
+  };
+
+  const showRegionsModal = () => {
+    const current = formatRegionLines(regionListCache);
+    const modalHTML = `
+            <div id="tm_regions_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 20px !important;
+                    max-width: 500px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
+                ">
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage Regions</h3>
+                    <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important;">
+                        One region per line, in the order they should appear in the toolbar switcher.
+                        Use <code>code</code> or <code>code: Friendly Label</code>
+                        (e.g. <code>eu-west-1: Ireland</code>). The default selection stays whatever
+                        you set in <em>General Settings</em>.
+                    </p>
+                    <textarea id="tm_regions_input" style="
+                        width: 100% !important; height: 250px !important; border: 1px solid #ccc !important;
+                        border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
+                        font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
+                    " placeholder="us-east-1: US East (N. Virginia)&#10;eu-west-1: Ireland&#10;ap-southeast-2: Sydney">${escapeHtml(current)}</textarea>
+                    <div style="margin-top: 10px !important;">
+                        <button id="tm_regions_reset" style="
+                            padding: 6px 12px !important; border: 1px solid #dc3545 !important; background: white !important;
+                            color: #dc3545 !important; border-radius: 4px !important; cursor: pointer !important; font-size: 12px !important;
+                        ">Reset to Defaults</button>
+                    </div>
+                    <div style="margin-top: 15px !important; text-align: right !important;">
+                        <button id="tm_regions_cancel" style="
+                            padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
+                            background: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Cancel</button>
+                        <button id="tm_regions_save" style="
+                            padding: 8px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                            color: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    $("#tm_regions_cancel, #tm_regions_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_regions_modal").remove();
+    });
+
+    $("#tm_regions_reset").on("click", function () {
+      $("#tm_regions_input").val(formatRegionLines(CONFIG.DEFAULT_REGION_LIST));
+      showToast("Reset to defaults - click Save to apply", "info", CONFIG.TOAST_DURATION_LONG);
+    });
+
+    $("#tm_regions_save").on("click", async function () {
+      const list = parseRegionLines($("#tm_regions_input").val());
+      if (list.length === 0) {
+        showToast("Add at least one valid region", "error");
+        return;
+      }
+      const saved = await RegionsManager.saveRegions(list);
+      if (saved) {
+        $("#tm_regions_modal").remove();
+        showToast(
+          "Regions saved! Refresh page to see changes in the dropdowns.",
+          "success",
+          CONFIG.TOAST_DURATION
+        );
       }
     });
   };
@@ -4076,6 +4322,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     CONFIG.STORAGE_KEYS.FAVORITES,
     CONFIG.STORAGE_KEYS.SHORTCUTS,
     CONFIG.STORAGE_KEYS.SERVICES,
+    CONFIG.STORAGE_KEYS.REGION_LIST,
     CONFIG.STORAGE_KEYS.ENV_PATTERNS,
     CONFIG.STORAGE_KEYS.ORG_PATTERNS,
     CONFIG.STORAGE_KEYS.TYPE_PATTERNS,
@@ -4303,6 +4550,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           typeof s.name === "string" && s.name.length <= 64 &&
           typeof s.path === "string" && s.path.length <= 256
         );
+      const isRegionList = (v) =>
+        Array.isArray(v) && v.every((r) =>
+          r && typeof r === "object" &&
+          typeof r.id === "string" && r.id.length <= 32 &&
+          (r.label === undefined || (typeof r.label === "string" && r.label.length <= 64))
+        );
       const isRecentRoleList = (v) =>
         Array.isArray(v) && v.every((r) =>
           r && typeof r === "object" && typeof r.roleArn === "string"
@@ -4322,6 +4575,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.COMPACT_MODE]: (v) => typeof v === "boolean",
         [SK.SERVICES]:     isServiceList,
         [SK.LAST_SERVICE]: isPlainStringMap,
+        [SK.LAST_REGION]:  isPlainStringMap,
+        [SK.REGION_LIST]:  isRegionList,
         [SK.ENV_PATTERNS]: isPatternEntryList,
         [SK.ORG_PATTERNS]: isPatternEntryList,
         [SK.TYPE_PATTERNS]: isPatternEntryList,

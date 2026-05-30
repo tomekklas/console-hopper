@@ -203,7 +203,8 @@ chip states, and result counts; axe DevTools shows no critical violations.
 - **Console-window env colour** — slim coloured banner/tint across the AWS console
   (not just the favicon); builds on `console-decorator.js`; the signature feature
   of AWS Extend Switch Roles.
-- **Region quick-switch** — expose `{region}` per sign-in instead of one global.
+- ~~Region quick-switch~~ — **shipped in 1.1.0** (toolbar REGION switcher +
+  Manage Regions panel).
 - **Fuzzy search** — subsequence/typo-tolerant matching for large role lists.
 - **Firefox/Edge port** — `webextension-polyfill` + `browser_specific_settings`
   (`gecko.id`, `background.scripts`); re-add `web-ext lint` here (it targets

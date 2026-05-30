@@ -56,3 +56,49 @@ export const matchesRolePatterns = (patterns, roleName) => {
   }
   return false;
 };
+
+// AWS region code shape — deliberately lenient so it covers every partition
+// (us-east-1, ap-southeast-2, eu-central-1, us-gov-east-1, cn-north-1, …).
+const REGION_CODE_RE = /^[a-z0-9-]+$/;
+
+// Parse the Manage Regions textarea: one region per line, either "code" or
+// "code: Friendly Label". Invalid codes are skipped; the first of any
+// duplicate id wins. The resulting order is the order regions appear in the
+// switcher dropdown.
+export const parseRegionLines = (text) => {
+  const out = [];
+  const seen = new Set();
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const sep = line.indexOf(":");
+    const id = (sep === -1 ? line : line.slice(0, sep)).trim().toLowerCase();
+    const label = (sep === -1 ? "" : line.slice(sep + 1).trim()) || id;
+    if (!REGION_CODE_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, label });
+  }
+  return out;
+};
+
+// Render a region list back into the textarea form (inverse of parseRegionLines).
+export const formatRegionLines = (list) =>
+  (Array.isArray(list) ? list : [])
+    .map((r) => (r.label && r.label !== r.id ? `${r.id}: ${r.label}` : r.id))
+    .join("\n");
+
+// Validate a stored / imported region list into clean [{ id, label }] entries.
+export const normalizeRegionList = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const id = (e.id || "").toString().trim().toLowerCase();
+    if (!REGION_CODE_RE.test(id) || seen.has(id)) continue;
+    const label = (e.label || id).toString().trim() || id;
+    seen.add(id);
+    out.push({ id, label });
+  }
+  return out;
+};
