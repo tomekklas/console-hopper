@@ -20,6 +20,11 @@ All notable changes to Console Hopper are listed here. Dates are in
 
 ### Changed
 
+- Reworked each role row into an aligned grid — ★ · account name · role name ·
+  account ID · Service · Region · Sign In — so every column lines up vertically
+  across rows. The two name columns flex (with ellipsis) so long account/role
+  names get the room, while the controls stay aligned. The account ID is now a
+  click-to-copy button (the separate "Copy Account ID" button is gone).
 - Removed the bundled jQuery dependency in favour of a small built-in DOM
   helper. The installed extension is now ~50% smaller (submission package
   95K → 48K) with no change in behaviour.

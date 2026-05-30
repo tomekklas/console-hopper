@@ -1579,7 +1579,7 @@ import {
         totalCount++;
 
         if (matchesFilters($role)) {
-          $role.css("display", "flex").show();
+          $role.css("display", "").show();
           visibleCount++;
         } else {
           $role.css("display", "none").hide();
@@ -1616,7 +1616,7 @@ import {
       getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT).val("");
 
       getCachedElement(CONFIG.SELECTORS.SAML_ROLES).each(function () {
-        $(this).css("display", "flex").show();
+        $(this).css("display", "").show();
       });
 
       // Filters are off again: drop the body marker drag-and-drop watches.
@@ -2296,9 +2296,13 @@ import {
             margin-left: 0 !important;
             margin-right: 0 !important;
             box-shadow: 0 1px 2px rgba(0,0,0,0.08) !important;
-            display: flex !important;
+            display: grid !important;
+            /* fav | account name | role name | account id | service | region | sign in
+               The two name columns flex (1fr) so long names get room and ellipsis;
+               every column lines up vertically across rows like a table. */
+            grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto auto auto auto !important;
             align-items: center !important;
-            justify-content: space-between !important;
+            column-gap: 12px !important;
             transition: all 0.2s ease !important;
             min-height: 36px !important;
         }
@@ -2370,15 +2374,10 @@ import {
             box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
         }
 
+        /* Flatten this wrapper so its children (fav, account name, role name)
+           become direct grid items of .saml-role and share its columns. */
         .tm_role_info {
-            flex: 1 !important;
-            display: flex !important;
-            flex-direction: row !important;
-            align-items: center !important;
-            gap: 12px !important;
-            line-height: 1.3 !important;
-            min-width: 0 !important;
-            overflow: hidden !important;
+            display: contents !important;
         }
 
         .tm_account_name {
@@ -2386,28 +2385,35 @@ import {
             color: #16191f !important;
             font-weight: 500 !important;
             margin: 0 !important;
-            flex: 1 !important;
+            flex: 0 1 auto !important;
             min-width: 0 !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
             white-space: nowrap !important;
-            max-width: 300px !important;
             position: relative !important;
             cursor: default !important;
         }
 
         .tm_account_id {
             font-size: 12px !important;
-            color: #6c757d !important;
-            font-weight: 400 !important;
+            color: #16191f !important;
+            font-weight: 500 !important;
             margin: 0 !important;
             font-family: monospace !important;
-            background-color: #f8f9fa !important;
-            padding: 2px 6px !important;
-            border-radius: 3px !important;
-            flex-shrink: 0 !important;
-            min-width: 100px !important;
+            background: #fff !important;
+            border: 1px solid #ccc !important;
+            padding: 6px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            min-width: 116px !important;
             text-align: center !important;
+            box-sizing: border-box !important;
+            transition: all 0.2s ease !important;
+        }
+
+        .tm_account_id:hover {
+            border-color: #0073bb !important;
+            background: #f8f9fa !important;
         }
 
         .tm_role_name {
@@ -2415,8 +2421,8 @@ import {
             color: #0073bb !important;
             font-weight: 600 !important;
             margin: 0 !important;
-            flex-shrink: 0 !important;
-            min-width: 110px !important;
+            flex: 0 1 auto !important;
+            min-width: 0 !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
             white-space: nowrap !important;
@@ -2424,18 +2430,23 @@ import {
 
         body.tm_theme_dark .tm_account_id {
             background-color: #4a5568 !important;
-            color: #cbd5e0 !important;
+            color: #e9ecef !important;
+            border-color: #6b7280 !important;
+        }
+
+        body.tm_theme_dark .tm_account_id:hover {
+            border-color: #3182ce !important;
+            background-color: #5a6678 !important;
         }
 
         .saml-role span[style*="clear"] {
             display: none !important;
         }
 
+        /* Flatten this wrapper too, so account id / service / region / sign in
+           become direct grid items of .saml-role. */
         .tm_role_buttons {
-            display: flex !important;
-            gap: 8px !important;
-            flex-wrap: wrap !important;
-            align-items: center !important;
+            display: contents !important;
         }
 
         .tm_role_button {
@@ -2476,7 +2487,8 @@ import {
             cursor: pointer !important;
             font-size: 13px !important;
             font-weight: 500 !important;
-            min-width: 140px !important;
+            width: 150px !important;
+            box-sizing: border-box !important;
             transition: all 0.2s ease !important;
         }
 
@@ -2509,7 +2521,8 @@ import {
             cursor: pointer !important;
             font-size: 13px !important;
             font-weight: 500 !important;
-            min-width: 120px !important;
+            width: 190px !important;
+            box-sizing: border-box !important;
             transition: all 0.2s ease !important;
         }
         .tm_region_dropdown:hover { border-color: #0073bb !important; }
@@ -2537,6 +2550,7 @@ import {
             transition: all 0.2s ease !important;
             min-width: 32px !important;
             text-align: center !important;
+            flex-shrink: 0 !important;
         }
 
         .tm_favorite_button:hover {
@@ -2764,13 +2778,12 @@ import {
 
       const roleInfoHTML = `
                 <div class="tm_role_info">
+                    <button class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
                     <div class="tm_account_name">${safeAccountName}</div>
-                    <div class="tm_account_id">${safeAccountId}</div>
                     <div class="tm_role_name">${safeRoleName}</div>
                 </div>
                 <div class="tm_role_buttons">
-                    <button class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
-                    <button class="tm_role_button" data-action="copy-account-id" data-account-id="${safeAccountId}">Copy Account ID</button>
+                    <button type="button" class="tm_account_id" data-account-id="${safeAccountId}" title="Click to copy account ID">${safeAccountId}</button>
                     ${ServicesManager.generateDropdownHTML(roleArn, accountInfo.id)}
                     ${RegionsManager.generateRegionDropdownHTML(roleArn)}
                     <button class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in (hold ⌘/Ctrl or middle-click for a new tab)">Sign In</button>
@@ -2788,10 +2801,11 @@ import {
   RoleOrderManager.applySavedOrder();
 
   // --- Handle Copy Account ID button ---
-  $("body").on("click", ".tm_role_button[data-action='copy-account-id']", async function (e) {
+  // Click the account-id pill to copy it (replaces the old Copy Account ID button).
+  $("body").on("click", ".tm_account_id", async function (e) {
     e.preventDefault();
-    const $button = $(this);
-    const accountId = $button.data("account-id");
+    const accountId = (this.textContent || "").trim();
+    if (!accountId) return;
     const ok = await copyTextToClipboard(accountId);
     showToast(
       ok ? `Account ID ${accountId} copied!` : `Failed to copy ${accountId}`,
@@ -3639,6 +3653,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   const isDragInteractive = (el) => {
     if (!el) return false;
     if (el.closest && el.closest(".tm_role_buttons")) return true;
+    // The favorite star and the click-to-copy account id sit in the draggable
+    // info area but must take their click instead of starting a drag.
+    if (el.closest && el.closest(".tm_account_id")) return true;
     const tag = (el.tagName || "").toLowerCase();
     return ["button", "select", "input", "a", "textarea"].includes(tag);
   };
