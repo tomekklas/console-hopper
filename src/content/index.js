@@ -1926,7 +1926,7 @@ import {
         }
 
         body.tm_theme_dark .tm_role_name {
-            color: #63b3ed !important;
+            color: #e9ecef !important;
         }
 
         body.tm_theme_dark .tm_role_button {
@@ -2418,8 +2418,8 @@ import {
 
         .tm_role_name {
             font-size: 14px !important;
-            color: #0073bb !important;
-            font-weight: 600 !important;
+            color: #16191f !important;
+            font-weight: 500 !important;
             margin: 0 !important;
             flex: 0 1 auto !important;
             min-width: 0 !important;
