@@ -23,7 +23,7 @@ export default [
       globals: { ...globals.browser, ...globals.webextensions },
     },
     rules: {
-      "no-unused-vars": "warn",
+      "no-unused-vars": ["warn", { caughtErrors: "none" }],
       "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
@@ -36,7 +36,7 @@ export default [
       globals: { ...globals.browser, ...globals.webextensions },
     },
     rules: {
-      "no-unused-vars": "warn",
+      "no-unused-vars": ["warn", { caughtErrors: "none" }],
       "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },

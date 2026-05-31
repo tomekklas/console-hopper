@@ -24,7 +24,7 @@ import {
   const CONFIG = {
     SCRIPT_VERSION: chrome.runtime.getManifest().version,
     SCRIPT_HOMEPAGE_DEFAULT: "",
-    DEFAULT_AWS_REGION: "us-east-1",
+    DEFAULT_AWS_REGION: "eu-central-1", // Frankfurt — the default sign-in region
     STS_DURATION: 43200, // 12 hours
     TOAST_DURATION: 3000,
     TOAST_DURATION_SHORT: 1500,
@@ -106,19 +106,43 @@ import {
       { id: "vpc",            name: "VPC",            path: "vpcconsole/home?region={region}" },
       { id: "rds",            name: "RDS",            path: "rds/home?region={region}" },
     ],
-    // Regions offered by the toolbar region switcher (order = dropdown order).
-    // The default selection is the General Settings region; this list just
-    // controls which regions are quick-pickable. Editable via Manage Regions.
+    // All commercial AWS regions, offered in each row's region dropdown (order
+    // = dropdown order; Frankfurt first). GovCloud and China are intentionally
+    // excluded — they use different console domains (amazonaws-us-gov.com /
+    // .cn) that the {region}.console.aws.amazon.com deep-link doesn't target.
+    // AWS adds regions over time; users can edit the list via Manage Regions.
     DEFAULT_REGION_LIST: [
-      { id: "us-east-1", label: "US East (N. Virginia)" },
-      { id: "us-east-2", label: "US East (Ohio)" },
-      { id: "us-west-2", label: "US West (Oregon)" },
+      { id: "eu-central-1", label: "Europe (Frankfurt)" },
+      { id: "eu-central-2", label: "Europe (Zurich)" },
       { id: "eu-west-1", label: "Europe (Ireland)" },
       { id: "eu-west-2", label: "Europe (London)" },
-      { id: "eu-central-1", label: "Europe (Frankfurt)" },
+      { id: "eu-west-3", label: "Europe (Paris)" },
+      { id: "eu-north-1", label: "Europe (Stockholm)" },
+      { id: "eu-south-1", label: "Europe (Milan)" },
+      { id: "eu-south-2", label: "Europe (Spain)" },
+      { id: "us-east-1", label: "US East (N. Virginia)" },
+      { id: "us-east-2", label: "US East (Ohio)" },
+      { id: "us-west-1", label: "US West (N. California)" },
+      { id: "us-west-2", label: "US West (Oregon)" },
+      { id: "ca-central-1", label: "Canada (Central)" },
+      { id: "ca-west-1", label: "Canada West (Calgary)" },
+      { id: "sa-east-1", label: "South America (São Paulo)" },
+      { id: "mx-central-1", label: "Mexico (Central)" },
+      { id: "af-south-1", label: "Africa (Cape Town)" },
+      { id: "me-central-1", label: "Middle East (UAE)" },
+      { id: "me-south-1", label: "Middle East (Bahrain)" },
+      { id: "il-central-1", label: "Israel (Tel Aviv)" },
+      { id: "ap-east-1", label: "Asia Pacific (Hong Kong)" },
+      { id: "ap-south-1", label: "Asia Pacific (Mumbai)" },
+      { id: "ap-south-2", label: "Asia Pacific (Hyderabad)" },
+      { id: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
+      { id: "ap-northeast-2", label: "Asia Pacific (Seoul)" },
+      { id: "ap-northeast-3", label: "Asia Pacific (Osaka)" },
       { id: "ap-southeast-1", label: "Asia Pacific (Singapore)" },
       { id: "ap-southeast-2", label: "Asia Pacific (Sydney)" },
-      { id: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
+      { id: "ap-southeast-3", label: "Asia Pacific (Jakarta)" },
+      { id: "ap-southeast-4", label: "Asia Pacific (Melbourne)" },
+      { id: "ap-southeast-5", label: "Asia Pacific (Malaysia)" },
     ],
     THEMES: {
       light: { name: "Light", icon: "☀️", next: "dark" },
@@ -817,7 +841,6 @@ import {
     text:      { from: ["#16191f", "#000", "#212529"], to: "#e9ecef" },
     muted:     { from: ["#6c757d", "#4a5568"],       to: "#a0aec0" },
   };
-  const LIGHT_MODAL_DEFAULTS = { bg: "white", softBox: "#f8f9fa", border: "#e1e4e8", text: "#16191f", muted: "#6c757d" };
 
   // On first touch, snapshot the entire inline `style` attribute. Restoring
   // to light mode just re-sets that snapshot — which faithfully recovers all
@@ -2787,7 +2810,7 @@ import {
   updateHomepageFooter();
 
   // --- Transform each role to add buttons and account info ---
-  $(".saml-role").each(function (index) {
+  $(".saml-role").each(function () {
     const $role = $(this);
     const $radio = $role.find('input[type="radio"]');
     const $label = $role.find("label, .saml-role-description");
@@ -3726,7 +3749,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     };
   });
 
-  const activateDrag = (e) => {
+  const activateDrag = () => {
     const list = document.getElementById(RoleOrderManager.LIST_ID);
     if (!list) { dragState = null; return; }
     const visible = Array.from(list.children).filter((el) =>

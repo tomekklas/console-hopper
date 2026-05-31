@@ -51,14 +51,24 @@ features.
 - **Deep-link into a service** — pick EC2 / S3 / IAM / CloudWatch /
   CloudFormation / … before clicking Sign In and land directly in that
   service's console for that role.
+- **Per-sign-in region** — each role row has a region dropdown, so you
+  choose which AWS region a sign-in lands in. Defaults to your region,
+  remembers your last pick per role, and the offered list is editable
+  via `Manage Regions`.
+- **Click-to-copy account ID** — click the account-ID button on any row
+  to copy the 12-digit id.
 - **Coloured console tabs** — env-coloured favicon + account-name title
   prefix, so ten open AWS consoles stay distinguishable.
 - **Tab groups** — cluster console tabs by role, by organisation, or by
   a per-ticket override tag using Chrome's native tab groups.
 - **Sensitive-sign-in confirmation** — pops a confirmation modal for
   configurable role-name keywords (default: `admin`) or account types.
-- **⌘/Ctrl-click Sign In** (also: middle-click, ⌘+Enter) opens the
-  resulting AWS console in a new tab.
+- **New-tab sign-in** — ⌘/Ctrl-click, middle-click, or ⌘+Enter opens the
+  console in a new tab. A `Sign-in` side-menu option sets the default,
+  and the modifier inverts it.
+- **Clear AWS Sessions** — one click signs you out of all open AWS
+  consoles by clearing AWS auth cookies (your console favourites and
+  settings are kept).
 - **Light / dark / auto theme**, compact mode, keyboard shortcuts
   (`/` or `⌘K` to search, `↑/↓` to navigate, `Enter` to sign in).
 - **Export / Import settings** as JSON to share configuration with a

@@ -55,6 +55,14 @@ WHAT YOU GET
   service before Sign In and you land directly in that service's
   console for that role.
 
+• Per-sign-in region
+  Each role row also has a region dropdown — choose which AWS region a
+  sign-in lands in (defaults to your region, remembers your last pick
+  per role). Edit the offered regions via "Manage Regions".
+
+• Copy account ID
+  Click the account-id button on any row to copy the 12-digit id.
+
 • Colour-coded console tabs
   Every AWS console tab opened through the plugin gets a coloured
   favicon (env colour) and an account-name title prefix, so ten open
@@ -72,6 +80,14 @@ WHAT YOU GET
   account types are sensitive. Signing into a matching role/account
   pops a "are you sure?" modal so you don't accidentally land in
   production.
+
+• Clear AWS sessions
+  One click signs you out of all open AWS consoles by clearing AWS
+  authentication cookies (your console favourites and settings are kept).
+
+• New-tab sign-in
+  ⌘/Ctrl-click, middle-click or ⌘+Enter opens the console in a new tab.
+  A "Sign-in" side-menu option sets the default; the modifier inverts it.
 
 • Drag-to-reorder
   Hold and drag any role row to set your preferred order. "Reset Order"
