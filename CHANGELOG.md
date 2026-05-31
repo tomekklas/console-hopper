@@ -17,6 +17,10 @@ All notable changes to Console Hopper are listed here. Dates are in
   your console favorites and settings are kept. Adds the `cookies` permission and
   `https://*.aws.amazon.com/*` host access (cookies are only deleted, never read
   or transmitted).
+- **Sign-in tab control.** A side-menu **Sign-in** option — a small dialog with
+  explanations, like Tab Groups — chooses whether a plain Sign In click opens the
+  console in the same tab or a new tab. ⌘/Ctrl-click or middle-click inverts it,
+  so both behaviours are always one click away.
 
 ### Changed
 

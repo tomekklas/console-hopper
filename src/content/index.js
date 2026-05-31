@@ -36,6 +36,7 @@ import {
       FAVORITES: "aws_favorites",
       SHORTCUTS: "aws_custom_shortcuts",
       COMPACT_MODE: "aws_compact_mode",
+      SIGNIN_NEW_TAB: "aws_signin_new_tab",
       SERVICES: "aws_services",
       LAST_SERVICE: "aws_last_service",
       LAST_REGION: "aws_last_region",
@@ -132,6 +133,7 @@ import {
       RADIO_BUTTONS: 'input[type="radio"]',
       THEME_TOGGLE: "#tm_theme_toggle",
       COMPACT_TOGGLE: "#tm_compact_toggle",
+      SIGNIN_TAB_TOGGLE: "#tm_signin_tab_toggle",
       SEARCH_INPUT: "#tm_search_input",
       FAVORITE_BUTTONS: ".tm_favorite_button",
       FILTER_BUTTONS: ".tm_filter_button",
@@ -240,6 +242,7 @@ import {
 
   // Compact mode setting
   let compactMode = false;
+  let signinNewTab = false;
 
   let currentTheme = "light";
 
@@ -418,6 +421,20 @@ import {
     async saveCompactMode(compact) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.COMPACT_MODE]: compact });
+        return true;
+      }, false);
+    },
+
+    async getSigninNewTab() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.SIGNIN_NEW_TAB);
+        return result[CONFIG.STORAGE_KEYS.SIGNIN_NEW_TAB] ?? false;
+      }, false);
+    },
+
+    async saveSigninNewTab(value) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.SIGNIN_NEW_TAB]: value });
         return true;
       }, false);
     },
@@ -1017,6 +1034,29 @@ import {
     updateButton() {
       getCachedElement(CONFIG.SELECTORS.COMPACT_TOGGLE).text(
         `Compact: ${compactMode ? "On" : "Off"}`
+      );
+    },
+  };
+
+  // Default tab behaviour for a plain Sign In click. A modifier (⌘/Ctrl or
+  // middle-click) inverts it at sign-in time, so both are always available.
+  const SigninTabManager = {
+    async loadSetting() {
+      signinNewTab = await StorageManager.getSigninNewTab();
+      debug("Loaded sign-in new-tab default:", signinNewTab);
+    },
+    async saveSetting(value) {
+      const saved = await StorageManager.saveSigninNewTab(value);
+      if (saved !== false) {
+        signinNewTab = value;
+        return true;
+      }
+      showToast("Failed to save sign-in tab setting", "error");
+      return false;
+    },
+    updateButton() {
+      getCachedElement(CONFIG.SELECTORS.SIGNIN_TAB_TOGGLE).text(
+        `Sign-in: ${signinNewTab ? "New tab" : "Same tab"}`
       );
     },
   };
@@ -1779,6 +1819,7 @@ import {
         <div id="tm_actions_container">
             <a href="#" class="tm_action_button" id="tm_theme_toggle">Theme: Light</a>
             <a href="#" class="tm_action_button" id="tm_compact_toggle">Compact: Off</a>
+            <a href="#" class="tm_action_button" id="tm_signin_tab_toggle">Sign-in: Same tab</a>
             <a href="#" class="tm_action_button" id="tm_recent_limit">Recent: 10</a>
             <a href="#" class="tm_action_button" id="tm_tab_group_mode">Tab Groups: By role</a>
             <a href="#" class="tm_action_button" id="tm_manage_shortcuts">Manage Shortcuts</a>
@@ -2786,7 +2827,7 @@ import {
                     <button type="button" class="tm_account_id" data-account-id="${safeAccountId}" title="Click to copy account ID">${safeAccountId}</button>
                     ${ServicesManager.generateDropdownHTML(roleArn, accountInfo.id)}
                     ${RegionsManager.generateRegionDropdownHTML(roleArn)}
-                    <button class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in (hold ⌘/Ctrl or middle-click for a new tab)">Sign In</button>
+                    <button class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in — ⌘/Ctrl-click or middle-click toggles new tab">Sign In</button>
                 </div>
             `;
 
@@ -2821,7 +2862,10 @@ import {
   $("body").on("click auxclick", ".tm_signin_button", async function (e) {
     if (e.type === "auxclick" && e.button !== 1) return; // only middle-click counts
     e.preventDefault();
-    const newTab = !!(e.metaKey || e.ctrlKey || (e.type === "auxclick" && e.button === 1));
+    // The toggle sets the default for a plain click; a modifier (⌘/Ctrl or
+    // middle-click) inverts it, so both behaviours stay one click away.
+    const modifier = !!(e.metaKey || e.ctrlKey || (e.type === "auxclick" && e.button === 1));
+    const newTab = signinNewTab !== modifier;
     const $button = $(this);
     const roleArn = $button.data("role-arn");
     const $role = $button.closest(".saml-role");
@@ -2935,6 +2979,12 @@ import {
         CONFIG.TOAST_DURATION_LONG
       );
     }
+  });
+
+  // --- Handle sign-in tab option (opens a modal, like Tab Groups) ---
+  $("body").on("click", CONFIG.SELECTORS.SIGNIN_TAB_TOGGLE, function (e) {
+    e.preventDefault();
+    showSigninTabModal();
   });
 
   // --- Handle manage shortcuts ---
@@ -4249,6 +4299,96 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
   };
 
+  const showSigninTabModal = () => {
+    const current = signinNewTab ? "new" : "same";
+    const optionHTML = (key, title, desc) => {
+      const checked = key === current ? "checked" : "";
+      return `
+        <label style="display: flex !important; gap: 10px !important; align-items: flex-start !important; padding: 10px 12px !important; border: 1px solid #e1e4e8 !important; border-radius: 6px !important; margin-bottom: 8px !important; cursor: pointer !important;">
+          <input type="radio" name="tm_signin_tab_choice" value="${key}" ${checked} style="margin: 4px 0 0 0 !important;" />
+          <span style="flex: 1 !important;">
+            <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; font-size: 14px !important;">${title}</span>
+            <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 2px !important;">${desc}</span>
+          </span>
+        </label>
+      `;
+    };
+
+    const modalHTML = `
+      <div id="tm_signin_tab_modal" style="
+          position: fixed !important;
+          top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+          background: rgba(0,0,0,0.5) !important;
+          z-index: 10000 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+      ">
+        <div style="
+            background: white !important;
+            border-radius: 8px !important;
+            padding: 22px 24px !important;
+            max-width: 560px !important;
+            width: 92% !important;
+            max-height: 88vh !important;
+            overflow-y: auto !important;
+        ">
+          <h3 style="margin: 0 0 8px 0 !important; color: #16191f !important;">Sign-in tab</h3>
+          <p style="margin: 0 0 8px 0 !important; color: #6c757d !important; font-size: 13px !important; line-height: 1.45 !important;">
+            Choose where clicking <strong>Sign In</strong> opens the AWS console.
+          </p>
+          <p style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.45 !important;">
+            <strong>Tip:</strong> to do the opposite for just one sign-in, hold
+            <strong>⌘/Ctrl</strong> (or middle-click) when you click Sign In —
+            no need to change this setting. (If you use the keyboard, ⌘/Ctrl +
+            Enter does the same.)
+          </p>
+          ${optionHTML("same", "Same tab", "Sign In replaces the current tab (the role picker). This is the default.")}
+          ${optionHTML("new", "New tab", "Sign In opens the console in a new tab and leaves the role picker open, so you can sign into several roles in a row.")}
+          <div style="margin-top: 14px !important; text-align: right !important;">
+            <button data-action="cancel" style="
+                padding: 8px 16px !important;
+                margin-right: 10px !important;
+                border: 1px solid #ccc !important;
+                background: white !important;
+                border-radius: 4px !important;
+                cursor: pointer !important;
+            ">Cancel</button>
+            <button data-action="save" style="
+                padding: 8px 16px !important;
+                border: 1px solid #0073bb !important;
+                background: #0073bb !important;
+                color: white !important;
+                border-radius: 4px !important;
+                cursor: pointer !important;
+                font-weight: 600 !important;
+            ">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
+    $("body").append(modalHTML);
+    const $m = $("#tm_signin_tab_modal");
+    const close = () => $m.remove();
+    $m.on("click", function (ev) { if (ev.target === this) close(); });
+    $m.find('[data-action="cancel"]').on("click", close);
+
+    $m.find('[data-action="save"]').on("click", async function () {
+      const chosen = $m.find('input[name="tm_signin_tab_choice"]:checked').val();
+      const value = chosen === "new";
+      const saved = await SigninTabManager.saveSetting(value);
+      if (saved) {
+        SigninTabManager.updateButton();
+        close();
+        showToast(
+          `Sign-in opens in ${value ? "a new tab" : "the same tab"}`,
+          "success",
+          CONFIG.TOAST_DURATION
+        );
+      }
+    });
+  };
+
   // --- Tab group tag input ---
   // Persisted in chrome.storage so it survives page reloads. Empty value
   // means "use default grouping (account/role)"; non-empty value overrides.
@@ -4659,6 +4799,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                               typeof s.label === "string" && s.label.length <= 64 &&
                               typeof s.search === "string" && s.search.length <= 256),
         [SK.COMPACT_MODE]: (v) => typeof v === "boolean",
+        [SK.SIGNIN_NEW_TAB]: (v) => typeof v === "boolean",
         [SK.SERVICES]:     isServiceList,
         [SK.LAST_SERVICE]: isPlainStringMap,
         [SK.LAST_REGION]:  isPlainStringMap,
@@ -5133,6 +5274,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     debug("Compact mode applied successfully");
   } catch (e) {
     console.error("Error during compact mode initialization:", e);
+  }
+
+  // Sign-in new-tab default (toggle; ⌘/Ctrl/middle-click inverts it).
+  try {
+    await SigninTabManager.loadSetting();
+    SigninTabManager.updateButton();
+  } catch (e) {
+    console.error("Error loading sign-in tab setting:", e);
   }
 
   // Sync the "Recent: N" floating-menu label with the stored limit.
