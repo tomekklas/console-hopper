@@ -106,43 +106,32 @@ import {
       { id: "vpc",            name: "VPC",            path: "vpcconsole/home?region={region}" },
       { id: "rds",            name: "RDS",            path: "rds/home?region={region}" },
     ],
-    // All commercial AWS regions, offered in each row's region dropdown (order
-    // = dropdown order; Frankfurt first). GovCloud and China are intentionally
-    // excluded — they use different console domains (amazonaws-us-gov.com /
-    // .cn) that the {region}.console.aws.amazon.com deep-link doesn't target.
-    // AWS adds regions over time; users can edit the list via Manage Regions.
+    // The AWS regions that are ENABLED BY DEFAULT in every account (no opt-in
+    // required), so a sign-in to any of them works out of the box. Frankfurt
+    // first; the *default selection* is the General Settings region. Opt-in
+    // regions (Zurich, Milan, Spain, Cape Town, Hong Kong, Hyderabad, Jakarta,
+    // Melbourne, Malaysia, Calgary, Mexico, UAE, Bahrain, Tel Aviv, …) are
+    // omitted — a sign-in to a region an account hasn't enabled would fail; add
+    // the ones your org uses via Manage Regions. GovCloud/China are also out
+    // (different console domains).
     DEFAULT_REGION_LIST: [
       { id: "eu-central-1", label: "Europe (Frankfurt)" },
-      { id: "eu-central-2", label: "Europe (Zurich)" },
       { id: "eu-west-1", label: "Europe (Ireland)" },
       { id: "eu-west-2", label: "Europe (London)" },
       { id: "eu-west-3", label: "Europe (Paris)" },
       { id: "eu-north-1", label: "Europe (Stockholm)" },
-      { id: "eu-south-1", label: "Europe (Milan)" },
-      { id: "eu-south-2", label: "Europe (Spain)" },
       { id: "us-east-1", label: "US East (N. Virginia)" },
       { id: "us-east-2", label: "US East (Ohio)" },
       { id: "us-west-1", label: "US West (N. California)" },
       { id: "us-west-2", label: "US West (Oregon)" },
       { id: "ca-central-1", label: "Canada (Central)" },
-      { id: "ca-west-1", label: "Canada West (Calgary)" },
       { id: "sa-east-1", label: "South America (São Paulo)" },
-      { id: "mx-central-1", label: "Mexico (Central)" },
-      { id: "af-south-1", label: "Africa (Cape Town)" },
-      { id: "me-central-1", label: "Middle East (UAE)" },
-      { id: "me-south-1", label: "Middle East (Bahrain)" },
-      { id: "il-central-1", label: "Israel (Tel Aviv)" },
-      { id: "ap-east-1", label: "Asia Pacific (Hong Kong)" },
       { id: "ap-south-1", label: "Asia Pacific (Mumbai)" },
-      { id: "ap-south-2", label: "Asia Pacific (Hyderabad)" },
       { id: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
       { id: "ap-northeast-2", label: "Asia Pacific (Seoul)" },
       { id: "ap-northeast-3", label: "Asia Pacific (Osaka)" },
       { id: "ap-southeast-1", label: "Asia Pacific (Singapore)" },
       { id: "ap-southeast-2", label: "Asia Pacific (Sydney)" },
-      { id: "ap-southeast-3", label: "Asia Pacific (Jakarta)" },
-      { id: "ap-southeast-4", label: "Asia Pacific (Melbourne)" },
-      { id: "ap-southeast-5", label: "Asia Pacific (Malaysia)" },
     ],
     THEMES: {
       light: { name: "Light", icon: "☀️", next: "dark" },
