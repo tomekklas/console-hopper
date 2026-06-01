@@ -5078,13 +5078,26 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
           <label style="display: block !important; margin-bottom: 14px !important;">
             <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 4px !important; font-size: 13px !important;">Default AWS region</span>
-            <input type="text" id="tm_gs_region" value="${sanitizeInput(awsRegionCache)}" placeholder="us-east-1" style="
+            <select id="tm_gs_region" style="
                 width: 100% !important; height: 32px !important; padding: 4px 8px !important;
                 border: 1px solid #ccc !important; border-radius: 4px !important;
-                font-family: monospace !important; font-size: 13px !important; box-sizing: border-box !important;
-            " />
+                font-size: 13px !important; box-sizing: border-box !important; cursor: pointer !important;
+            ">
+              ${(() => {
+                const cur = awsRegionCache || CONFIG.DEFAULT_AWS_REGION;
+                const list = regionListCache.slice();
+                if (!list.some((r) => r.id === cur)) list.unshift({ id: cur, label: cur });
+                return list
+                  .map(
+                    (r) =>
+                      `<option value="${escapeHtml(r.id)}"${r.id === cur ? " selected" : ""}>${escapeHtml(r.label)} (${escapeHtml(r.id)})</option>`
+                  )
+                  .join("");
+              })()}
+            </select>
             <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 4px !important;">
-              Used in the destination URL of every sign-in and as the <code>{region}</code> placeholder in service paths.
+              Only regions from <em>Manage Regions</em> are listed — add more there.
+              Used as the sign-in destination region and the <code>{region}</code> placeholder in service paths.
             </span>
           </label>
 

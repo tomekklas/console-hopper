@@ -14,7 +14,8 @@ All notable changes to Console Hopper are listed here. Dates are in
   new **Manage Regions** panel. Ships with the regions that are enabled by
   default in every account (Frankfurt first); opt-in regions and GovCloud/China
   are excluded (add opt-in ones via Manage Regions). The default sign-in region
-  is set in General Settings (ships as **eu-central-1 / Frankfurt**).
+  is chosen in General Settings from a dropdown of your Manage Regions list
+  (ships as **eu-central-1 / Frankfurt**).
 - **Clear AWS Sessions.** A confirm-gated side-menu button that signs you out of
   all open AWS consoles by clearing AWS authentication cookies. Cookies only —
   your console favorites and settings are kept. Adds the `cookies` permission and
