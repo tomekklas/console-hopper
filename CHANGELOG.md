@@ -9,7 +9,8 @@ All notable changes to Console Hopper are listed here. Dates are in
 
 - **Rename accounts.** Map specific account IDs to a custom name via the new
   **Manage Account Names** panel; the custom name replaces the AWS account name
-  in the list and is used for filtering, grouping, and tab titles.
+  in the list and is used for filtering, grouping, and tab titles. Saving
+  updates the open list immediately — no page reload.
 - **Per-row region picker.** Each role row now has a region dropdown beside the
   service picker, choosing which AWS region that sign-in targets. It defaults to
   the General Settings region and remembers your last pick per role — just like

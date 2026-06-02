@@ -4240,12 +4240,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             `Drag any role row to reposition it; the order persists across sessions. <strong>Reorder is disabled while any filter or search is active</strong> — otherwise you'd only be sorting visible rows, which gives surprising results. Clear filters first. <em>Reset Order</em> in the side menu restores AWS's default order.`)}
           ${sectionHTML("Deep-link into a service",
             `Each role row has a service dropdown (EC2 / S3 / IAM / …). Picking a service before <strong>Sign In</strong> drops you straight into that service's console for that role. Manage the list via <em>Manage Services</em>.`)}
+          ${sectionHTML("Pick a region per sign-in",
+            `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Manage Regions</em>.`)}
+          ${sectionHTML("Rename accounts",
+            `Give specific accounts a friendlier name via <em>Manage Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
+          ${sectionHTML("Sign in your way",
+            `A plain <strong>Sign In</strong> opens the console in the same tab or a new one — your choice, set via the <em>Sign-in</em> side-menu option. <strong>⌘/Ctrl-click</strong> or <strong>middle-click</strong> always does the opposite, so both are one click away.`)}
           ${sectionHTML("Coloured console tabs",
             `Each open AWS console tab gets a coloured favicon (env color) and a tab-title prefix with the account name, so 10 open tabs are still distinguishable at a glance.`)}
           ${sectionHTML("Tab groups (visual containers)",
             `Chrome tab groups cluster console tabs by role, by organisation, or by a ticket tag — emulates Firefox containers visually. Configure via the <em>Tab Groups</em> button (default modes) and the toolbar tag input (per-session overrides).`)}
+          ${sectionHTML("Clear AWS sessions",
+            `<em>Clear AWS Sessions</em> in the side menu signs you out of all open AWS consoles in one click by deleting AWS authentication cookies (cookies only — your favorites and settings are kept). It asks for confirmation first.`)}
           ${sectionHTML("Make it yours",
-            `Open the side menu (hover the right edge) to manage <em>Organizations</em>, <em>Environments</em>, <em>Account Types</em>, <em>Role Names</em>, <em>Services</em>, and <em>General Settings</em> (AWS region, sensitive-sign-in triggers, footer URL). Defaults ship as generic placeholders — rename them to match your org.`)}
+            `Open the side menu (hover the right edge) to manage <em>Organizations</em>, <em>Environments</em>, <em>Account Types</em>, <em>Role Names</em>, <em>Services</em>, <em>Regions</em>, <em>Account Names</em>, and <em>General Settings</em> (default region, sensitive-sign-in triggers, footer URL). Defaults ship as generic placeholders — rename them to match your org.`)}
           ${sectionHTML("Privacy",
             `Everything stays in your browser. Nothing is sent to any server by this extension. Use <em>Export Settings</em> to share your config with a teammate. <a href="https://github.com/tomekklas/console-hopper/blob/main/PRIVACY.md" target="_blank" rel="noopener" style="color:#0073bb !important; text-decoration: underline !important;">Read the full privacy policy</a>.`)}
           <div style="margin-top: 18px !important; text-align: right !important;">
@@ -4305,7 +4313,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             <tr><td style="padding: 6px 0 !important;"><kbd>/</kbd> or <kbd>${cmd}</kbd>+<kbd>K</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Focus the search box</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>↑</kbd> / <kbd>↓</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Move selection through visible roles</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>Enter</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Sign in to the selected role</td></tr>
-            <tr><td style="padding: 6px 0 !important;"><kbd>${cmd}</kbd>+<kbd>Enter</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Sign in in a new tab (also: ${cmd}-click / middle-click)</td></tr>
+            <tr><td style="padding: 6px 0 !important;"><kbd>${cmd}</kbd>+<kbd>Enter</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Sign in, toggling new-tab vs. your default (also: ${cmd}-click / middle-click)</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>Esc</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Close modal / clear selection / clear filters</td></tr>
           </table>
           <div style="margin-top: 18px !important; text-align: right !important;">
