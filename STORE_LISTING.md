@@ -251,18 +251,22 @@ ticket tag), emulating a Firefox-containers-style visual experience.
 
 ### `cookies`
 ```
-Used only by the "Clear AWS Sessions" button to delete AWS
-authentication cookies (on aws.amazon.com and its sign-in / console
-subdomains) so the user can sign out of all AWS console sessions at
-once. The extension only deletes these cookies; it never reads their
-contents or transmits them.
+Used solely by the extension's "Clear AWS Sessions" feature, which lets
+the user sign out of all open AWS console sessions in one click. Only
+when the user clicks "Clear AWS Sessions" and confirms, the service
+worker enumerates cookies on aws.amazon.com and its sign-in / console
+subdomains (chrome.cookies.getAll) and deletes them
+(chrome.cookies.remove). It uses only each cookie's name and domain to
+target it for deletion; it does not use, store, log, or transmit any
+cookie value or content. No cookies are read for any other purpose, and
+the extension makes no network requests of any kind.
 ```
 
 ### Host permission: `https://aws.amazon.com/*`, `https://*.aws.amazon.com/*`
 ```
-Grants the cookies API access to delete AWS authentication cookies for
-the "Clear AWS Sessions" feature. Scoped to aws.amazon.com — no other
-sites.
+Grants the cookies API the access it needs to delete AWS authentication
+cookies for the "Clear AWS Sessions" feature. Limited to aws.amazon.com
+and its subdomains — no other sites are touched.
 ```
 
 ### Host permission: `https://signin.aws.amazon.com/saml`, `https://*.signin.aws.amazon.com/saml`
