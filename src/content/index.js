@@ -2874,6 +2874,7 @@ import {
       // execute script in the role picker.
       const displayName = AccountNamesManager.nameFor(accountInfo.id) || accountInfo.name;
       const safeAccountName = escapeHtml(displayName);
+      const safeAwsName     = escapeHtml(accountInfo.name);
       const safeAccountId   = escapeHtml(accountInfo.id);
       const safeRoleName    = escapeHtml(roleName);
       const safeRoleArn     = escapeHtml(roleArn);
@@ -2881,7 +2882,7 @@ import {
       const roleInfoHTML = `
                 <div class="tm_role_info">
                     <button class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
-                    <div class="tm_account_name">${safeAccountName}</div>
+                    <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="${safeAwsName}">${safeAccountName}</div>
                     <div class="tm_role_name">${safeRoleName}</div>
                 </div>
                 <div class="tm_role_buttons">
@@ -3302,6 +3303,21 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
   };
 
+  // Re-apply custom account names to the already-rendered rows in place, so a
+  // Save reflects immediately without a full page reload (reloading the SAML
+  // POST page is fragile). Each name cell carries its account id and original
+  // AWS name as data-* attributes, so we can both apply and clear renames.
+  const refreshAccountNames = () => {
+    $(".tm_account_name").each(function () {
+      const id = this.getAttribute("data-account-id") || "";
+      const awsName = this.getAttribute("data-aws-name") || "";
+      this.textContent = AccountNamesManager.nameFor(id) || awsName;
+    });
+    // Re-filter (this also re-runs environment styling) so a rename that
+    // changes which env / org / type a row matches is reflected at once.
+    FilterManager.applyFilters();
+  };
+
   const showAccountNamesModal = () => {
     const current = formatAccountNameLines(accountNamesCache);
     const modalHTML = `
@@ -3353,11 +3369,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const saved = await AccountNamesManager.save(map);
       if (saved) {
         $("#tm_account_names_modal").remove();
-        showToast(
-          "Account names saved! Refresh page to see changes.",
-          "success",
-          CONFIG.TOAST_DURATION
-        );
+        refreshAccountNames();
+        showToast("Account names updated.", "success", CONFIG.TOAST_DURATION);
       }
     });
   };
