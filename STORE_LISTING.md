@@ -45,6 +45,11 @@ WHAT YOU GET
   side menu — rename the labels, change the colours, tweak the match
   patterns to fit your org.
 
+• Rename accounts
+  Map specific account IDs to a friendly name via "Manage Account
+  Names". The custom name replaces the AWS account name in the list and
+  is used for filtering, grouping and tab titles.
+
 • Favorites and Recent
   Star roles you use often. Recently signed-in roles are tracked
   automatically (configurable limit).

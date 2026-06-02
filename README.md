@@ -45,6 +45,9 @@ features.
 - **Filter + search** roles by organisation, environment, account type,
   or role-name keyword, plus full-text search across account name, id,
   and role.
+- **Rename accounts** — map specific account IDs to a friendly name via
+  `Manage Account Names`; the custom name replaces the AWS name in the
+  list and drives filtering, grouping, and tab titles.
 - **Favorites & Recent** — star roles you use often; recent sign-ins
   are tracked automatically (configurable limit).
 - **Drag-to-reorder** the role list; the order persists across sessions.

@@ -12,6 +12,9 @@ import {
   parseRegionLines,
   formatRegionLines,
   normalizeRegionList,
+  parseAccountNameLines,
+  formatAccountNameLines,
+  normalizeAccountNames,
 } from "./util.js";
 
 (async function () {
@@ -51,6 +54,7 @@ import {
       TAB_GROUP_MODE: "aws_tab_group_mode",
       AWS_REGION: "aws_region",
       REGION_LIST: "aws_region_list",
+      ACCOUNT_NAMES: "aws_account_names",
       HOMEPAGE_URL: "aws_homepage_url",
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
@@ -547,6 +551,20 @@ import {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.REGION_LIST]: JSON.stringify(list),
         });
+        return true;
+      }, false);
+    },
+
+    async getAccountNames() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.ACCOUNT_NAMES);
+        return result[CONFIG.STORAGE_KEYS.ACCOUNT_NAMES] ?? null;
+      }, null);
+      return normalizeAccountNames(raw);
+    },
+    async saveAccountNames(map) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.ACCOUNT_NAMES]: map });
         return true;
       }, false);
     },
@@ -1202,6 +1220,34 @@ import {
     },
   };
 
+  // Optional per-account display names: { accountId -> custom name }. When set,
+  // the custom name fully replaces the AWS account name in the list — and since
+  // filters / search / grouping / tab titles all read the displayed name, it
+  // applies everywhere. Edit via Manage Account Names.
+  let accountNamesCache = {};
+
+  const AccountNamesManager = {
+    async loadCache() {
+      accountNamesCache = await StorageManager.getAccountNames();
+      debug("Account names cache loaded:", accountNamesCache);
+    },
+    async save(map) {
+      const saved = await StorageManager.saveAccountNames(map);
+      if (saved !== false) {
+        accountNamesCache = { ...map };
+        return true;
+      }
+      showToast("Failed to save account names", "error");
+      return false;
+    },
+    nameFor(id) {
+      return (id && accountNamesCache[id]) || "";
+    },
+    all() {
+      return accountNamesCache;
+    },
+  };
+
   // Generic factory: each manager backs a configurable filter row in the
   // toolbar. Entries shape is [{id, label, color, patterns:[]}] (see
   // normalizePatternList). save() writes the whole list at once; lookups
@@ -1841,6 +1887,7 @@ import {
             <a href="#" class="tm_action_button" id="tm_manage_role_names">Manage Role Names</a>
             <a href="#" class="tm_action_button" id="tm_manage_services">Manage Services</a>
             <a href="#" class="tm_action_button" id="tm_manage_regions">Manage Regions</a>
+            <a href="#" class="tm_action_button" id="tm_manage_account_names">Manage Account Names</a>
             <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
             <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
             <a href="#" class="tm_action_button" id="tm_import_settings">Import Settings</a>
@@ -2785,6 +2832,7 @@ import {
   await ServicesManager.loadLastServicesCache();
   await RegionsManager.loadCache();
   await RegionsManager.loadLastRegionsCache();
+  await AccountNamesManager.loadCache();
   // Pattern caches must be loaded before filtering / styling kicks in.
   await EnvironmentsManager.loadCache();
   await OrganizationsManager.loadCache();
@@ -2824,7 +2872,8 @@ import {
       // page, which itself reflects IdP-supplied strings. Escape them on
       // the way back into HTML so a maliciously-crafted role label can't
       // execute script in the role picker.
-      const safeAccountName = escapeHtml(accountInfo.name);
+      const displayName = AccountNamesManager.nameFor(accountInfo.id) || accountInfo.name;
+      const safeAccountName = escapeHtml(displayName);
       const safeAccountId   = escapeHtml(accountInfo.id);
       const safeRoleName    = escapeHtml(roleName);
       const safeRoleArn     = escapeHtml(roleArn);
@@ -3014,6 +3063,11 @@ import {
   $("body").on("click", "#tm_manage_regions", function (e) {
     e.preventDefault();
     showRegionsModal();
+  });
+
+  $("body").on("click", "#tm_manage_account_names", function (e) {
+    e.preventDefault();
+    showAccountNamesModal();
   });
 
   $("body").on("click", "#tm_clear_sessions", function (e) {
@@ -3244,6 +3298,66 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (saved) {
         $("#tm_services_modal").remove();
         showToast("Services saved! Refresh page to see changes in dropdowns.", "success", CONFIG.TOAST_DURATION);
+      }
+    });
+  };
+
+  const showAccountNamesModal = () => {
+    const current = formatAccountNameLines(accountNamesCache);
+    const modalHTML = `
+            <div id="tm_account_names_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 20px !important;
+                    max-width: 520px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
+                ">
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage Account Names</h3>
+                    <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
+                        Give specific accounts a friendlier name. One per line:
+                        <code>123456789012: My Friendly Name</code>. The custom name
+                        <strong>replaces</strong> the AWS account name in the list and is
+                        used for filtering, grouping and tab titles. Leave the box empty
+                        to clear all custom names.
+                    </p>
+                    <textarea id="tm_account_names_input" style="
+                        width: 100% !important; height: 220px !important; border: 1px solid #ccc !important;
+                        border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
+                        font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
+                    " placeholder="123456789012: Prod Logging&#10;999999999999: Security Audit">${escapeHtml(current)}</textarea>
+                    <div style="margin-top: 15px !important; text-align: right !important;">
+                        <button id="tm_account_names_cancel" style="
+                            padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
+                            background: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Cancel</button>
+                        <button id="tm_account_names_save" style="
+                            padding: 8px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                            color: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    $("#tm_account_names_cancel, #tm_account_names_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_account_names_modal").remove();
+    });
+
+    $("#tm_account_names_save").on("click", async function () {
+      const map = parseAccountNameLines($("#tm_account_names_input").val());
+      const saved = await AccountNamesManager.save(map);
+      if (saved) {
+        $("#tm_account_names_modal").remove();
+        showToast(
+          "Account names saved! Refresh page to see changes.",
+          "success",
+          CONFIG.TOAST_DURATION
+        );
       }
     });
   };
@@ -4816,6 +4930,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.LAST_SERVICE]: isPlainStringMap,
         [SK.LAST_REGION]:  isPlainStringMap,
         [SK.REGION_LIST]:  isRegionList,
+        [SK.ACCOUNT_NAMES]: isPlainStringMap,
         [SK.ENV_PATTERNS]: isPatternEntryList,
         [SK.ORG_PATTERNS]: isPatternEntryList,
         [SK.TYPE_PATTERNS]: isPatternEntryList,

@@ -8,6 +8,9 @@ import {
   parseRegionLines,
   formatRegionLines,
   normalizeRegionList,
+  parseAccountNameLines,
+  formatAccountNameLines,
+  normalizeAccountNames,
 } from "../src/content/util.js";
 
 describe("escapeHtml", () => {
@@ -124,5 +127,44 @@ describe("normalizeRegionList", () => {
   it("returns [] for non-arrays", () => {
     expect(normalizeRegionList(null)).toEqual([]);
     expect(normalizeRegionList("x")).toEqual([]);
+  });
+});
+
+describe("parseAccountNameLines", () => {
+  it("parses 'id: Name' lines, skipping invalid ids and blanks", () => {
+    expect(
+      parseAccountNameLines(
+        "123456789012: Prod Logging\nnot-an-id: x\n\n999999999999 : Sandbox"
+      )
+    ).toEqual({ "123456789012": "Prod Logging", "999999999999": "Sandbox" });
+  });
+  it("requires a 12-digit id and a non-empty name", () => {
+    expect(parseAccountNameLines("123456789012:")).toEqual({});
+    expect(parseAccountNameLines("12345: Too short")).toEqual({});
+    expect(parseAccountNameLines("123456789012 no colon")).toEqual({});
+  });
+});
+
+describe("formatAccountNameLines", () => {
+  it("round-trips with parseAccountNameLines", () => {
+    const map = { "123456789012": "Prod Logging", "999999999999": "Sandbox" };
+    expect(parseAccountNameLines(formatAccountNameLines(map))).toEqual(map);
+  });
+});
+
+describe("normalizeAccountNames", () => {
+  it("keeps 12-digit id -> string-name pairs and trims, drops the rest", () => {
+    expect(
+      normalizeAccountNames({
+        "123456789012": "  Prod  ",
+        bad: "x",
+        "999999999999": "",
+        "111111111111": 5,
+      })
+    ).toEqual({ "123456789012": "Prod" });
+  });
+  it("returns {} for non-objects", () => {
+    expect(normalizeAccountNames(null)).toEqual({});
+    expect(normalizeAccountNames([])).toEqual({});
   });
 });

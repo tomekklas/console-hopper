@@ -102,3 +102,36 @@ export const normalizeRegionList = (raw) => {
   }
   return out;
 };
+
+// Account renaming: a { accountId -> custom name } map. ids must be 12-digit
+// AWS account numbers. parse/format mirror the region helpers.
+export const parseAccountNameLines = (text) => {
+  const out = {};
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const sep = line.indexOf(":");
+    if (sep === -1) continue;
+    const id = line.slice(0, sep).trim();
+    const name = line.slice(sep + 1).trim();
+    if (!/^\d{12}$/.test(id) || !name) continue;
+    out[id] = name;
+  }
+  return out;
+};
+
+export const formatAccountNameLines = (map) =>
+  Object.entries(map && typeof map === "object" ? map : {})
+    .map(([id, name]) => `${id}: ${name}`)
+    .join("\n");
+
+export const normalizeAccountNames = (raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [id, name] of Object.entries(raw)) {
+    if (/^\d{12}$/.test(id) && typeof name === "string" && name.trim()) {
+      out[id] = name.trim();
+    }
+  }
+  return out;
+};
