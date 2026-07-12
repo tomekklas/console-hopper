@@ -46,9 +46,18 @@ WHAT YOU GET
   patterns to fit your org.
 
 • Rename accounts
-  Map specific account IDs to a friendly name via "Manage Account
-  Names". The custom name replaces the AWS account name in the list and
-  is used for filtering, grouping and tab titles.
+  Map specific account IDs to a friendly name via "Account Names". The
+  custom name replaces the AWS account name in the list and is used for
+  filtering, grouping and tab titles.
+
+• Jump to account (role chaining)
+  For accounts you can only reach by assuming a role from a hub:
+  configure per-org assume profiles once (org name, hub account id,
+  role to assume) and a "Jump to account" button appears beside search.
+  Enter the destination account id and an optional session label —
+  Console Hopper signs into the hub and opens AWS's Switch Role
+  pre-filled, one click and you're in. The new tab is titled with your
+  session label, and recent jumps are one click away.
 
 • Favorites and Recent
   Star roles you use often. Recently signed-in roles are tracked
@@ -63,7 +72,7 @@ WHAT YOU GET
 • Per-sign-in region
   Each role row also has a region dropdown — choose which AWS region a
   sign-in lands in (defaults to your region, remembers your last pick
-  per role). Edit the offered regions via "Manage Regions".
+  per role). Edit the offered regions via "Regions".
 
 • Copy account ID
   Click the account-id button on any row to copy the 12-digit id.
@@ -162,19 +171,21 @@ All assets live in `store-assets/` (kept in git, excluded from the
 submission zip — they're for the listing only, not for the extension
 package).
 
-| Field | Spec | File |
-|---|---|---|
-| Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` |
-| Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` |
-| Screenshot 2 | 1280 × 800 | ✅ `store-assets/screenshot-2-side-menu.png` |
-| Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-readonly-filter.png` |
-| Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-manage-environments.png` |
-| Screenshot 5 | 1280 × 800 | ✅ `store-assets/screenshot-5-general-settings.png` |
-| Small promo tile (optional) | 440 × 280 PNG | ✅ `store-assets/promo-small-440x280.png` |
-| Marquee promo tile (optional) | 1400 × 560 PNG | ✅ `store-assets/promo-marquee-1400x560.png` |
+| Field | Spec | File | Shows |
+|---|---|---|---|
+| Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` | — |
+| Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` | The filterable role picker |
+| Screenshot 2 | 1280 × 800 | ✅ `store-assets/screenshot-2-jump.png` | Jump-to-account popover with recents |
+| Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-side-menu.png` | Grouped side menu (View / Configure / Data) |
+| Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-filter.png` | Filtering by PROD + ReadOnly |
+| Screenshot 5 | 1280 × 800 | ✅ `store-assets/screenshot-5-dark.png` | Dark theme |
+| Small promo tile (optional) | 440 × 280 PNG | ⚠️ `store-assets/promo-small-440x280.png` (pre-1.2 UI) | — |
+| Marquee promo tile (optional) | 1400 × 560 PNG | ⚠️ `store-assets/promo-marquee-1400x560.png` (pre-1.2 UI) | — |
 
 Chrome Web Store requires at least **one** screenshot; five is the max.
-We're shipping the full five plus both promo tiles.
+We're shipping the full five (regenerated for 1.2.0 — 1280 × 800, real
+extension). The two promo tiles are optional and still show the pre-1.2 UI;
+regenerate them if you want them current, or drop them.
 
 ---
 
@@ -318,10 +329,12 @@ tabs apart at a glance.
 - [x] `npm run build` packages the **contents** (not the wrapping directory)
       into `console-hopper.zip`, excluding docs, `store-assets/`, `samples/`,
       and `.git/`.
-- [ ] Test the zipped build by loading it via "Load unpacked" in a
-      clean Chrome profile.
-- [x] Five 1280×800 screenshots ready in `store-assets/`.
-- [x] Promo tiles (440×280 and 1400×560) ready in `store-assets/`.
+- [x] Test the built `dist/` by loading it unpacked in a clean profile —
+      verified end-to-end (real extension, mock-SAML → role picker, jump /
+      filters / side-menu / dark theme all render; footer reads v1.2.0).
+- [x] Five 1280×800 screenshots ready in `store-assets/` (regenerated for 1.2.0).
+- [ ] Promo tiles (440×280 and 1400×560) still show pre-1.2 UI — optional;
+      regenerate or drop before publishing if you want them current.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is
       upscaled from a 64×64 source — a sharper 128×128 original is
       worth providing).

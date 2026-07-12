@@ -13,13 +13,13 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
 
 ## What it looks like
 
-| The role picker | The side menu |
+| The role picker | Jump to account |
 |---|---|
-| <img src="store-assets/screenshot-1-main.png" alt="Role picker with filters and env-coloured rows"> | <img src="store-assets/screenshot-2-side-menu.png" alt="Side menu open showing Manage modals"> |
+| <img src="store-assets/screenshot-1-main.png" alt="Role picker with filters and env-coloured rows"> | <img src="store-assets/screenshot-2-jump.png" alt="Jump-to-account popover with recent jumps"> |
 
-| Filtering by role | Configuring envs |
+| Filtering by role | The side menu |
 |---|---|
-| <img src="store-assets/screenshot-3-readonly-filter.png" alt="ReadOnly filter applied"> | <img src="store-assets/screenshot-4-manage-environments.png" alt="Manage Environments modal"> |
+| <img src="store-assets/screenshot-4-filter.png" alt="PROD and ReadOnly filters applied"> | <img src="store-assets/screenshot-3-side-menu.png" alt="Grouped side menu: View, Configure, Data"> |
 
 ## Quick start
 
@@ -30,9 +30,9 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
    or your IdP's redirect target). The role picker is now Console Hopper.
 3. **Configure** — hover the right edge of the page to open the side
    menu, then either:
-   - use `Manage Organizations`, `Manage Environments`,
-     `Manage Account Types`, `Manage Role Names`, and `General Settings`
-     to set things up via the UI, **or**
+   - use `Organizations`, `Environments`, `Account Types`, `Role Names`,
+     and `General Settings` (under **Configure**) to set things up via
+     the UI, **or**
    - skip ahead by pasting [`samples/landing-zone-example.json`](samples/landing-zone-example.json)
      into `Import Settings` for an AWS Landing-Zone-style starting point,
      then tweak the labels to match your org.
@@ -45,8 +45,10 @@ features.
 - **Filter + search** roles by organisation, environment, account type,
   or role-name keyword, plus full-text search across account name, id,
   and role.
+- **Start View** — save your current filters (or one-click your Favorites) as
+  the view the picker opens with, re-applied automatically on every load.
 - **Rename accounts** — map specific account IDs to a friendly name via
-  `Manage Account Names`; the custom name replaces the AWS name in the
+  `Account Names`; the custom name replaces the AWS name in the
   list and drives filtering, grouping, and tab titles.
 - **Favorites & Recent** — star roles you use often; recent sign-ins
   are tracked automatically (configurable limit).
@@ -57,7 +59,13 @@ features.
 - **Per-sign-in region** — each role row has a region dropdown, so you
   choose which AWS region a sign-in lands in. Defaults to your region,
   remembers your last pick per role, and the offered list is editable
-  via `Manage Regions`.
+  via `Regions`.
+- **Jump to account (role chaining)** — for accounts you can only reach
+  by assuming a role from a hub. Configure per-org assume profiles once
+  (`Assume Profiles`: org name, hub account, role to assume), then the
+  **⤳ Jump to account** button signs into the hub and opens AWS's
+  Switch Role pre-filled for your destination account — with an optional
+  session label that becomes the new tab's title, and one-click recents.
 - **Click-to-copy account ID** — click the account-ID button on any row
   to copy the 12-digit id.
 - **Coloured console tabs** — env-coloured favicon + account-name title

@@ -135,3 +135,68 @@ export const normalizeAccountNames = (raw) => {
   }
   return out;
 };
+
+// Assume-role "jump" profiles — one per org, for accounts reached by chaining
+// from a hub. Each line is "Org name | hubAccountId | roleName": the hub is the
+// 12-digit account you sign into and roleName is the role to assume in targets.
+export const parseAssumeProfileLines = (text) => {
+  const out = [];
+  const seen = new Set();
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const parts = line.split("|").map((p) => p.trim());
+    if (parts.length < 3) continue;
+    const hub = parts[1];
+    const name = parts[0].slice(0, 64);
+    const role = parts[2].slice(0, 128);
+    if (!name || !/^\d{12}$/.test(hub) || !role) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, hub, role });
+  }
+  return out;
+};
+
+export const formatAssumeProfileLines = (list) =>
+  (Array.isArray(list) ? list : [])
+    .map((p) => `${p.name} | ${p.hub} | ${p.role}`)
+    .join("\n");
+
+export const normalizeAssumeProfiles = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const p of raw) {
+    if (!p || typeof p !== "object") continue;
+    const name = typeof p.name === "string" ? p.name.trim().slice(0, 64) : "";
+    const hub = typeof p.hub === "string" ? p.hub.trim() : "";
+    const role = typeof p.role === "string" ? p.role.trim().slice(0, 128) : "";
+    if (!name || !/^\d{12}$/.test(hub) || !role) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, hub, role });
+  }
+  return out;
+};
+
+// Jump "recents" — the most-recent chained jumps, newest first. Each entry is
+// { org, account (12-digit), label, ts }. Validated and capped on read so a
+// corrupted or oversized aws_jump_recents value can't reach the popover.
+export const normalizeJumpRecents = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const account = typeof r.account === "string" ? r.account.trim() : "";
+    if (!/^\d{12}$/.test(account)) continue;
+    const org = typeof r.org === "string" ? r.org.trim().slice(0, 64) : "";
+    const label = typeof r.label === "string" ? r.label.trim().slice(0, 120) : "";
+    const ts = typeof r.ts === "number" && isFinite(r.ts) ? r.ts : 0;
+    out.push({ org, account, label, ts });
+    if (out.length >= 6) break;
+  }
+  return out;
+};

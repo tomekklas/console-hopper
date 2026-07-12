@@ -25,7 +25,11 @@
     const raw = params.get(FRAGMENT_KEY);
     if (!raw) return null;
     try {
-      const decoded = JSON.parse(atob(raw));
+      // UTF-8-safe base64 decode, mirroring the picker's TextEncoder+btoa
+      // encode so labels with emoji / non-Latin1 characters round-trip.
+      const bin = atob(raw);
+      const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+      const decoded = JSON.parse(new TextDecoder().decode(bytes));
       params.delete(FRAGMENT_KEY);
       const remaining = params.toString();
       const newHash = remaining ? "#" + remaining : "";
@@ -37,8 +41,7 @@
     }
   }
 
-  function loadLabel() {
-    const fromFragment = readFragmentPayload();
+  function loadLabel(fromFragment) {
     if (fromFragment && fromFragment.account && fromFragment.role) {
       sessionStorage.setItem(SS_KEY, JSON.stringify(fromFragment));
       return fromFragment;
@@ -200,9 +203,56 @@
     } catch (err) { /* extension context may be unavailable; ignore */ }
   }
 
-  const label = loadLabel();
+  const fragment = readFragmentPayload();
+
+  // Chain-jump: a fresh sign-in landing that carries a chain target hops
+  // straight to AWS's Switch Role for the destination account. We read this from
+  // the URL fragment (not sessionStorage) so it fires ONLY on the fresh hub
+  // landing and never re-fires on the switched-into console; the chain is
+  // deliberately not persisted.
+  if (fragment && fragment.chain && fragment.chain.account && fragment.chain.role) {
+    const c = fragment.chain;
+    // The fragment is client-supplied, so re-validate before auto-navigating:
+    // a crafted #hop link must not be able to force a switch-role to an
+    // arbitrary target. Mirror the picker-side contract (12-digit account,
+    // bounded role/displayName).
+    if (/^\d{12}$/.test(String(c.account))) {
+      const role = String(c.role).slice(0, 128);
+      const display = c.displayName ? String(c.displayName).slice(0, 120) : "";
+      const url =
+        "https://signin.aws.amazon.com/switchrole?account=" +
+        encodeURIComponent(c.account) +
+        "&roleName=" +
+        encodeURIComponent(role) +
+        (display ? "&displayName=" + encodeURIComponent(display) : "");
+      window.location.assign(url);
+    }
+    return;
+  }
+
+  const label = loadLabel(fragment);
   if (label) {
     decorate(label);
     requestTabGrouping(label);
+  } else if (chrome && chrome.storage && chrome.storage.local) {
+    // No sign-in label on this tab — but if we just chained into this account
+    // via a Jump, the picker stashed a pending decoration keyed by the account
+    // id (multi-session subdomains expose it as the leading host segment). Pick
+    // it up, decorate the tab with the session label + env colour, and clear it.
+    const m = window.location.hostname.match(/^(\d{12})-/);
+    if (m) {
+      const acct = m[1];
+      chrome.storage.local.get("hop_pending_jumps", (res) => {
+        const pending = (res && res.hop_pending_jumps) || {};
+        const hit = pending[acct];
+        if (!hit) return;
+        // Consume the entry on landing regardless of freshness, then decorate
+        // only if it hasn't expired (a missing timestamp counts as expired).
+        delete pending[acct];
+        chrome.storage.local.set({ hop_pending_jumps: pending });
+        if (!hit.ts || Date.now() - hit.ts > 5 * 60 * 1000) return;
+        decorate({ account: hit.label || acct, envColor: hit.envColor, envLetter: hit.envLetter });
+      });
+    }
   }
 })();

@@ -11,6 +11,10 @@ import {
   parseAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
+  parseAssumeProfileLines,
+  formatAssumeProfileLines,
+  normalizeAssumeProfiles,
+  normalizeJumpRecents,
 } from "../src/content/util.js";
 
 describe("escapeHtml", () => {
@@ -166,5 +170,90 @@ describe("normalizeAccountNames", () => {
   it("returns {} for non-objects", () => {
     expect(normalizeAccountNames(null)).toEqual({});
     expect(normalizeAccountNames([])).toEqual({});
+  });
+});
+
+describe("parseAssumeProfileLines", () => {
+  it("parses 'name | hub | role', requiring a 12-digit hub and a role", () => {
+    expect(
+      parseAssumeProfileLines(
+        "Acme Prod | 111111111111 | OrgAdmin\nbad | 123 | x\n\nAcme Dev | 222222222222 | OrgAdmin"
+      )
+    ).toEqual([
+      { name: "Acme Prod", hub: "111111111111", role: "OrgAdmin" },
+      { name: "Acme Dev", hub: "222222222222", role: "OrgAdmin" },
+    ]);
+  });
+  it("skips lines missing a field and dedupes by name (case-insensitive)", () => {
+    expect(parseAssumeProfileLines("Only Two | 111111111111")).toEqual([]);
+    expect(
+      parseAssumeProfileLines(
+        "Acme | 111111111111 | R1\nacme | 222222222222 | R2"
+      )
+    ).toEqual([{ name: "Acme", hub: "111111111111", role: "R1" }]);
+  });
+  it("caps name at 64 and role at 128 characters", () => {
+    const [p] = parseAssumeProfileLines(
+      `${"N".repeat(100)} | 111111111111 | ${"R".repeat(200)}`
+    );
+    expect(p.name).toHaveLength(64);
+    expect(p.role).toHaveLength(128);
+  });
+});
+
+describe("normalizeJumpRecents", () => {
+  it("keeps valid entries, trims, drops junk, defaults missing fields", () => {
+    expect(
+      normalizeJumpRecents([
+        { org: "  Acme  ", account: " 111111111111 ", label: "  prod  ", ts: 5 },
+        { org: "Bad", account: "999", label: "x", ts: 1 },
+        { account: "222222222222" },
+        null,
+        "nope",
+      ])
+    ).toEqual([
+      { org: "Acme", account: "111111111111", label: "prod", ts: 5 },
+      { org: "", account: "222222222222", label: "", ts: 0 },
+    ]);
+  });
+  it("caps the list at 6 entries and returns [] for non-arrays", () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      org: "Acme",
+      account: String(100000000000 + i),
+      label: "x",
+      ts: i,
+    }));
+    expect(normalizeJumpRecents(many)).toHaveLength(6);
+    expect(normalizeJumpRecents(null)).toEqual([]);
+    expect(normalizeJumpRecents({})).toEqual([]);
+  });
+});
+
+describe("formatAssumeProfileLines", () => {
+  it("round-trips with parseAssumeProfileLines", () => {
+    const list = [
+      { name: "Acme Prod", hub: "111111111111", role: "OrgAdmin" },
+      { name: "Acme Dev", hub: "222222222222", role: "ReadOnly" },
+    ];
+    expect(parseAssumeProfileLines(formatAssumeProfileLines(list))).toEqual(list);
+  });
+});
+
+describe("normalizeAssumeProfiles", () => {
+  it("keeps valid {name,hub,role}, trims, drops junk, dedupes", () => {
+    expect(
+      normalizeAssumeProfiles([
+        { name: "  Acme  ", hub: " 111111111111 ", role: " OrgAdmin " },
+        { name: "acme", hub: "222222222222", role: "Dup" },
+        { name: "Bad", hub: "999", role: "x" },
+        { name: "NoRole", hub: "333333333333", role: "" },
+        null,
+        "nope",
+      ])
+    ).toEqual([{ name: "Acme", hub: "111111111111", role: "OrgAdmin" }]);
+  });
+  it("returns [] for non-arrays", () => {
+    expect(normalizeAssumeProfiles(null)).toEqual([]);
+    expect(normalizeAssumeProfiles({})).toEqual([]);
   });
 });

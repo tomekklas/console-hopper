@@ -15,6 +15,10 @@ import {
   parseAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
+  parseAssumeProfileLines,
+  formatAssumeProfileLines,
+  normalizeAssumeProfiles,
+  normalizeJumpRecents,
 } from "./util.js";
 
 (async function () {
@@ -22,7 +26,7 @@ import {
 
   // === CONSTANTS & CONFIGURATION ===
   // All org-specific labels, filter buttons, colors and triggers are driven
-  // from chrome.storage via the "Manage …" side-menu modals. The defaults
+  // from chrome.storage via the side-menu config modals. The defaults
   // below are intentionally generic so the plugin works in any AWS org.
   const CONFIG = {
     SCRIPT_VERSION: chrome.runtime.getManifest().version,
@@ -59,6 +63,9 @@ import {
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
       WELCOME_SEEN: "hop_welcome_seen",
+      START_VIEW: "aws_start_view",
+      ASSUME_PROFILES: "aws_assume_profiles",
+      JUMP_RECENTS: "aws_jump_recents",
     },
     TAB_GROUP_MODES: ["role", "org", "off"],
     TAB_GROUP_MODE_LABELS: { role: "By role", org: "By org", off: "Off" },
@@ -116,7 +123,7 @@ import {
     // regions (Zurich, Milan, Spain, Cape Town, Hong Kong, Hyderabad, Jakarta,
     // Melbourne, Malaysia, Calgary, Mexico, UAE, Bahrain, Tel Aviv, …) are
     // omitted — a sign-in to a region an account hasn't enabled would fail; add
-    // the ones your org uses via Manage Regions. GovCloud/China are also out
+    // the ones your org uses via Regions. GovCloud/China are also out
     // (different console domains).
     DEFAULT_REGION_LIST: [
       { id: "eu-central-1", label: "Europe (Frankfurt)" },
@@ -233,7 +240,7 @@ import {
 
   // Configurable filter rows, each cached as an ordered array of
   // { id, label, color, patterns:[] } entries. Edited via the corresponding
-  // side-menu "Manage …" modal; rendered into the toolbar by renderFilterRow.
+  // side-menu config modal; rendered into the toolbar by renderFilterRow.
   let envPatternsCache = [];
   let orgPatternsCache = [];
   let typePatternsCache = [];
@@ -546,6 +553,53 @@ import {
       const list = normalizeRegionList(parsed);
       return list.length ? list : normalizeRegionList(CONFIG.DEFAULT_REGION_LIST);
     },
+    async getAssumeProfiles() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.ASSUME_PROFILES);
+        return result[CONFIG.STORAGE_KEYS.ASSUME_PROFILES] ?? null;
+      }, null);
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          console.error("Error parsing assume profiles:", e);
+          parsed = null;
+        }
+      }
+      return normalizeAssumeProfiles(parsed);
+    },
+    async saveAssumeProfiles(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.ASSUME_PROFILES]: JSON.stringify(list),
+        });
+        return true;
+      }, false);
+    },
+    async getJumpRecents() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.JUMP_RECENTS);
+        return result[CONFIG.STORAGE_KEYS.JUMP_RECENTS] ?? null;
+      }, null);
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          parsed = null;
+        }
+      }
+      return normalizeJumpRecents(parsed);
+    },
+    async saveJumpRecents(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.JUMP_RECENTS]: JSON.stringify(list),
+        });
+        return true;
+      }, false);
+    },
     async saveRegionList(list) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({
@@ -722,6 +776,27 @@ import {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.TAB_GROUP_TAG]: tag
         });
+        return true;
+      }, false);
+    },
+
+    async getStartView() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.START_VIEW);
+        return result[CONFIG.STORAGE_KEYS.START_VIEW] ?? null;
+      }, null);
+    },
+
+    async saveStartView(view) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.START_VIEW]: view });
+        return true;
+      }, false);
+    },
+
+    async clearStartView() {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.remove(CONFIG.STORAGE_KEYS.START_VIEW);
         return true;
       }, false);
     },
@@ -1223,7 +1298,33 @@ import {
   // Optional per-account display names: { accountId -> custom name }. When set,
   // the custom name fully replaces the AWS account name in the list — and since
   // filters / search / grouping / tab titles all read the displayed name, it
-  // applies everywhere. Edit via Manage Account Names.
+  // applies everywhere. Edit via Account Names.
+  let assumeProfilesCache = [];
+  let jumpRecentsCache = [];
+  let jumpPopoverOpen = false;
+
+  const AssumeProfilesManager = {
+    async loadCache() {
+      assumeProfilesCache = await StorageManager.getAssumeProfiles();
+      debug("Assume profiles cache loaded:", assumeProfilesCache);
+    },
+    async save(list) {
+      const saved = await StorageManager.saveAssumeProfiles(list);
+      if (saved !== false) {
+        assumeProfilesCache = [...list];
+        return true;
+      }
+      showToast("Failed to save assume profiles", "error");
+      return false;
+    },
+    all() {
+      return assumeProfilesCache;
+    },
+    byName(name) {
+      return assumeProfilesCache.find((p) => p.name === name) || null;
+    },
+  };
+
   let accountNamesCache = {};
 
   const AccountNamesManager = {
@@ -1519,11 +1620,45 @@ import {
     },
   };
 
+  // Hide a filter row that offers fewer than two choices: a lone option can't
+  // narrow the list to anything the user couldn't already see, so the whole row
+  // (label included) is just clutter. If a row we hide still carries an active
+  // filter — e.g. its only sibling option was just deleted — drop that filter
+  // too, so nothing stays constrained by a chip no one can see. Every caller
+  // re-runs applyFilters after rendering, so the visible list stays in sync.
+  // (Toggled via a class, not .hide(): the row's display:flex is !important,
+  // which a plain inline display:none from .hide() would not override.)
+  const updateFilterRowVisibility = (group) => {
+    const groups = group ? [group] : ["org", "env", "type", "role"];
+    for (const g of groups) {
+      const $group = $(`.tm_button_group[data-filter-group="${g}"]`);
+      if (!$group.length) continue;
+      const $row = $group.closest(".tm_frow");
+      if (!$row.length) continue;
+      if ($group.find(".tm_filter_button").length >= 2) {
+        $row.removeClass("tm_frow_hidden");
+      } else {
+        $row.addClass("tm_frow_hidden");
+        if (activeFilters[g] && activeFilters[g].length) {
+          activeFilters[g] = [];
+          $group.find(".tm_filter_button").removeClass("active");
+        }
+      }
+    }
+    // With no filter rows visible above it, the Shortcuts row's top divider
+    // separates nothing — drop it so it doesn't float as a stray rule.
+    const anyVisible = ["org", "env", "type", "role"].some((g) => {
+      const bg = document.querySelector(`.tm_button_group[data-filter-group="${g}"]`);
+      const row = bg && bg.closest(".tm_frow");
+      return row && !row.classList.contains("tm_frow_hidden");
+    });
+    $(".tm_frow_shortcuts").toggleClass("tm_frow_bare", !anyVisible);
+  };
+
   // Render the filter buttons for a single toolbar row from a list of
   // { id, label, color, patterns } entries. Buttons get inline CSS variable
   // --tm-fb-color so the per-entry colour shows on both idle and .active
-  // states. Existing non-button children (e.g. the #tm_group_tag_input on
-  // the types row) are preserved.
+  // states. Existing non-button children in the container are preserved.
   const renderFilterRow = (groupKey, entries) => {
     const $container = $(`.tm_button_group[data-filter-group="${groupKey}"]`);
     if (!$container.length) return;
@@ -1546,6 +1681,7 @@ import {
       }
     }
     refreshCachedElements();
+    updateFilterRowVisibility(groupKey);
   };
 
   // Re-render every configurable filter row from its current cache.
@@ -1602,7 +1738,7 @@ import {
     }
 
     // Environment filters — use the user-configured patterns via EnvironmentsManager
-    // so PROD/TEST/DEV filter buttons stay in sync with the Manage Environments modal.
+    // so PROD/TEST/DEV filter buttons stay in sync with the Environments modal.
     if (activeFilters.env.length > 0) {
       const accountId = $role.find(".tm_account_id").text();
       const detected = EnvironmentsManager.classify(accountName, accountId);
@@ -1619,7 +1755,7 @@ import {
       if (!typeMatch) return false;
     }
 
-    // Role name filters — configurable via Manage Role Names. Each active
+    // Role name filters — configurable via Role Names. Each active
     // entry's patterns are case-insensitive substrings of the role text.
     if (activeFilters.role.length > 0) {
       const roleMatch = activeFilters.role.some((id) =>
@@ -1629,7 +1765,7 @@ import {
     }
 
     // Special "show" filters: built-in Favorites/Recent + any user-defined
-    // search shortcut (Manage Shortcuts) where the shortcut's `search` string
+    // search shortcut (Shortcuts) where the shortcut's `search` string
     // must appear in the role text.
     if (activeFilters.show.length > 0) {
       for (const show of activeFilters.show) {
@@ -1666,7 +1802,7 @@ import {
       FilterManager.applyFilters();
     }, CONFIG.SEARCH_DEBOUNCE_DELAY),
 
-    applyFilters() {
+    applyFilters(silent = false) {
       let visibleCount = 0;
       let totalCount = 0;
 
@@ -1697,7 +1833,7 @@ import {
       // hidden rows).
       document.body.classList.toggle("tm_filters_active", filtersActive);
 
-      if (filtersActive) {
+      if (filtersActive && !silent) {
         showToast(
           `Showing ${visibleCount} of ${totalCount} roles`,
           "info",
@@ -1725,6 +1861,159 @@ import {
     },
   };
 
+  // --- Start View: save the current filter/search selection as the view the
+  // role picker opens with, and re-apply it automatically on every page load.
+  let startViewCache = null;
+
+  const StartViewManager = {
+    capture() {
+      return {
+        filters: {
+          org: [...activeFilters.org],
+          env: [...activeFilters.env],
+          type: [...activeFilters.type],
+          role: [...activeFilters.role],
+          show: [...activeFilters.show],
+        },
+        search: searchTerm,
+      };
+    },
+    hasCurrent() {
+      return Object.values(activeFilters).flat().length > 0 || searchTerm.length > 0;
+    },
+    apply(view, silent) {
+      if (!view || !view.filters) return false;
+      const f = view.filters;
+      const arr = (x) => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
+      activeFilters = {
+        org: arr(f.org), env: arr(f.env), type: arr(f.type),
+        role: arr(f.role), show: arr(f.show),
+      };
+      searchTerm = typeof view.search === "string" ? view.search : "";
+      // Re-sync the visible chip + search-box state to match the restored data.
+      $(".tm_filter_button").removeClass("active");
+      Object.keys(activeFilters).forEach((group) => {
+        activeFilters[group].forEach((filter) => {
+          $(`.tm_filter_button[data-group="${group}"][data-filter="${filter}"]`).addClass("active");
+        });
+      });
+      getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT).val(searchTerm);
+      // A saved view may name a group that now has only one option (its row is
+      // hidden); drop those so the view can't reinstate an invisible filter.
+      updateFilterRowVisibility();
+      FilterManager.applyFilters(!!silent);
+      return true;
+    },
+  };
+
+  const updateStartViewButton = () => {
+    $("#tm_start_view").text(`Start View: ${startViewCache ? "On" : "Off"}`);
+  };
+
+  const showStartViewModal = () => {
+    $("#tm_start_view_modal").remove();
+    const hasSaved = !!startViewCache;
+    const hasCurrent = StartViewManager.hasCurrent();
+    const favCount = favoritesCache.length;
+    const modalHTML = `
+            <div id="tm_start_view_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10001 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 22px 24px !important;
+                    max-width: 470px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
+                ">
+                    <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Start View</h3>
+                    <p style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.5 !important;">
+                        Choose the view the role picker opens with — it's re-applied
+                        automatically every time this page loads.${hasSaved
+                          ? " <strong>A start view is currently set.</strong>"
+                          : ""}
+                    </p>
+                    <button id="tm_start_view_fav" type="button" ${favCount ? "" : "disabled"} style="
+                        display: block !important; width: 100% !important; text-align: left !important;
+                        padding: 10px 12px !important; margin: 0 0 5px 0 !important;
+                        border: 1px solid #0073bb !important; border-radius: 5px !important;
+                        background: ${favCount ? "#0073bb" : "#7fb5d6"} !important; color: white !important;
+                        cursor: ${favCount ? "pointer" : "not-allowed"} !important; font-size: 14px !important; font-weight: 600 !important;
+                    ">★ Start with my Favorites${favCount ? ` (${favCount})` : ""}</button>
+                    <div style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.4 !important;">
+                        Opens showing only the roles you've starred.${favCount ? "" : " Star some roles first — the ☆ on each row."}
+                    </div>
+                    <button id="tm_start_view_save" type="button" ${hasCurrent ? "" : "disabled"} style="
+                        display: block !important; width: 100% !important; text-align: left !important;
+                        padding: 10px 12px !important; margin: 0 0 5px 0 !important;
+                        border: 1px solid #ccc !important; border-radius: 5px !important;
+                        background: white !important; color: #16191f !important;
+                        cursor: ${hasCurrent ? "pointer" : "not-allowed"} !important; opacity: ${hasCurrent ? "1" : "0.55"} !important; font-size: 14px !important; font-weight: 600 !important;
+                    ">Save my current filters</button>
+                    <div style="margin: 0 0 18px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.4 !important;">
+                        Uses whatever filters and search you have active right now.${hasCurrent ? "" : " (Nothing selected yet.)"}
+                    </div>
+                    <div style="display: flex !important; justify-content: space-between !important; align-items: center !important;">
+                        <button id="tm_start_view_clear" type="button" ${hasSaved ? "" : "disabled"} style="
+                            padding: 7px 12px !important; border: 1px solid #ccc !important; background: white !important;
+                            border-radius: 4px !important; cursor: ${hasSaved ? "pointer" : "not-allowed"} !important;
+                            opacity: ${hasSaved ? "1" : "0.45"} !important; font-size: 13px !important;
+                        ">Clear start view</button>
+                        <button id="tm_start_view_cancel" type="button" style="
+                            padding: 7px 14px !important; border: 1px solid #ccc !important;
+                            background: white !important; border-radius: 4px !important; cursor: pointer !important; font-size: 13px !important;
+                        ">Close</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    const persistStartView = async (view, applyNow, msg) => {
+      const saved = await StorageManager.saveStartView(view);
+      if (saved === false) return;
+      startViewCache = view;
+      updateStartViewButton();
+      if (applyNow) StartViewManager.apply(view, true);
+      $("#tm_start_view_modal").remove();
+      showToast(msg, "success", CONFIG.TOAST_DURATION);
+    };
+
+    $("#tm_start_view_cancel, #tm_start_view_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_start_view_modal").remove();
+    });
+
+    // One-click "open the picker showing only my starred roles" — the favorites
+    // filter as a start view. Applied immediately so the effect is visible.
+    $("#tm_start_view_fav").on("click", async function () {
+      if (!favoritesCache.length) return;
+      await persistStartView(
+        { filters: { org: [], env: [], type: [], role: [], show: ["favorites"] }, search: "" },
+        true,
+        "Start view set to your Favorites — this page will open showing only starred roles."
+      );
+    });
+
+    $("#tm_start_view_save").on("click", async function () {
+      if (!StartViewManager.hasCurrent()) return;
+      await persistStartView(
+        StartViewManager.capture(),
+        false,
+        "Start view saved — the picker will open with these filters."
+      );
+    });
+
+    $("#tm_start_view_clear").on("click", async function () {
+      if (!startViewCache) return;
+      await StorageManager.clearStartView();
+      startViewCache = null;
+      updateStartViewButton();
+      $("#tm_start_view_modal").remove();
+      showToast("Start view cleared (your favorites are untouched).", "info", CONFIG.TOAST_DURATION);
+    });
+  };
+
   // Build the AWS Console deep-link AWS will redirect to after SAML sign-in.
   // Uses the regional console host so AWS doesn't have to redirect from the
   // global one, and so multi-session routing (when enabled) kicks in directly.
@@ -1737,7 +2026,13 @@ import {
     const base = path ? `${host}/${path}` : `${host}/`;
     if (!labelPayload) return base;
     try {
-      const encoded = btoa(JSON.stringify(labelPayload));
+      // UTF-8-safe base64: a session label / tag / account name with an emoji
+      // or non-Latin1 character would make a plain btoa(JSON) throw, silently
+      // dropping the whole payload (no tab colour/label, and no chain jump).
+      const bytes = new TextEncoder().encode(JSON.stringify(labelPayload));
+      let bin = "";
+      for (const b of bytes) bin += String.fromCharCode(b);
+      const encoded = btoa(bin);
       const sep = base.includes("#") ? "&" : "#";
       return `${base}${sep}hop=${encoded}`;
     } catch (e) {
@@ -1820,52 +2115,74 @@ import {
   // --- Add UI Components ---
   // Filter rows are containers; their buttons are rendered by renderFilterRow
   // from the corresponding manager's cached entries. This means the toolbar
-  // automatically reflects whatever the user configures via "Manage …" modals.
+  // automatically reflects whatever the user configures via the side-menu config modals.
   const mainPanelHTML = `
         <div id="tm_interface_wrapper">
             <div class="tm_main_layout">
                 <div class="tm_left_column">
-                    <div class="tm_filter_row" id="tm_row_1">
-                        <div class="tm_filter_section tm_org_section">
-                            <h4>ORGANIZATIONS</h4>
-                            <div class="tm_button_group" data-filter-group="org"></div>
-                        </div>
-                        <div class="tm_divider"></div>
-                        <div class="tm_filter_section tm_env_section">
-                            <h4>ENVIRONMENTS</h4>
-                            <div class="tm_button_group" data-filter-group="env"></div>
-                        </div>
-                        <div class="tm_divider"></div>
-                        <div class="tm_filter_section tm_role_section">
-                            <h4>ROLE NAMES</h4>
-                            <div class="tm_button_group" data-filter-group="role"></div>
-                        </div>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Organizations</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="org"></div></div>
                     </div>
-                    <div class="tm_filter_row" id="tm_row_2">
-                        <div class="tm_filter_section tm_types_section">
-                            <h4>ACCOUNT TYPES</h4>
-                            <div class="tm_button_group" data-filter-group="type">
-                                <div class="tm_divider" style="margin: 0 8px 0 4px !important;"></div>
-                                <input id="tm_group_tag_input" class="tm_group_tag_input" type="text" placeholder="Tab group tag…" autocomplete="off" />
-                            </div>
-                        </div>
-                        <div class="tm_divider"></div>
-                        <div class="tm_filter_section tm_search_section">
-                            <h4>SEARCH</h4>
-                            <div id="tm_search_container">
-                                <input type="text" id="tm_search_input" placeholder="Find account..." autocomplete="off">
-                            </div>
-                        </div>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Environments</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="env"></div></div>
                     </div>
-                </div>
-                <div class="tm_right_column">
-                    <div class="tm_filter_row" id="tm_row_3">
-                        <div class="tm_filter_section tm_shortcuts_section">
-                            <h4>SHORTCUTS</h4>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Roles</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="role"></div></div>
+                    </div>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Account types</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="type"></div></div>
+                    </div>
+                    <div class="tm_frow tm_frow_shortcuts">
+                        <span class="tm_frow_label">Shortcuts</span>
+                        <div class="tm_frow_body tm_shortcuts_section">
                             <div class="tm_button_group">
                                 <a href="#" class="tm_filter_button" data-group="show" data-filter="favorites">Favorites</a>
                                 <a href="#" class="tm_filter_button" data-group="show" data-filter="recent">Recent</a>
                             </div>
+                            <input id="tm_group_tag_input" class="tm_group_tag_input" type="text" placeholder="Tab group tag…" autocomplete="off" />
+                        </div>
+                    </div>
+                </div>
+                <div class="tm_right_column">
+                    <div id="tm_search_container">
+                        <input type="text" id="tm_search_input" placeholder="Find account..." autocomplete="off">
+                    </div>
+                    <div id="tm_jump_bar" style="display: none; position: relative;">
+                        <button type="button" id="tm_jump_pill" title="Sign into a hub, then switch into an account you can only reach by assuming a role" style="
+                            display: flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important;
+                            width: 100% !important; box-sizing: border-box !important; padding: 7px 12px !important;
+                            border: 1px solid #0073bb !important; border-radius: 6px !important;
+                            background: white !important; color: #0073bb !important; cursor: pointer !important; font-size: 13px !important;
+                        ">⤳ Jump to account</button>
+                        <div id="tm_jump_popover" style="
+                            display: none; position: absolute !important; top: calc(100% + 6px) !important; right: 0 !important; left: auto !important;
+                            z-index: 10000 !important; width: 300px !important; background: white !important;
+                            border: 1px solid #ccc !important; border-radius: 8px !important;
+                            box-shadow: 0 8px 24px rgba(0,0,0,0.18) !important; padding: 12px !important; text-align: left !important;
+                        ">
+                            <div style="display: flex !important; gap: 6px !important; margin-bottom: 8px !important;">
+                                <select id="tm_jump_org" title="Org / assume profile" style="
+                                    flex: 0 0 42% !important; padding: 6px 6px !important; border: 1px solid #ccc !important;
+                                    border-radius: 4px !important; font-size: 12px !important; background: white !important; color: #16191f !important;
+                                "></select>
+                                <input id="tm_jump_account" type="text" placeholder="destination account id" autocomplete="off" style="
+                                    flex: 1 !important; padding: 6px 8px !important; border: 1px solid #ccc !important;
+                                    border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important; min-width: 0 !important;
+                                " />
+                            </div>
+                            <input id="tm_jump_label" type="text" placeholder="session label (optional)" autocomplete="off" style="
+                                width: 100% !important; padding: 6px 8px !important; border: 1px solid #ccc !important;
+                                border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important; margin-bottom: 8px !important;
+                            " />
+                            <button type="button" id="tm_jump_go" style="
+                                width: 100% !important; padding: 7px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                                color: white !important; border-radius: 4px !important; cursor: pointer !important; font-size: 12px !important;
+                            ">Jump →</button>
+                            <div id="tm_jump_recents"></div>
                         </div>
                     </div>
                 </div>
@@ -1875,27 +2192,35 @@ import {
 
   const floatingActionsHTML = `
         <div id="tm_actions_container">
-            <a href="#" class="tm_action_button" id="tm_theme_toggle">Theme: Light</a>
-            <a href="#" class="tm_action_button" id="tm_compact_toggle">Compact: Off</a>
-            <a href="#" class="tm_action_button" id="tm_signin_tab_toggle">Sign-in: Same tab</a>
-            <a href="#" class="tm_action_button" id="tm_recent_limit">Recent: 10</a>
-            <a href="#" class="tm_action_button" id="tm_tab_group_mode">Tab Groups: By role</a>
-            <a href="#" class="tm_action_button" id="tm_manage_shortcuts">Manage Shortcuts</a>
-            <a href="#" class="tm_action_button" id="tm_manage_organizations">Manage Organizations</a>
-            <a href="#" class="tm_action_button" id="tm_manage_environments">Manage Environments</a>
-            <a href="#" class="tm_action_button" id="tm_manage_types">Manage Account Types</a>
-            <a href="#" class="tm_action_button" id="tm_manage_role_names">Manage Role Names</a>
-            <a href="#" class="tm_action_button" id="tm_manage_services">Manage Services</a>
-            <a href="#" class="tm_action_button" id="tm_manage_regions">Manage Regions</a>
-            <a href="#" class="tm_action_button" id="tm_manage_account_names">Manage Account Names</a>
-            <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
-            <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
-            <a href="#" class="tm_action_button" id="tm_import_settings">Import Settings</a>
-            <a href="#" class="tm_action_button" id="tm_reset_order">Reset Order</a>
-            <a href="#" class="tm_action_button" id="tm_reset_recent">Reset Recent</a>
-            <a href="#" class="tm_action_button" id="tm_clear_sessions">Clear AWS Sessions</a>
-            <a href="#" class="tm_action_button" id="tm_keyboard_help">Keyboard Shortcuts</a>
-            <a href="#" class="tm_action_button" id="tm_about">Help / About</a>
+            <div id="tm_actions_scroll">
+                <div class="tm_menu_header">View</div>
+                <a href="#" class="tm_action_button" id="tm_theme_toggle">Theme: Light</a>
+                <a href="#" class="tm_action_button" id="tm_compact_toggle">Compact: Off</a>
+                <a href="#" class="tm_action_button" id="tm_signin_tab_toggle">Sign-in: Same tab</a>
+                <a href="#" class="tm_action_button" id="tm_recent_limit">Recent: 10</a>
+                <a href="#" class="tm_action_button" id="tm_tab_group_mode">Tab Groups: By role</a>
+                <a href="#" class="tm_action_button" id="tm_start_view">Start View: Off</a>
+                <div class="tm_menu_header">Configure</div>
+                <a href="#" class="tm_action_button" id="tm_manage_shortcuts">Shortcuts</a>
+                <a href="#" class="tm_action_button" id="tm_manage_organizations">Organizations</a>
+                <a href="#" class="tm_action_button" id="tm_manage_environments">Environments</a>
+                <a href="#" class="tm_action_button" id="tm_manage_types">Account Types</a>
+                <a href="#" class="tm_action_button" id="tm_manage_role_names">Role Names</a>
+                <a href="#" class="tm_action_button" id="tm_manage_services">Services</a>
+                <a href="#" class="tm_action_button" id="tm_manage_regions">Regions</a>
+                <a href="#" class="tm_action_button" id="tm_manage_account_names">Account Names</a>
+                <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Assume Profiles</a>
+                <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
+                <div class="tm_menu_header">Data</div>
+                <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
+                <a href="#" class="tm_action_button" id="tm_import_settings">Import Settings</a>
+                <a href="#" class="tm_action_button" id="tm_reset_order">Reset Order</a>
+                <a href="#" class="tm_action_button" id="tm_reset_recent">Reset Recent</a>
+                <a href="#" class="tm_action_button" id="tm_clear_sessions">Clear AWS Sessions</a>
+                <div class="tm_menu_header">Help</div>
+                <a href="#" class="tm_action_button" id="tm_keyboard_help">Keyboard Shortcuts</a>
+                <a href="#" class="tm_action_button" id="tm_about">Help / About</a>
+            </div>
         </div>
     `;
 
@@ -1961,12 +2286,8 @@ import {
             color: #e9ecef !important;
         }
 
-        body.tm_theme_dark .tm_filter_section h4 {
-            color: #cbd5e0 !important;
-        }
-
-        body.tm_theme_dark .tm_divider {
-            border-color: #4a5568 !important;
+        body.tm_theme_dark .tm_frow_label {
+            color: #a0aec0 !important;
         }
 
         body.tm_theme_dark .tm_filter_button {
@@ -2091,90 +2412,83 @@ import {
         .tm_main_layout {
             display: flex !important;
             gap: 0px !important;
+            align-items: stretch !important;
         }
 
         .tm_left_column {
-            flex: 0 0 65% !important;
-            border-right: 1px solid #f0f0f0 !important;
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 9px !important;
             padding-right: 15px !important;
         }
 
         .tm_right_column {
-            flex: 1 !important;
+            flex: 0 0 200px !important;
             display: flex !important;
             flex-direction: column !important;
-            gap: 10px !important;
+            gap: 9px !important;
             padding-left: 15px !important;
+            border-left: 1px solid #f0f0f0 !important;
         }
 
-        body.tm_theme_dark .tm_left_column {
-            border-right-color: #3a4148 !important;
+        body.tm_theme_dark .tm_right_column {
+            border-left-color: #3a4148 !important;
         }
 
-        .tm_filter_row {
+        /* One filter category per row: a fixed right-aligned label seam on the
+           left, wrapping chips on the right. Baseline-aligned so the label sits
+           with the first row of chips even when the group wraps to two lines. */
+        .tm_frow {
             display: flex !important;
+            align-items: baseline !important;
+            gap: 11px !important;
         }
 
-        #tm_row_1 {
-            border-bottom: 1px solid #f0f0f0 !important;
-            padding-bottom: 10px !important;
-            margin-bottom: 10px !important;
+        /* A filter row with fewer than two options is hidden (see
+           updateFilterRowVisibility). Higher specificity than the rule above so
+           the !important display:none wins regardless of source order. */
+        .tm_frow.tm_frow_hidden {
+            display: none !important;
         }
 
-        #tm_row_2 {
-            padding-bottom: 0px !important;
-            margin-bottom: 0px !important;
+        /* When no filter rows are visible above it, the Shortcuts row's top
+           divider separates nothing — drop it. */
+        .tm_frow.tm_frow_bare {
+            border-top: none !important;
+            padding-top: 0 !important;
+            margin-top: 0 !important;
         }
 
-        #tm_row_3 {
-            padding-bottom: 0px !important;
-            margin-bottom: 0px !important;
-        }
-
-        body.tm_theme_dark #tm_row_1 {
-            border-bottom-color: #3a4148 !important;
-        }
-
-        .tm_divider {
-            border-left: 1px solid #e7e7e7 !important;
-            margin: 0 15px !important;
-            align-self: stretch !important;
-        }
-
-        .tm_filter_section h4 {
+        .tm_frow_label {
+            flex: 0 0 96px !important;
+            text-align: right !important;
             font-size: 12px !important;
-            color: #545b64 !important;
-            margin: 0 0 8px 0 !important;
-            text-transform: uppercase !important;
-            font-weight: 700 !important;
+            color: #687078 !important;
+            line-height: 1.6 !important;
         }
 
-        .tm_org_section,
-        .tm_env_section {
-            flex: 0 0 auto !important;
-            min-width: 120px !important;
+        .tm_frow_body {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 8px !important;
         }
 
-        .tm_role_section {
-            flex: 0 0 auto !important;
-            min-width: 260px !important;
+        /* Shortcuts share their row with the tab-group tag input, so center
+           everything and fence it off from the filters above with a hairline. */
+        .tm_frow_shortcuts {
+            align-items: center !important;
+            border-top: 1px solid #f0f0f0 !important;
+            padding-top: 9px !important;
+            margin-top: 1px !important;
         }
 
-        .tm_shortcuts_section {
-            flex: 1 !important;
-            min-width: 180px !important;
-            max-width: 100% !important;
-            overflow: hidden !important;
-        }
-
-        .tm_types_section {
-            flex: 0 0 auto !important;
-            min-width: 440px !important;
-        }
-
-        .tm_search_section {
-            flex: 0 0 auto !important;
-            min-width: 180px !important;
+        body.tm_theme_dark .tm_frow_shortcuts {
+            border-top-color: #3a4148 !important;
         }
 
         .tm_button_group {
@@ -2260,10 +2574,10 @@ import {
         }
 
         #tm_search_input {
-            width: 90% !important;
+            width: 100% !important;
             box-sizing: border-box !important;
             height: 32px !important;
-            padding: 0 35px 0 10px !important;
+            padding: 0 10px !important;
             border: 1px solid #adb5bd !important;
             border-radius: 4px !important;
             font-size: 14px !important;
@@ -2280,9 +2594,6 @@ import {
             right: -220px !important;
             box-sizing: border-box !important;
             z-index: 1000 !important;
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 8px !important;
             transition: right 0.3s ease !important;
             background: rgba(255, 255, 255, 0.95) !important;
             border-radius: 8px 0 0 8px !important;
@@ -2290,6 +2601,37 @@ import {
             border: 1px solid #e1e4e8 !important;
             border-right: none !important;
             box-shadow: -2px 2px 8px rgba(0,0,0,0.1) !important;
+        }
+
+        /* Inner scroller so a long menu can't clip off-screen. Kept separate
+           from the container so the container's ::before pull-tab (which sits
+           outside its left edge) isn't clipped by the overflow. */
+        #tm_actions_scroll {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+            max-height: calc(100vh - 48px) !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+        }
+
+        /* Section labels grouping the menu (View / Configure / Data / Help). */
+        .tm_menu_header {
+            font-size: 11px !important;
+            color: #8a9099 !important;
+            text-align: left !important;
+            margin: 5px 2px 0 !important;
+            padding-top: 6px !important;
+            border-top: 1px solid #ededed !important;
+        }
+        #tm_actions_scroll .tm_menu_header:first-child {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+            border-top: none !important;
+        }
+        body.tm_theme_dark .tm_menu_header {
+            color: #a0aec0 !important;
+            border-top-color: #4a5568 !important;
         }
 
         #tm_actions_container::before {
@@ -2422,6 +2764,24 @@ import {
             box-shadow: 0 2px 12px rgba(0,115,187,0.35) !important;
         }
 
+        /* The result list is a flex column, so the space between rows is a
+           single container gap — exactly like the filter columns — instead of
+           per-row margins. Per-row margins collapse with AWS's own row margins,
+           which is why shrinking them in compact had no visible effect. */
+        #tm_role_list {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+            margin-top: 12px !important;
+        }
+        body.tm_compact_mode #tm_role_list {
+            gap: 2px !important;
+            margin-top: 6px !important;
+        }
+        #tm_role_list .saml-role {
+            margin: 0 !important;
+        }
+
         /* Drag-and-drop reorder.
            Driven by pointer events: dragged row follows cursor via translateY,
            siblings shift out of the way with a smooth CSS transition. */
@@ -2468,7 +2828,7 @@ import {
         }
 
         /* Env color is painted as a left-stripe inline (via applyEnvironmentStyling)
-           so the colour comes from the user's Manage Environments config, not
+           so the colour comes from the user's Environments config, not
            hardcoded CSS. */
         .saml-role[data-env-id]:hover {
             box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
@@ -2754,23 +3114,27 @@ import {
             color: #718096 !important;
         }
 
-        body.tm_compact_mode .tm_filter_section h4 {
-            display: none !important;
+        /* Compact mode tightens the vertical rhythm without shrinking the rows
+           themselves: the panel's own padding, the gap between filter rows, and
+           the gap between result rows. Each result row keeps its full internal
+           padding, height and control sizes — only the space BETWEEN rows
+           shrinks — so nothing ever looks cramped. */
+        body.tm_compact_mode #tm_interface_wrapper {
+            padding: 8px !important;
         }
 
-        body.tm_compact_mode .tm_filter_section {
-            margin-top: 0 !important;
+        body.tm_compact_mode .tm_left_column,
+        body.tm_compact_mode .tm_right_column {
+            gap: 5px !important;
         }
 
-        body.tm_compact_mode .tm_button_group {
-            margin-top: 0 !important;
+        body.tm_compact_mode .tm_frow_shortcuts {
+            padding-top: 5px !important;
         }
 
-        /* Compact rows: keep row size & fonts identical to non-compact,
-           only shrink the vertical gap between rows. */
-        body.tm_compact_mode .saml-role {
-            margin-bottom: 2px !important;
-        }
+        /* The result-row gap is a flex gap on #tm_role_list; compact shrinks
+           it there (8px to 2px) — see the #tm_role_list rules above. Rows keep
+           their full padding/height/controls, so nothing looks cramped. */
 
         #smallprint {
             background-color: #f8f9fa !important;
@@ -2833,6 +3197,8 @@ import {
   await RegionsManager.loadCache();
   await RegionsManager.loadLastRegionsCache();
   await AccountNamesManager.loadCache();
+  await AssumeProfilesManager.loadCache();
+  jumpRecentsCache = await StorageManager.getJumpRecents();
   // Pattern caches must be loaded before filtering / styling kicks in.
   await EnvironmentsManager.loadCache();
   await OrganizationsManager.loadCache();
@@ -2881,7 +3247,7 @@ import {
 
       const roleInfoHTML = `
                 <div class="tm_role_info">
-                    <button class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
+                    <button type="button" class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
                     <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="${safeAwsName}">${safeAccountName}</div>
                     <div class="tm_role_name">${safeRoleName}</div>
                 </div>
@@ -2889,7 +3255,7 @@ import {
                     <button type="button" class="tm_account_id" data-account-id="${safeAccountId}" title="Click to copy account ID">${safeAccountId}</button>
                     ${ServicesManager.generateDropdownHTML(roleArn, accountInfo.id)}
                     ${RegionsManager.generateRegionDropdownHTML(roleArn)}
-                    <button class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in — ⌘/Ctrl-click or middle-click toggles new tab">Sign In</button>
+                    <button type="button" class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in — ⌘/Ctrl-click or middle-click toggles new tab">Sign In</button>
                 </div>
             `;
 
@@ -2975,7 +3341,7 @@ import {
       if (orgId) {
         // Send the user's display label (e.g. "ACME Corp") rather than the
         // slug id (e.g. "acme-corp") so the Chrome tab group title matches
-        // what the user typed in Manage Organizations.
+        // what the user typed in Organizations.
         const entry = OrganizationsManager.findEntry(orgId);
         labelPayload.org = (entry && entry.label) ? entry.label : orgId;
       }
@@ -3071,6 +3437,54 @@ import {
     showAccountNamesModal();
   });
 
+  $("body").on("click", "#tm_manage_assume_profiles", function (e) {
+    e.preventDefault();
+    showAssumeProfilesModal();
+  });
+
+  const doJump = () =>
+    jumpToAccount($("#tm_jump_org").val(), $("#tm_jump_account").val(), $("#tm_jump_label").val());
+
+  $("body").on("click", "#tm_jump_pill", function (e) {
+    e.preventDefault();
+    if (jumpPopoverOpen) closeJumpPopover();
+    else openJumpPopover();
+  });
+
+  $("body").on("click", "#tm_jump_go", function (e) {
+    e.preventDefault();
+    doJump();
+  });
+
+  $("body").on("keydown", "#tm_jump_account, #tm_jump_label", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doJump();
+    }
+  });
+
+  $("body").on("click", ".tm_jump_recent", function (e) {
+    e.preventDefault();
+    jumpToAccount(
+      $(this).attr("data-org"),
+      $(this).attr("data-account"),
+      $(this).attr("data-label")
+    );
+  });
+
+  // Close the jump popover on any click outside it (and outside its pill).
+  $("body").on("click", function (e) {
+    if (!jumpPopoverOpen) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest("#tm_jump_popover") || t.closest("#tm_jump_pill"))) return;
+    closeJumpPopover();
+  });
+
+  $("body").on("click", "#tm_start_view", function (e) {
+    e.preventDefault();
+    showStartViewModal();
+  });
+
   $("body").on("click", "#tm_clear_sessions", function (e) {
     e.preventDefault();
     showClearSessionsModal();
@@ -3104,7 +3518,7 @@ import {
                     max-height: 80vh !important;
                     overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage Custom Shortcuts</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Custom Shortcuts</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important;">
                         Create shortcuts with a label and search string. Each line: <code>Label: "search text"</code>
                     </p>
@@ -3205,7 +3619,7 @@ Account 123456789012: &quot;123456789012&quot;">${currentShortcuts}</textarea>
                     max-height: 80vh !important;
                     overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage AWS Services</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">AWS Services</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important;">
                         Configure quick-access services. Each line: <code>Service Name: "console/path"</code>.
                         Use <code>{region}</code> as a placeholder for the region from General Settings.
@@ -3331,7 +3745,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     background: white !important; border-radius: 8px !important; padding: 20px !important;
                     max-width: 520px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage Account Names</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Account Names</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
                         Give specific accounts a friendlier name. One per line:
                         <code>123456789012: My Friendly Name</code>. The custom name
@@ -3375,6 +3789,218 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
   };
 
+  // --- Jump to account: sign into an org's hub, then chain (Switch Role) into
+  // a destination account the hub is trusted to assume. Config lives in the
+  // Assume Profiles panel; the target rides the #hop payload and the
+  // console-side decorator completes the switch on the hub console.
+  const findRoleArnForAccount = (accountId) => {
+    let arn = "";
+    $(".saml-role").each(function () {
+      if (arn) return;
+      if ($(this).find(".tm_account_id").text().trim() === accountId) {
+        arn = $(this).find(".tm_signin_button").attr("data-role-arn") || "";
+      }
+    });
+    return arn;
+  };
+
+  const computeDestEnv = (accountId) => {
+    const env = EnvironmentsManager.classify("", accountId);
+    if (!env || env === "default") return { envColor: "", envLetter: "" };
+    return { envColor: EnvironmentsManager.colorFor(env), envLetter: EnvironmentsManager.letterFor(env) };
+  };
+
+  const closeJumpPopover = () => {
+    $("#tm_jump_popover").css("display", "none");
+    jumpPopoverOpen = false;
+  };
+
+  const recordJump = async (org, account, label) => {
+    const entry = { org, account, label: (label || "").trim(), ts: Date.now() };
+    const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
+    jumpRecentsCache = [entry, ...rest].slice(0, 6);
+    await StorageManager.saveJumpRecents(jumpRecentsCache);
+  };
+
+  const jumpToAccount = (profileName, accountRaw, labelRaw) => {
+    const profile = AssumeProfilesManager.byName(profileName);
+    if (!profile) {
+      showToast("Pick an org first.", "error", CONFIG.TOAST_DURATION);
+      return;
+    }
+    const dest = String(accountRaw || "").trim();
+    if (!/^\d{12}$/.test(dest)) {
+      showToast("Enter a 12-digit destination account ID.", "error", CONFIG.TOAST_DURATION);
+      return;
+    }
+    const hubArn = findRoleArnForAccount(profile.hub);
+    if (!hubArn) {
+      showToast(
+        `Hub account ${profile.hub} isn't in this role list — you can only jump ` +
+          `from an org whose hub you can sign into here.`,
+        "error",
+        CONFIG.TOAST_DURATION_LONG
+      );
+      return;
+    }
+    // Cap the label at the source so an oversized value can't reach the tab
+    // title, the pending-jump entry, or the recents list (normalizeJumpRecents
+    // caps reads at the same 120).
+    const label = String(labelRaw || "").trim().slice(0, 120);
+    const displayName = label || `${profile.name} · ${dest}`;
+    const { envColor, envLetter } = computeDestEnv(dest);
+
+    // Hand-off for the console side: the jumped-into tab lands on a different
+    // subdomain, so sessionStorage can't carry the label/colour across. Stash
+    // it in the extension's own storage keyed by the destination account; the
+    // decorator picks it up on the target console and clears it.
+    safeStorageOperation(async () => {
+      const cur =
+        (await chrome.storage.local.get("hop_pending_jumps"))["hop_pending_jumps"] || {};
+      // Prune anything past the decorator's 5-min TTL so an abandoned jump
+      // (cancelled at Switch Role, trust failure) can't grow the map unbounded.
+      const now = Date.now();
+      for (const k of Object.keys(cur)) {
+        if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
+      }
+      cur[dest] = { label: displayName, envColor, envLetter, ts: now };
+      await chrome.storage.local.set({ hop_pending_jumps: cur });
+    });
+    recordJump(profileName, dest, label);
+
+    const labelPayload = { chain: { account: dest, role: profile.role, displayName } };
+    const region = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    closeJumpPopover();
+    showToast(
+      `Signing in to the ${profile.name} hub, then switching into ${dest}…`,
+      "info",
+      CONFIG.TOAST_DURATION
+    );
+    signInToRole(hubArn, buildDestination("", labelPayload, region), { newTab: false });
+  };
+
+  const refreshJumpOrgs = () => {
+    const $sel = $("#tm_jump_org");
+    if (!$sel.length) return;
+    const profiles = AssumeProfilesManager.all();
+    const prev = $sel.val();
+    $sel.html(
+      profiles
+        .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
+        .join("")
+    );
+    if (prev && profiles.some((p) => p.name === prev)) $sel.val(prev);
+  };
+
+  const refreshJumpRecents = () => {
+    const $r = $("#tm_jump_recents");
+    if (!$r.length) return;
+    if (!jumpRecentsCache.length) {
+      $r.html("");
+      return;
+    }
+    const rows = jumpRecentsCache
+      .map((r) => {
+        const primary = escapeHtml(r.label || AccountNamesManager.nameFor(r.account) || r.account);
+        const acct = escapeHtml(r.account);
+        return `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" title="Jump again" style="
+            display: flex !important; align-items: center !important; justify-content: space-between !important;
+            gap: 8px !important; padding: 6px 4px !important; border-top: 1px solid #eee !important;
+            font-size: 12px !important; cursor: pointer !important;
+          "><span style="color: #16191f !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${primary}</span><span style="color: #6c757d !important; font-family: monospace !important; flex: none !important;">${acct}</span></div>`;
+      })
+      .join("");
+    $r.html(
+      `<div style="font-size: 11px !important; color: #6c757d !important; margin: 10px 0 2px !important;">Recent</div>${rows}`
+    );
+  };
+
+  const openJumpPopover = () => {
+    if (!$("#tm_jump_popover").length) return;
+    refreshJumpOrgs();
+    refreshJumpRecents();
+    $("#tm_jump_popover").css("display", "block");
+    jumpPopoverOpen = true;
+    const acc = document.getElementById("tm_jump_account");
+    if (acc) {
+      acc.value = "";
+      acc.focus();
+    }
+  };
+
+  const refreshJumpBar = () => {
+    const $bar = $("#tm_jump_bar");
+    if (!$bar.length) return;
+    if (!AssumeProfilesManager.all().length) {
+      closeJumpPopover();
+      $bar.hide();
+      return;
+    }
+    $bar.show();
+    if (jumpPopoverOpen) {
+      refreshJumpOrgs();
+      refreshJumpRecents();
+    }
+  };
+
+  const showAssumeProfilesModal = () => {
+    const current = formatAssumeProfileLines(assumeProfilesCache);
+    const modalHTML = `
+            <div id="tm_assume_profiles_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 20px !important;
+                    max-width: 560px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
+                ">
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Assume Profiles</h3>
+                    <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
+                        For accounts you reach by <strong>assuming a role from a hub</strong>
+                        (role chaining). One org per line:
+                        <code>Org name | 111111111111 | RoleName</code> — the 12-digit
+                        <strong>hub</strong> account you sign into, and the <strong>role</strong>
+                        to assume in the target. These feed the <em>Jump to account</em> bar.
+                        The trust between hub and target must already exist in AWS.
+                    </p>
+                    <textarea id="tm_assume_profiles_input" style="
+                        width: 100% !important; height: 200px !important; border: 1px solid #ccc !important;
+                        border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
+                        font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
+                    " placeholder="Acme Prod | 111111111111 | OrgAdmin&#10;Acme Dev | 222222222222 | OrgAdmin">${escapeHtml(current)}</textarea>
+                    <div style="margin-top: 15px !important; text-align: right !important;">
+                        <button id="tm_assume_profiles_cancel" style="
+                            padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
+                            background: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Cancel</button>
+                        <button id="tm_assume_profiles_save" style="
+                            padding: 8px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                            color: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    $("#tm_assume_profiles_cancel, #tm_assume_profiles_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_assume_profiles_modal").remove();
+    });
+
+    $("#tm_assume_profiles_save").on("click", async function () {
+      const list = parseAssumeProfileLines($("#tm_assume_profiles_input").val());
+      const saved = await AssumeProfilesManager.save(list);
+      if (saved) {
+        $("#tm_assume_profiles_modal").remove();
+        refreshJumpBar();
+        showToast("Assume profiles saved.", "success", CONFIG.TOAST_DURATION);
+      }
+    });
+  };
+
   const showRegionsModal = () => {
     const current = formatRegionLines(regionListCache);
     const modalHTML = `
@@ -3388,7 +4014,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     background: white !important; border-radius: 8px !important; padding: 20px !important;
                     max-width: 500px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Manage Regions</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Regions</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important;">
                         One region per line, in the order they should appear in the toolbar switcher.
                         Use <code>code</code> or <code>code: Friendly Label</code>
@@ -3885,7 +4511,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
     const rect = dragState.row.getBoundingClientRect();
     const cs = getComputedStyle(dragState.row);
-    dragState.rowOffset = rect.height + (parseFloat(cs.marginBottom) || 0);
+    // Row spacing now lives on the list's flex `gap`, not per-row margins, so
+    // the shift between adjacent slots is row height + the container gap.
+    const listGap = parseFloat(getComputedStyle(list).rowGap) || 0;
+    dragState.rowOffset = rect.height + (parseFloat(cs.marginBottom) || 0) + listGap;
 
     try { dragState.row.setPointerCapture(dragState.pointerId); } catch (err) { /* ignore */ }
     dragState.row.classList.add("tm_dragging");
@@ -4068,6 +4697,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
     // Esc — universal close/clear.
     if (e.key === "Escape") {
+      if (jumpPopoverOpen) {
+        closeJumpPopover();
+        return;
+      }
       if (modalOpen) {
         $openModal.remove();
         return;
@@ -4236,14 +4869,18 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${intro}
           ${sectionHTML("Filter, search, favorite",
             `The toolbar at the top lets you narrow the role list by organisation, environment, account type or role name, plus full-text search. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly.`)}
+          ${sectionHTML("Start view",
+            `Have the picker open with your filters already applied. Set filters/search, then use <em>Start View</em> in the side menu — or one click on <strong>★ Start with my Favorites</strong> to open showing only your starred roles. It re-applies automatically every load; <em>Clear</em> removes it (your favorites stay put).`)}
           ${sectionHTML("Reorder by drag",
             `Drag any role row to reposition it; the order persists across sessions. <strong>Reorder is disabled while any filter or search is active</strong> — otherwise you'd only be sorting visible rows, which gives surprising results. Clear filters first. <em>Reset Order</em> in the side menu restores AWS's default order.`)}
           ${sectionHTML("Deep-link into a service",
-            `Each role row has a service dropdown (EC2 / S3 / IAM / …). Picking a service before <strong>Sign In</strong> drops you straight into that service's console for that role. Manage the list via <em>Manage Services</em>.`)}
+            `Each role row has a service dropdown (EC2 / S3 / IAM / …). Picking a service before <strong>Sign In</strong> drops you straight into that service's console for that role. Edit the list via <em>Services</em>.`)}
           ${sectionHTML("Pick a region per sign-in",
-            `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Manage Regions</em>.`)}
+            `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Regions</em>.`)}
+          ${sectionHTML("Jump to account (role chaining)",
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears next to search. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away under <em>Recent</em> in the popover. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
           ${sectionHTML("Rename accounts",
-            `Give specific accounts a friendlier name via <em>Manage Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
+            `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",
             `A plain <strong>Sign In</strong> opens the console in the same tab or a new one — your choice, set via the <em>Sign-in</em> side-menu option. <strong>⌘/Ctrl-click</strong> or <strong>middle-click</strong> always does the opposite, so both are one click away.`)}
           ${sectionHTML("Coloured console tabs",
@@ -4398,7 +5035,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             workstream regardless of account.
           </p>
           ${optionHTML("role", "By role", "Each unique account + role becomes its own coloured group, e.g. <code>my-account · PowerUser</code>. Same role always gets the same colour.")}
-          ${optionHTML("org", "By org", "Accounts cluster by organization, based on your <em>Manage Organizations</em> patterns. Accounts that don't match any org are not grouped.")}
+          ${optionHTML("org", "By org", "Accounts cluster by organization, based on your <em>Organizations</em> patterns. Accounts that don't match any org are not grouped.")}
           ${optionHTML("off", "Off", "No automatic grouping. Tab title prefix and favicon colouring still apply.")}
           <div style="margin-top: 14px !important; text-align: right !important;">
             <button data-action="cancel" style="
@@ -4544,6 +5181,17 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     tabGroupTagCache = val;
     await StorageManager.saveTabGroupTag(val);
   }, 300));
+
+  // Clicking into the tab-group tag field clears it. The dominant intent here
+  // is to wipe the current tag, so we empty it (and persist the clear) on focus
+  // rather than making the user select-and-delete. focusin (not focus) because
+  // the delegated listener lives on <body> and focus does not bubble.
+  $("body").on("focusin", "#tm_group_tag_input", async function () {
+    if (!$(this).val()) return;
+    $(this).val("");
+    tabGroupTagCache = "";
+    await StorageManager.saveTabGroupTag("");
+  });
 
   // --- Reset Order ---
   // Wipes the stored drag-and-drop ordering and falls back to AWS's native
@@ -4704,6 +5352,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     CONFIG.STORAGE_KEYS.ROLE_ORDER,
     CONFIG.STORAGE_KEYS.SIGNIN_CONFIRM_ROLE_KEYWORDS,
     CONFIG.STORAGE_KEYS.SIGNIN_CONFIRM_TYPE_IDS,
+    CONFIG.STORAGE_KEYS.ASSUME_PROFILES,
+    CONFIG.STORAGE_KEYS.JUMP_RECENTS,
   ]);
 
   const collectExportPayload = async () => {
@@ -4966,6 +5616,23 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.SIGNIN_CONFIRM_ROLE_KEYWORDS]: isStringList,
         [SK.SIGNIN_CONFIRM_TYPE_IDS]:      isStringList,
         [SK.WELCOME_SEEN]: (v) => typeof v === "boolean",
+        [SK.START_VIEW]: (v) =>
+          !!v && typeof v === "object" && !Array.isArray(v) &&
+          !!v.filters && typeof v.filters === "object" && !Array.isArray(v.filters) &&
+          (v.search === undefined || typeof v.search === "string"),
+        [SK.ASSUME_PROFILES]: (v) =>
+          Array.isArray(v) && v.every((p) =>
+            p && typeof p === "object" &&
+            typeof p.name === "string" && p.name.length <= 64 &&
+            typeof p.hub === "string" && /^\d{12}$/.test(p.hub) &&
+            typeof p.role === "string" && p.role.length <= 128
+          ),
+        [SK.JUMP_RECENTS]: (v) =>
+          Array.isArray(v) && v.every((r) =>
+            r && typeof r === "object" &&
+            typeof r.org === "string" && typeof r.account === "string" &&
+            (r.label === undefined || typeof r.label === "string")
+          ),
       };
 
       const allowed = new Set(SETTINGS_EXPORT_KEYS);
@@ -5102,7 +5769,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     e.preventDefault();
     showPatternsModal({
       modalId: "tm_envs_modal",
-      title: "Manage Environments",
+      title: "Environments",
       description: "Each entry colors a filter button, the role-card left stripe, and the AWS console favicon. Patterns are substrings of the account name or full account IDs.",
       addButtonLabel: "Add environment",
       labelPlaceholder: "e.g. PROD",
@@ -5124,7 +5791,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     e.preventDefault();
     showPatternsModal({
       modalId: "tm_orgs_modal",
-      title: "Manage Organizations",
+      title: "Organizations",
       description: "Cluster accounts into organizations. Used by the toolbar filter row and by tab-group \"By org\" mode. Patterns are substrings of the account name or full account IDs.",
       addButtonLabel: "Add organization",
       labelPlaceholder: "e.g. ACME",
@@ -5145,7 +5812,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     e.preventDefault();
     showPatternsModal({
       modalId: "tm_types_modal",
-      title: "Manage Account Types",
+      title: "Account Types",
       description: "Define categories like Management, Security, Logging, Network … Patterns are substrings of the account name or full account IDs. Configured types can be flagged as \"sensitive\" in General Settings.",
       addButtonLabel: "Add account type",
       labelPlaceholder: "e.g. Security",
@@ -5174,7 +5841,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
     const types = AccountTypesManager.entries();
     const typeCheckboxes = types.length === 0
-      ? `<div style="color:#6c757d !important; font-size: 13px !important; padding: 6px 0 !important;">No account types configured yet. Add them via <em>Manage Account Types</em>.</div>`
+      ? `<div style="color:#6c757d !important; font-size: 13px !important; padding: 6px 0 !important;">No account types configured yet. Add them via <em>Account Types</em>.</div>`
       : types.map((t) => {
           const checked = signinConfirmTypeIdsCache.includes(t.id) ? "checked" : "";
           // Re-validate the color even though renderFilterRow does too —
@@ -5232,7 +5899,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
               })()}
             </select>
             <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 4px !important;">
-              Only regions from <em>Manage Regions</em> are listed — add more there.
+              Only regions added under <em>Regions</em> are listed — add more there.
               Used as the sign-in destination region and the <code>{region}</code> placeholder in service paths.
             </span>
           </label>
@@ -5321,7 +5988,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     e.preventDefault();
     showPatternsModal({
       modalId: "tm_role_names_modal",
-      title: "Manage Role Names",
+      title: "Role Names",
       description: "Filter buttons that match against the role name (not account info). Useful for picking out Admin / ReadOnly / DevOps etc. Patterns are case-insensitive substrings of the role text.",
       addButtonLabel: "Add role-name filter",
       labelPlaceholder: "e.g. Admin",
@@ -5388,8 +6055,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   // Start modal-theming observer before any modal can be created so the
   // welcome modal (and everything after) picks up the current theme.
-  // subtree: true so re-renders inside a modal (e.g. "Add entry" in Manage
-  // modals) get themed too, not just the initial modal append.
+  // subtree: true so re-renders inside a modal (e.g. "Add entry" in a config
+  // modal) get themed too, not just the initial modal append.
   modalObserver.observe(document.body, { childList: true, subtree: true });
 
   // Initialize theme
@@ -5463,6 +6130,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   } catch (e) {
     console.error("Error loading tab group mode:", e);
   }
+
+  // Apply the saved "start view" (default filters), if one is configured. Runs
+  // after the filter rows + custom-shortcut chips are rendered so their .active
+  // state can be restored; silent so it doesn't toast "Showing N of M" on load.
+  try {
+    startViewCache = await StorageManager.getStartView();
+    updateStartViewButton();
+    if (startViewCache) StartViewManager.apply(startViewCache, true);
+  } catch (e) {
+    console.error("Error applying start view:", e);
+  }
+
+  // Reveal + populate the Jump-to-account bar if any assume profiles exist.
+  refreshJumpBar();
 
   // Apply initial environment-based styling
   applyEnvironmentStyling();

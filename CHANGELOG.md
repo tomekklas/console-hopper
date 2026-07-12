@@ -3,6 +3,60 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.2.0 — 2026-07-11
+
+### Added
+
+- **Jump to account (role chaining).** For accounts you can only reach by
+  assuming a role from a hub: configure per-org **Assume Profiles** (one line
+  per org — `Org name | hub account id | role to assume`), and a
+  **⤳ Jump to account** button appears beside search. Pick the org, enter the
+  12-digit destination account and an optional session label, and Console
+  Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click
+  there and you're in. The jumped-into tab is titled with your session label
+  (plus env colour when the account matches an Environment pattern), and your
+  recent jumps are one click away inside the popover. The hub→target trust must
+  already exist in AWS; chained sessions are capped at 1 hour by AWS.
+- **Start View.** Save the filters and search you have selected as the view the
+  role picker opens with — it's re-applied automatically on every load. Set it
+  from the new **Start View** side-menu entry, which offers a one-click
+  **★ Start with my Favorites** (open the picker showing only your starred
+  roles), **Save my current filters**, or **Clear** (which leaves your favorites
+  intact).
+
+### Changed
+
+- **Redesigned filter panel.** Filters now read as aligned label rows
+  (Organizations / Environments / Roles / Account types / Shortcuts) with
+  Search and Jump in a compact rail on the right — replacing the old
+  two-column layout with scattered section headers.
+- **Filter rows with fewer than two options hide automatically** — a lone
+  option can't narrow the list, so the row is pure noise. The row reappears
+  as soon as a second option is configured, and hiding a row also releases
+  any filter it had active so nothing stays constrained invisibly.
+- **Simplified side menu.** Items are grouped under View / Configure / Data /
+  Help, the word "Manage" is gone from the config entries (and their modal
+  titles), and the menu scrolls when it's taller than the window.
+- **Compact mode is actually compact now.** It tightens the panel padding and
+  the spacing between result rows (the rows themselves keep their full size),
+  instead of only nudging the filter chips together.
+- The **tab-group tag** field now clears when you click into it — the common
+  intent there is to wipe the current tag, so it no longer needs selecting and
+  deleting by hand.
+
+### Fixed
+
+- Pressing **Enter** in the search box no longer toggles a role's favorite — it
+  signs into the selected (or first visible) role, as intended. The ☆ and
+  **Sign In** buttons had no explicit `type`, so they defaulted to form-submit
+  buttons and the search field's implicit Enter-submission was clicking the
+  first one (the star).
+- **Session labels with emoji or non-Latin characters** no longer break the
+  tab-decoration payload (it's now UTF-8-safe end-to-end).
+- Hardening: the Switch Role hand-off re-validates the destination account
+  before navigating, pending jump decorations expire and prune after 5
+  minutes, and stored jump recents are validated and capped on read.
+
 ## 1.1.0 — 2026-06-02
 
 ### Added
