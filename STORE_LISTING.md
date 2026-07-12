@@ -53,7 +53,7 @@ WHAT YOU GET
 • Jump to account (role chaining)
   For accounts you can only reach by assuming a role from a hub:
   configure per-org assume profiles once (org name, hub account id,
-  role to assume) and a "Jump to account" button appears beside search.
+  role to assume) and a "Jump to account" button appears in the search column.
   Enter the destination account id and an optional session label —
   Console Hopper signs into the hub and opens AWS's Switch Role
   pre-filled, one click and you're in. The new tab is titled with your

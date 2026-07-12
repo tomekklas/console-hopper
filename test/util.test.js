@@ -205,15 +205,15 @@ describe("normalizeJumpRecents", () => {
   it("keeps valid entries, trims, drops junk, defaults missing fields", () => {
     expect(
       normalizeJumpRecents([
-        { org: "  Acme  ", account: " 111111111111 ", label: "  prod  ", ts: 5 },
+        { org: "  Acme  ", account: " 111111111111 ", label: "  prod  ", role: "  OrgAdmin  ", ts: 5 },
         { org: "Bad", account: "999", label: "x", ts: 1 },
         { account: "222222222222" },
         null,
         "nope",
       ])
     ).toEqual([
-      { org: "Acme", account: "111111111111", label: "prod", ts: 5 },
-      { org: "", account: "222222222222", label: "", ts: 0 },
+      { org: "Acme", account: "111111111111", label: "prod", role: "OrgAdmin", ts: 5 },
+      { org: "", account: "222222222222", label: "", role: "", ts: 0 },
     ]);
   });
   it("caps the list at 6 entries and returns [] for non-arrays", () => {

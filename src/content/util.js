@@ -194,8 +194,9 @@ export const normalizeJumpRecents = (raw) => {
     if (!/^\d{12}$/.test(account)) continue;
     const org = typeof r.org === "string" ? r.org.trim().slice(0, 64) : "";
     const label = typeof r.label === "string" ? r.label.trim().slice(0, 120) : "";
+    const role = typeof r.role === "string" ? r.role.trim().slice(0, 128) : "";
     const ts = typeof r.ts === "number" && isFinite(r.ts) ? r.ts : 0;
-    out.push({ org, account, label, ts });
+    out.push({ org, account, label, role, ts });
     if (out.length >= 6) break;
   }
   return out;

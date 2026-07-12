@@ -2129,12 +2129,12 @@ import {
                         <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="env"></div></div>
                     </div>
                     <div class="tm_frow">
-                        <span class="tm_frow_label">Roles</span>
-                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="role"></div></div>
-                    </div>
-                    <div class="tm_frow">
                         <span class="tm_frow_label">Account types</span>
                         <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="type"></div></div>
+                    </div>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Roles</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="role"></div></div>
                     </div>
                     <div class="tm_frow tm_frow_shortcuts">
                         <span class="tm_frow_label">Shortcuts</span>
@@ -2143,15 +2143,17 @@ import {
                                 <a href="#" class="tm_filter_button" data-group="show" data-filter="favorites">Favorites</a>
                                 <a href="#" class="tm_filter_button" data-group="show" data-filter="recent">Recent</a>
                             </div>
-                            <input id="tm_group_tag_input" class="tm_group_tag_input" type="text" placeholder="Tab group tag…" autocomplete="off" />
                         </div>
                     </div>
                 </div>
                 <div class="tm_right_column">
                     <div id="tm_search_container">
                         <input type="text" id="tm_search_input" placeholder="Find account..." autocomplete="off">
+                        <button type="button" id="tm_search_clear" class="tm_field_clear" aria-label="Clear search" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
                     </div>
-                    <div id="tm_jump_bar" style="display: none; position: relative;">
+                    <div id="tm_jump_section" style="display: none;">
+                        <div class="tm_col_divider"></div>
+                        <div id="tm_jump_bar" style="position: relative;">
                         <button type="button" id="tm_jump_pill" title="Sign into a hub, then switch into an account you can only reach by assuming a role" style="
                             display: flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important;
                             width: 100% !important; box-sizing: border-box !important; padding: 7px 12px !important;
@@ -2169,21 +2171,39 @@ import {
                                     flex: 0 0 42% !important; padding: 6px 6px !important; border: 1px solid #ccc !important;
                                     border-radius: 4px !important; font-size: 12px !important; background: white !important; color: #16191f !important;
                                 "></select>
-                                <input id="tm_jump_account" type="text" placeholder="destination account id" autocomplete="off" style="
-                                    flex: 1 !important; padding: 6px 8px !important; border: 1px solid #ccc !important;
-                                    border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important; min-width: 0 !important;
-                                " />
+                                <div id="tm_jump_account_wrap" style="position: relative !important; flex: 1 !important; min-width: 0 !important;">
+                                    <input id="tm_jump_account" type="text" placeholder="destination account id" autocomplete="off" style="
+                                        width: 100% !important; padding: 6px 28px 6px 8px !important; border: 1px solid #ccc !important;
+                                        border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important; min-width: 0 !important;
+                                    " />
+                                    <button type="button" id="tm_jump_account_clear" class="tm_field_clear" aria-label="Clear account id" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
+                                </div>
                             </div>
-                            <input id="tm_jump_label" type="text" placeholder="session label (optional)" autocomplete="off" style="
-                                width: 100% !important; padding: 6px 8px !important; border: 1px solid #ccc !important;
-                                border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important; margin-bottom: 8px !important;
-                            " />
+                            <div id="tm_jump_label_wrap" style="position: relative !important; margin-bottom: 8px !important;">
+                                <input id="tm_jump_label" type="text" placeholder="session label (optional)" autocomplete="off" style="
+                                    width: 100% !important; padding: 6px 28px 6px 8px !important; border: 1px solid #ccc !important;
+                                    border-radius: 4px !important; font-size: 12px !important; box-sizing: border-box !important;
+                                " />
+                                <button type="button" id="tm_jump_label_clear" class="tm_field_clear" aria-label="Clear label" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
+                            </div>
                             <button type="button" id="tm_jump_go" style="
                                 width: 100% !important; padding: 7px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
                                 color: white !important; border-radius: 4px !important; cursor: pointer !important; font-size: 12px !important;
                             ">Jump →</button>
                             <div id="tm_jump_recents"></div>
                         </div>
+                        </div>
+                    </div>
+                    <div class="tm_col_divider"></div>
+                    <select id="tm_group_mode_select" class="tm_group_mode_select" title="How the console tabs you open are grouped in Chrome">
+                        <option value="role">Tabs: By role</option>
+                        <option value="org">Tabs: By org</option>
+                        <option value="custom">Tabs: Custom tag</option>
+                        <option value="off">Tabs: Off</option>
+                    </select>
+                    <div id="tm_group_tag_field" class="tm_group_tag_field" style="display: none;">
+                        <input id="tm_group_tag_input" class="tm_group_tag_input" type="text" placeholder="INC-4821" autocomplete="off" />
+                        <button type="button" id="tm_group_tag_clear" class="tm_field_clear" aria-label="Clear tag" title="Clear tag" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
                     </div>
                 </div>
             </div>
@@ -2437,6 +2457,52 @@ import {
             border-left-color: #3a4148 !important;
         }
 
+        /* Dedicated "Tab group" area between the filters and the search / jump
+           rail: one dropdown (By role / By org / Custom tag / Off) with a tag
+           field that appears only when Custom tag is chosen. */
+        /* Find / Jump / Tabs stack vertically in one column, each fenced off by
+           a hairline. Divider margin is 0 — the column's flex gap (and the jump
+           section's) provides even 9px space on both sides of each rule. Every
+           control self-labels, so there are no headings. */
+        .tm_col_divider {
+            border-top: 1px solid #ededed !important;
+            margin: 0 !important;
+        }
+        body.tm_theme_dark .tm_col_divider {
+            border-top-color: #3a4148 !important;
+        }
+        /* Flex so the divider inside it gets the same 9px gap as the top-level
+           column. display is intentionally NOT !important so the inline
+           display:none toggle (refreshJumpBar) can still hide the whole block. */
+        #tm_jump_section {
+            display: flex;
+            flex-direction: column !important;
+            gap: 9px !important;
+        }
+        .tm_group_mode_select {
+            width: 100% !important;
+            box-sizing: border-box !important;
+            height: 32px !important;
+            padding: 0 8px !important;
+            border: 1px solid #adb5bd !important;
+            border-radius: 4px !important;
+            background-color: #fff !important;
+            color: #16191f !important;
+            font-size: 14px !important;
+            font-family: inherit !important;
+            cursor: pointer !important;
+        }
+        .tm_group_mode_select:focus {
+            outline: none !important;
+            border-color: #0073bb !important;
+            box-shadow: 0 0 0 2px rgba(0,115,187,0.15) !important;
+        }
+        body.tm_theme_dark .tm_group_mode_select {
+            background-color: #2d3748 !important;
+            color: #e9ecef !important;
+            border-color: #6b7280 !important;
+        }
+
         /* One filter category per row: a fixed right-aligned label seam on the
            left, wrapping chips on the right. Baseline-aligned so the label sits
            with the first row of chips even when the group wraps to two lines. */
@@ -2478,8 +2544,8 @@ import {
             gap: 8px !important;
         }
 
-        /* Shortcuts share their row with the tab-group tag input, so center
-           everything and fence it off from the filters above with a hairline. */
+        /* Favorites / Recent live in their own footer row, fenced off from the
+           filters above with a hairline. */
         .tm_frow_shortcuts {
             align-items: center !important;
             border-top: 1px solid #f0f0f0 !important;
@@ -2509,32 +2575,77 @@ import {
             transition: all 0.2s ease !important;
         }
 
-        /* Tab-group tag override input — looks like another chip in the row,
-           but is a text field. When non-empty, it overrides automatic
-           account/role tab-grouping for subsequent Sign Ins. */
+        /* Tag field for the "Custom tag" grouping choice — shown only when the
+           dropdown above is set to Custom tag. Its value groups every Sign In
+           under that tag until another grouping option is picked. */
         .tm_group_tag_input {
-            padding: 4px 12px !important;
-            border: 1px dashed #adb5bd !important;
-            border-radius: 15px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            height: 32px !important;
+            padding: 0 30px 0 8px !important;
+            border: 1px solid #0073bb !important;
+            border-radius: 4px !important;
             color: #16191f !important;
-            font-size: 13px !important;
+            font-size: 14px !important;
             background-color: #fff !important;
-            transition: all 0.2s ease !important;
             outline: none !important;
-            width: 160px !important;
             font-family: inherit !important;
         }
-        .tm_group_tag_input::placeholder { color: #6c757d !important; font-style: italic !important; }
-        .tm_group_tag_input:focus,
-        .tm_group_tag_input:not(:placeholder-shown) {
-            border-style: solid !important;
-            border-color: #0073bb !important;
+        .tm_group_tag_input::placeholder { color: #8a9199 !important; font-style: italic !important; }
+        .tm_group_tag_input:focus {
             box-shadow: 0 0 0 2px rgba(0,115,187,0.15) !important;
         }
         body.tm_theme_dark .tm_group_tag_input {
             background-color: #2d3748 !important;
             color: #e9ecef !important;
-            border-color: #6b7280 !important;
+            border-color: #0073bb !important;
+        }
+
+        /* Clearable field: an ✕ button overlaid at the right that empties the
+           field and refocuses it — shown only when the wrapping element carries
+           .tm_has_value. Shared by the custom-tag field and the Jump account-id
+           field so both clear the same way. */
+        .tm_group_tag_field {
+            position: relative !important;
+            width: 100% !important;
+        }
+        .tm_field_clear {
+            position: absolute !important;
+            top: 50% !important;
+            right: 5px !important;
+            transform: translateY(-50%) !important;
+            display: none !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 22px !important;
+            height: 22px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background: transparent !important;
+            color: #8a9199 !important;
+            cursor: pointer !important;
+            border-radius: 4px !important;
+            transition: background-color 0.12s ease, color 0.12s ease !important;
+        }
+        .tm_has_value > .tm_field_clear {
+            display: flex !important;
+        }
+        .tm_field_clear:hover {
+            color: #16191f !important;
+            background: #eef2f6 !important;
+        }
+        /* Dark treatment applies to the main-panel fields (custom tag + search),
+           which sit on the dark panel; the Jump popover is always white, so its
+           clear buttons keep the light styling above. */
+        body.tm_theme_dark #tm_group_tag_field .tm_field_clear,
+        body.tm_theme_dark #tm_search_container .tm_field_clear {
+            color: #9aa0a6 !important;
+        }
+        body.tm_theme_dark #tm_group_tag_field .tm_field_clear:hover,
+        body.tm_theme_dark #tm_search_container .tm_field_clear:hover {
+            color: #e9ecef !important;
+            background: #3a4148 !important;
         }
 
         .tm_filter_button:hover {
@@ -2577,7 +2688,7 @@ import {
             width: 100% !important;
             box-sizing: border-box !important;
             height: 32px !important;
-            padding: 0 10px !important;
+            padding: 0 32px 0 10px !important;
             border: 1px solid #adb5bd !important;
             border-radius: 4px !important;
             font-size: 14px !important;
@@ -2590,14 +2701,14 @@ import {
             /* Width is fixed so the hidden offset is predictable — the
                container's natural width follows the longest button label
                and was leaving ~80px of body sticking out at -120px. */
-            width: 220px !important;
-            right: -220px !important;
+            width: 236px !important;
+            right: -236px !important;
             box-sizing: border-box !important;
             z-index: 1000 !important;
             transition: right 0.3s ease !important;
             background: rgba(255, 255, 255, 0.95) !important;
             border-radius: 8px 0 0 8px !important;
-            padding: 8px 12px 8px 8px !important;
+            padding: 10px 12px !important;
             border: 1px solid #e1e4e8 !important;
             border-right: none !important;
             box-shadow: -2px 2px 8px rgba(0,0,0,0.1) !important;
@@ -2638,7 +2749,7 @@ import {
             content: "..." !important;
             position: absolute !important;
             left: -24px !important;
-            top: 50% !important;
+            top: var(--tm-handle-top, 50%) !important;
             transform: translateY(-50%) !important;
             background: rgba(255, 255, 255, 0.95) !important;
             border: 1px solid #e1e4e8 !important;
@@ -2676,9 +2787,10 @@ import {
             white-space: nowrap !important;
         }
 
+        /* No translateX on hover: the inner scroller is overflow-x: hidden, so a
+           leftward nudge clipped the hovered button's left edge. */
         .tm_action_button:hover {
             background: #f8f9fa !important;
-            transform: translateX(-2px) !important;
         }
 
         body.tm_theme_dark #tm_actions_container {
@@ -2756,6 +2868,17 @@ import {
         .saml-role:hover {
             box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
             border-color: #0073bb !important;
+        }
+
+        /* Jump-history rows highlight on hover, the same idea as the standard
+           role rows above, so it's clear which recent jump you're about to
+           re-run. (A background tint rather than a border/shadow, since these
+           are borderless list rows — no layout shift.) */
+        .tm_jump_recent {
+            transition: background-color 0.12s ease !important;
+        }
+        .tm_jump_recent:hover {
+            background-color: #eef5fc !important;
         }
 
         .saml-role.tm_kb_selected {
@@ -3045,14 +3168,20 @@ import {
         .tm_toast.error { background-color: #dc3545 !important; }
         .tm_toast.info { background-color: #17a2b8 !important; }
 
+        /* Tighten AWS's default 20px form margin so the footer doesn't float in
+           a large void below the role list. */
+        #saml_form {
+            margin-bottom: 8px !important;
+        }
+
         #tm_footer {
             text-align: center !important;
             color: #6c757d !important;
             font-size: 12px !important;
-            padding: 4px 20px !important;
+            padding: 10px 20px !important;
             background-color: #f8f9fa !important;
             margin-top: 0px !important;
-            margin-bottom: 2px !important;
+            margin-bottom: 6px !important;
             transition: background-color 0.3s ease !important;
         }
 
@@ -3124,7 +3253,8 @@ import {
         }
 
         body.tm_compact_mode .tm_left_column,
-        body.tm_compact_mode .tm_right_column {
+        body.tm_compact_mode .tm_right_column,
+        body.tm_compact_mode #tm_jump_section {
             gap: 5px !important;
         }
 
@@ -3461,6 +3591,34 @@ import {
       e.preventDefault();
       doJump();
     }
+  });
+
+  // Clearable account-id field — same ✕ affordance as the custom-tag field.
+  $("body").on("input", "#tm_jump_account", function () {
+    syncFieldClear("tm_jump_account", "tm_jump_account_wrap");
+  });
+  $("body").on("click", "#tm_jump_account_clear", function (e) {
+    e.preventDefault();
+    const inp = document.getElementById("tm_jump_account");
+    if (inp) {
+      inp.value = "";
+      inp.focus();
+    }
+    syncFieldClear("tm_jump_account", "tm_jump_account_wrap");
+  });
+
+  // Clearable session-label field — same ✕ affordance.
+  $("body").on("input", "#tm_jump_label", function () {
+    syncFieldClear("tm_jump_label", "tm_jump_label_wrap");
+  });
+  $("body").on("click", "#tm_jump_label_clear", function (e) {
+    e.preventDefault();
+    const inp = document.getElementById("tm_jump_label");
+    if (inp) {
+      inp.value = "";
+      inp.focus();
+    }
+    syncFieldClear("tm_jump_label", "tm_jump_label_wrap");
   });
 
   $("body").on("click", ".tm_jump_recent", function (e) {
@@ -3815,8 +3973,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     jumpPopoverOpen = false;
   };
 
-  const recordJump = async (org, account, label) => {
-    const entry = { org, account, label: (label || "").trim(), ts: Date.now() };
+  const recordJump = async (org, account, label, role) => {
+    const entry = { org, account, label: (label || "").trim(), role: role || "", ts: Date.now() };
     const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
     jumpRecentsCache = [entry, ...rest].slice(0, 6);
     await StorageManager.saveJumpRecents(jumpRecentsCache);
@@ -3866,10 +4024,31 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       cur[dest] = { label: displayName, envColor, envLetter, ts: now };
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
-    recordJump(profileName, dest, label);
+    recordJump(profileName, dest, label, profile.role);
 
     const labelPayload = { chain: { account: dest, role: profile.role, displayName } };
     const region = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+
+    // Group this tab up-front, keyed by the DESTINATION account + assumed role
+    // and the current grouping settings. A tab keeps its group across
+    // navigations, so the group persists through the hub sign-in, the Switch
+    // Role page, and the destination console — the jumped session is grouped
+    // just like a normal sign-in (the SW ignores this when mode is "off").
+    try {
+      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: "hop_group_tab",
+          account: dest,
+          role: profile.role,
+          tag: tabGroupTagCache || "",
+          mode: tabGroupModeCache || "role",
+          org: profile.name || "",
+        });
+      }
+    } catch (e) {
+      /* service worker unavailable; grouping is best-effort */
+    }
+
     closeJumpPopover();
     showToast(
       `Signing in to the ${profile.name} hub, then switching into ${dest}…`,
@@ -3903,11 +4082,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       .map((r) => {
         const primary = escapeHtml(r.label || AccountNamesManager.nameFor(r.account) || r.account);
         const acct = escapeHtml(r.account);
+        // Org + role (privilege) on a second line: identify the target and see
+        // which role it was reached with at a glance.
+        const meta = [r.org, r.role].filter(Boolean).map(escapeHtml).join(" · ");
         return `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" title="Jump again" style="
-            display: flex !important; align-items: center !important; justify-content: space-between !important;
-            gap: 8px !important; padding: 6px 4px !important; border-top: 1px solid #eee !important;
+            display: flex !important; flex-direction: column !important; align-items: stretch !important;
+            gap: 2px !important; padding: 6px 4px !important; border-top: 1px solid #eee !important;
             font-size: 12px !important; cursor: pointer !important;
-          "><span style="color: #16191f !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${primary}</span><span style="color: #6c757d !important; font-family: monospace !important; flex: none !important;">${acct}</span></div>`;
+          "><div style="display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important;"><span style="color: #16191f !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${primary}</span><span style="color: #6c757d !important; font-family: monospace !important; flex: none !important;">${acct}</span></div>${meta ? `<div style="color: #8a9099 !important; font-size: 11px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${meta}</div>` : ""}</div>`;
       })
       .join("");
     $r.html(
@@ -3926,17 +4108,21 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       acc.value = "";
       acc.focus();
     }
+    syncFieldClear("tm_jump_account", "tm_jump_account_wrap");
+    syncFieldClear("tm_jump_label", "tm_jump_label_wrap");
   };
 
   const refreshJumpBar = () => {
-    const $bar = $("#tm_jump_bar");
-    if (!$bar.length) return;
+    // Show/hide the whole Jump section (divider + heading + bar) as a unit, so
+    // the heading and rule never linger when there are no assume profiles.
+    const $section = $("#tm_jump_section");
+    if (!$section.length) return;
     if (!AssumeProfilesManager.all().length) {
       closeJumpPopover();
-      $bar.hide();
+      $section.hide();
       return;
     }
-    $bar.show();
+    $section.show();
     if (jumpPopoverOpen) {
       refreshJumpOrgs();
       refreshJumpRecents();
@@ -4878,7 +5064,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Pick a region per sign-in",
             `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Regions</em>.`)}
           ${sectionHTML("Jump to account (role chaining)",
-            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears next to search. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away under <em>Recent</em> in the popover. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away under <em>Recent</em> in the popover. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
           ${sectionHTML("Rename accounts",
             `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",
@@ -4886,7 +5072,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Coloured console tabs",
             `Each open AWS console tab gets a coloured favicon (env color) and a tab-title prefix with the account name, so 10 open tabs are still distinguishable at a glance.`)}
           ${sectionHTML("Tab groups (visual containers)",
-            `Chrome tab groups cluster console tabs by role, by organisation, or by a ticket tag — emulates Firefox containers visually. Configure via the <em>Tab Groups</em> button (default modes) and the toolbar tag input (per-session overrides).`)}
+            `Chrome tab groups cluster console tabs by role, by organisation, or by a ticket tag — emulates Firefox containers visually. Choose how from the <strong>Tabs:</strong> dropdown in the search column — <em>By role</em>, <em>By org</em>, <em>Custom tag</em> (type a ticket or workstream to group everything under it), or <em>Off</em>. The <em>Tab Groups</em> side-menu entry explains the modes and stays in sync.`)}
           ${sectionHTML("Clear AWS sessions",
             `<em>Clear AWS Sessions</em> in the side menu signs you out of all open AWS consoles in one click by deleting AWS authentication cookies (cookies only — your favorites and settings are kept). It asks for confirmation first.`)}
           ${sectionHTML("Make it yours",
@@ -4981,6 +5167,42 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       `Tab Groups: ${CONFIG.TAB_GROUP_MODE_LABELS[tabGroupModeCache] || "By role"}`
     );
   };
+
+  // Reflect the current tag / mode state into the inline "Tab group" dropdown.
+  // A non-empty tag means "Custom tag" is the active choice (its field shows);
+  // otherwise the dropdown shows the mode and the field is hidden and cleared.
+  // The tabGroupTagCache / tabGroupModeCache values are the single source of truth.
+  // Toggle a field's ✕ clear affordance based on whether it holds a value:
+  // adds/removes .tm_has_value on the wrapper (see the .tm_field_clear CSS). A
+  // class — not inline display — so the stylesheet's !important rule stays
+  // authoritative. Shared by the custom-tag and Jump account-id fields.
+  const syncFieldClear = (inputId, wrapId) => {
+    const inp = document.getElementById(inputId);
+    const wrap = document.getElementById(wrapId);
+    if (!inp || !wrap) return;
+    wrap.classList.toggle("tm_has_value", Boolean(inp.value));
+  };
+  const updateTagClearBtn = () =>
+    syncFieldClear("tm_group_tag_input", "tm_group_tag_field");
+
+  const syncGroupControl = () => {
+    const sel = document.getElementById("tm_group_mode_select");
+    const inp = document.getElementById("tm_group_tag_input");
+    const wrap = document.getElementById("tm_group_tag_field");
+    if (!sel || !inp || !wrap) return;
+    if (tabGroupTagCache) {
+      sel.value = "custom";
+      inp.value = tabGroupTagCache;
+      wrap.style.display = "block";
+    } else {
+      sel.value = CONFIG.TAB_GROUP_MODES.includes(tabGroupModeCache)
+        ? tabGroupModeCache
+        : "role";
+      inp.value = "";
+      wrap.style.display = "none";
+    }
+    updateTagClearBtn();
+  };
   $("body").on("click", "#tm_tab_group_mode", function (e) {
     e.preventDefault();
     showTabGroupModeModal();
@@ -5029,10 +5251,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             cookies or sessions.
           </p>
           <p style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.45 !important;">
-            <strong>Override:</strong> the <em>Tab group tag</em> field on the
-            toolbar (next to the Account Types row) overrides this setting
-            when it has a value — useful for grouping tabs by ticket id or
-            workstream regardless of account.
+            You can also set this — including a one-off <em>Custom tag</em> that
+            groups tabs by ticket id or workstream regardless of account — from
+            the <em>Tabs:…</em> dropdown in the same column as the account
+            search, without opening this dialog.
           </p>
           ${optionHTML("role", "By role", "Each unique account + role becomes its own coloured group, e.g. <code>my-account · PowerUser</code>. Same role always gets the same colour.")}
           ${optionHTML("org", "By org", "Accounts cluster by organization, based on your <em>Organizations</em> patterns. Accounts that don't match any org are not grouped.")}
@@ -5074,6 +5296,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       tabGroupModeCache = chosen;
       await StorageManager.saveTabGroupMode(chosen);
       updateTabGroupModeButton();
+      // Choosing an explicit mode clears any active custom tag so the dropdown
+      // and this dialog agree on a single grouping choice.
+      if (tabGroupTagCache) {
+        tabGroupTagCache = "";
+        await StorageManager.saveTabGroupTag("");
+      }
+      syncGroupControl();
       close();
       showToast(
         `Tab grouping: ${CONFIG.TAB_GROUP_MODE_LABELS[chosen]}`,
@@ -5176,21 +5405,58 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // --- Tab group tag input ---
   // Persisted in chrome.storage so it survives page reloads. Empty value
   // means "use default grouping (account/role)"; non-empty value overrides.
-  $("body").on("input", "#tm_group_tag_input", debounce(async function () {
-    const val = $(this).val().trim();
-    tabGroupTagCache = val;
-    await StorageManager.saveTabGroupTag(val);
-  }, 300));
+  // Update the in-memory cache synchronously on every keystroke so a Sign In
+  // fired immediately after typing still carries the tag — only the storage
+  // write is debounced. (Previously the cache update lived inside the debounce,
+  // so a quick sign-in read a stale/empty tag and grouping ignored it.)
+  const saveTabGroupTagDebounced = debounce(
+    (v) => StorageManager.saveTabGroupTag(v),
+    300
+  );
+  $("body").on("input", "#tm_group_tag_input", function () {
+    tabGroupTagCache = $(this).val().trim();
+    saveTabGroupTagDebounced(tabGroupTagCache);
+    updateTagClearBtn();
+  });
 
-  // Clicking into the tab-group tag field clears it. The dominant intent here
-  // is to wipe the current tag, so we empty it (and persist the clear) on focus
-  // rather than making the user select-and-delete. focusin (not focus) because
-  // the delegated listener lives on <body> and focus does not bubble.
-  $("body").on("focusin", "#tm_group_tag_input", async function () {
-    if (!$(this).val()) return;
-    $(this).val("");
+  // ✕ inside the custom-tag field: clear the value (and persist the clear) but
+  // stay in "Custom tag" and refocus, so a corrected tag can be typed straight in.
+  $("body").on("click", "#tm_group_tag_clear", async function (e) {
+    e.preventDefault();
+    const inp = document.getElementById("tm_group_tag_input");
+    if (inp) inp.value = "";
     tabGroupTagCache = "";
     await StorageManager.saveTabGroupTag("");
+    updateTagClearBtn();
+    if (inp) inp.focus();
+  });
+
+  // The "Tab group" dropdown is the single control for how opened console tabs
+  // are grouped. Picking a mode (role / org / off) clears any custom tag and
+  // hides the tag field; picking "Custom tag" reveals the field and focuses it.
+  // The field's own input handler (above) keeps tabGroupTagCache current as you
+  // type, so no separate save is needed here for the tag path.
+  $("body").on("change", "#tm_group_mode_select", async function () {
+    const v = String($(this).val() || "");
+    const inp = document.getElementById("tm_group_tag_input");
+    const wrap = document.getElementById("tm_group_tag_field");
+    if (v === "custom") {
+      if (wrap) wrap.style.display = "block";
+      if (inp) inp.focus();
+      updateTagClearBtn();
+      return;
+    }
+    if (!CONFIG.TAB_GROUP_MODES.includes(v)) return;
+    tabGroupModeCache = v;
+    await StorageManager.saveTabGroupMode(v);
+    updateTabGroupModeButton();
+    if (tabGroupTagCache) {
+      tabGroupTagCache = "";
+      await StorageManager.saveTabGroupTag("");
+    }
+    if (inp) inp.value = "";
+    if (wrap) wrap.style.display = "none";
+    updateTagClearBtn();
   });
 
   // --- Reset Order ---
@@ -5631,7 +5897,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           Array.isArray(v) && v.every((r) =>
             r && typeof r === "object" &&
             typeof r.org === "string" && typeof r.account === "string" &&
-            (r.label === undefined || typeof r.label === "string")
+            (r.label === undefined || typeof r.label === "string") &&
+            (r.role === undefined || typeof r.role === "string")
           ),
       };
 
@@ -6035,9 +6302,23 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // would break searches for & or other meta-characters.
   getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT).on("input", function () {
     searchTerm = ($(this).val() || "").trim();
+    syncFieldClear("tm_search_input", "tm_search_container");
     if (searchTerm.length >= 2 || searchTerm.length === 0) {
       FilterManager.applyFilters();
     }
+  });
+
+  // ✕ clears the account search and re-shows the full list.
+  $("body").on("click", "#tm_search_clear", function (e) {
+    e.preventDefault();
+    const inp = document.getElementById("tm_search_input");
+    if (inp) {
+      inp.value = "";
+      inp.focus();
+    }
+    searchTerm = "";
+    FilterManager.applyFilters();
+    syncFieldClear("tm_search_input", "tm_search_container");
   });
 
   // Listen for system theme changes
@@ -6115,20 +6396,41 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // Sync the "Recent: N" floating-menu label with the stored limit.
   $("#tm_recent_limit").text(`Recent: ${RecentRolesManager.getLimit()}`);
 
-  // Hydrate the tab-group tag input from storage.
+  // Hydrate the tab-group tag + mode from storage, then reflect both into the
+  // inline "Tab group" dropdown (and the side-menu button label).
   try {
     tabGroupTagCache = await StorageManager.getTabGroupTag();
-    if (tabGroupTagCache) $("#tm_group_tag_input").val(tabGroupTagCache);
   } catch (e) {
     console.error("Error loading tab group tag:", e);
   }
-
-  // Hydrate the tab-group mode cycler.
   try {
     tabGroupModeCache = await StorageManager.getTabGroupMode();
     updateTabGroupModeButton();
   } catch (e) {
     console.error("Error loading tab group mode:", e);
+  }
+  syncGroupControl();
+  syncFieldClear("tm_search_input", "tm_search_container");
+
+  // Center the side-menu pull-tab on the filter panel (not on the tall menu it
+  // belongs to, which pushed the tab well below the panel). Re-measured on any
+  // panel resize (compact toggle, filter config) and window resize.
+  const positionActionsHandle = () => {
+    const wrap = document.getElementById("tm_interface_wrapper");
+    const container = document.getElementById("tm_actions_container");
+    if (!wrap || !container) return;
+    const r = wrap.getBoundingClientRect();
+    const center = r.top + r.height / 2;
+    // The container is fixed at top: 20px and its ::before tab is
+    // translateY(-50%), so this `top` is where the tab's centre lands.
+    container.style.setProperty("--tm-handle-top", Math.max(16, center - 20) + "px");
+  };
+  positionActionsHandle();
+  window.addEventListener("resize", positionActionsHandle);
+  if (window.ResizeObserver) {
+    const handleRO = new ResizeObserver(() => positionActionsHandle());
+    const wrapEl = document.getElementById("tm_interface_wrapper");
+    if (wrapEl) handleRO.observe(wrapEl);
   }
 
   // Apply the saved "start view" (default filters), if one is configured. Runs

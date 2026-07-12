@@ -3,6 +3,47 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.2.1 — 2026-07-12
+
+### Changed
+
+- **Tab grouping is now a single self-labelling dropdown.** The free-text "tab
+  group tag" field (which used to sit among the filter chips) is replaced by a
+  **Tabs:** dropdown — *By role / By org / Custom tag / Off*. A custom tag is
+  just the fourth choice, so its input appears only when you pick **Custom tag**,
+  and hides (and clears) when you pick a mode. The side-menu Tab Groups dialog
+  still works and stays in sync.
+- **The right side is now one tidy vertical stack** — *Find account*, *Jump to
+  account*, then *Tabs:* — each control labelling itself, fenced by hairlines.
+  The separate tab-group column is gone, which also gives the filters more room.
+  (Tabs sits last so revealing its custom-tag field doesn't push Jump around.)
+- **Filter order** is now Organizations / Environments / Account types / Roles.
+- **Clear buttons on the text fields.** A small ✕ appears in the account search,
+  the custom-tag field, and the Jump popover's account-id and session-label
+  fields whenever they hold a value — one click empties them.
+- **Jump recents** show the org and the role used on a second line, and the rows
+  highlight on hover like the main listing.
+- **Polish.** The side-menu pull-tab now sits at the vertical middle of the
+  panel; the menu's left/right padding is even and a little roomier; and the
+  spacing under the role list, down to the footer, is tightened.
+
+### Fixed
+
+- **Jumped-into sessions are now placed in a tab group** like a normal sign-in.
+  The Jump built its own tab payload without the grouping info, so the
+  destination console tab (and the Switch Role page on the way there) stayed
+  ungrouped. The tab is now grouped the moment you jump — by the destination
+  account and assumed role, or your custom tag / org, honouring the Tab group
+  setting — and, since a tab keeps its group across navigations, it stays
+  grouped through the whole chain.
+- **The side menu no longer clips a button's left edge on hover.** A leftward
+  hover nudge collided with the panel's clipped inner edge and ate the button's
+  left border; the nudge is gone and the panel is wider.
+- **The tab-group tag was ignored when you signed in immediately after typing
+  it.** The in-memory value only updated on a 300 ms debounce, so a quick Sign
+  In read a stale (often empty) tag and grouping fell back to by-role. The tag
+  now updates on every keystroke; only the storage write is debounced.
+
 ## 1.2.0 — 2026-07-11
 
 ### Added

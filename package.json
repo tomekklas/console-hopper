@@ -1,6 +1,6 @@
 {
   "name": "console-hopper",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Chrome extension that turns the AWS SAML role-picker into a fast, filterable launcher and decorates AWS console tabs.",
   "private": true,
   "type": "module",
