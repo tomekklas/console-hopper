@@ -30,12 +30,12 @@ function titleFor(account, role) {
 
 function resolveTitle(account, role, tag, mode, org) {
   // Precedence:
-  //  1. tag override (non-empty) → use the tag
-  //  2. mode "off" → no grouping (caller checks)
+  //  1. tag (non-empty) → use the tag (this is the "custom" case with a tag)
+  //  2. mode "off", or "custom" with an empty tag → no grouping (caller checks)
   //  3. mode "org" with an org value → use that label verbatim
   //  4. mode "role" or fallback → "<account> · <role>"
   if (tag) return tag;
-  if (mode === "off") return null;
+  if (mode === "off" || mode === "custom") return null;
   if (mode === "org" && org) return org;
   return titleFor(account, role);
 }

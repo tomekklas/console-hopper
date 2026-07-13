@@ -1,0 +1,73 @@
+Console Hopper turns the AWS SAML role-picker into a fast, filterable launcher and makes a tab strip full of AWS consoles instantly readable.
+
+If you have access to dozens — or hundreds — of AWS accounts via SAML SSO, the default role list is a long, unsorted scroll. Console Hopper gives every row a star, a service deep-link, and a one-click sign-in, and gives every open console tab a colour-coded favicon plus an account name in the title.
+
+WHAT YOU GET
+
+• Filter and search the role list
+Filter by organisation, environment (prod/test/dev), account type (Management / Security / Logging / …) or role-name keyword (Admin / ReadOnly / PowerUser / …). Full-text search across account name, account id, and role name. Every filter group is editable from the side menu — rename the labels, change the colours, tweak the match patterns to fit your org.
+
+• Rename accounts
+Map specific account IDs to a friendly name via "Account Names". The custom name replaces the AWS account name in the list and is used for filtering, grouping and tab titles.
+
+• Jump to account (role chaining)
+For accounts you can only reach by assuming a role from a hub: configure per-org assume profiles once (org name, hub account id, role to assume) and a "Jump to account" button appears in the search column. Enter the destination account id and an optional session label — Console Hopper signs into the hub and opens AWS's Switch Role pre-filled, one click and you're in. The new tab is titled with your session label, and recent jumps are one click away — pin the ones you use most (they stay at the top and can be dragged to reorder) or remove any you don't need.
+
+• Favorites and Recent
+Star roles you use often. Recently signed-in roles are tracked automatically (configurable limit).
+
+• Deep-link into a service
+Each role row has a service dropdown — EC2, S3, IAM, CloudWatch, Lambda, CloudFormation, VPC, RDS, plus anything you add. Pick a service before Sign In and you land directly in that service's console for that role.
+
+• Per-sign-in region
+Each role row also has a region dropdown — choose which AWS region a sign-in lands in (defaults to your region, remembers your last pick per role). Edit the offered regions via "Regions".
+
+• Copy account ID
+Click the account-id button on any row to copy the 12-digit id.
+
+• Colour-coded console tabs
+Every AWS console tab opened through the plugin gets a coloured favicon (env colour) and an account-name title prefix, so ten open tabs are still distinguishable at a glance.
+
+• Tab groups — visual containers
+Console Hopper drops each new console tab into a Chrome tab group: by role, by organisation, or by a per-ticket override tag. Same role always gets the same colour. Note: tab groups are a Chrome visual feature only — they don't isolate cookies. For real session isolation, combine with Chrome profiles.
+
+• Sensitive-sign-in confirmation
+Configure which role-name keywords (default: "admin") and which account types are sensitive. Signing into a matching role/account pops a "are you sure?" modal so you don't accidentally land in production.
+
+• Clear AWS sessions
+One click signs you out of all open AWS consoles by clearing AWS authentication cookies (your console favourites and settings are kept).
+
+• New-tab sign-in
+⌘/Ctrl-click, middle-click or ⌘+Enter opens the console in a new tab. A "Sign-in" side-menu option sets the default; the modifier inverts it.
+
+• Drag-to-reorder
+Hold and drag any role row to set your preferred order. "Reset Order" in the side menu restores AWS's default.
+
+• Light / dark / auto theme, compact mode, keyboard shortcuts
+/ focuses search, ↑/↓ moves the selection, Enter signs in, Esc closes modals / clears filters.
+
+• Export / import settings as JSON
+Share your configured orgs, envs, account types, role names, services, favorites and shortcuts with a teammate.
+
+• Org-agnostic
+Ships with generic placeholders. You rename Org A / Org B / Org C and fill the patterns to match your real organisations. No hard-coded vendor names anywhere.
+
+PRIVACY
+
+Console Hopper runs entirely in your browser. It does not contact any remote server, send telemetry, or collect personal data. All settings (favorites, custom org / env / type / role labels, recent signins, preferences) are stored in chrome.storage.local — they never leave your device unless you click "Export Settings" yourself.
+
+PERMISSIONS — WHY
+
+• storage — persist your preferences and configuration locally
+• tabs — read the current tab so the service worker knows which console tab just opened (needed for tab grouping)
+• tabGroups — create and colour Chrome tab groups for each account+role combination
+• host access — limited to AWS SAML sign-in pages and AWS console pages, so the plugin can enhance the role-picker and decorate console tabs. No other sites are touched.
+
+INSTALL
+
+1. Install from the Chrome Web Store.
+2. Open your AWS SAML sign-in URL. The role picker is now the Console Hopper UI.
+3. On first load, a welcome panel walks you through the highlights.
+4. Configure your organisations, environments, account types, role names and services from the side menu (hover the right edge).
+
+This extension is community-built and not affiliated with Amazon Web Services. "AWS" is a trademark of Amazon.com, Inc.

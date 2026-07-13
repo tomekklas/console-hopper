@@ -57,7 +57,9 @@ WHAT YOU GET
   Enter the destination account id and an optional session label —
   Console Hopper signs into the hub and opens AWS's Switch Role
   pre-filled, one click and you're in. The new tab is titled with your
-  session label, and recent jumps are one click away.
+  session label, and recent jumps are one click away — pin the ones you
+  use most (they stay at the top and can be dragged to reorder) or
+  remove any you don't need.
 
 • Favorites and Recent
   Star roles you use often. Recently signed-in roles are tracked
@@ -175,7 +177,7 @@ package).
 |---|---|---|---|
 | Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` | — |
 | Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` | The filterable role picker |
-| Screenshot 2 | 1280 × 800 | ✅ `store-assets/screenshot-2-jump.png` | Jump-to-account popover with recents |
+| Screenshot 2 | 1280 × 800 | ⚠️ `store-assets/screenshot-2-jump.png` | Jump-to-account popover — **refresh for 1.2.2** to show pinned jumps + drag-reorder (current image is pre-1.2.2 recents) |
 | Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-side-menu.png` | Grouped side menu (View / Configure / Data) |
 | Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-filter.png` | Filtering by PROD + ReadOnly |
 | Screenshot 5 | 1280 × 800 | ✅ `store-assets/screenshot-5-dark.png` | Dark theme |
@@ -183,9 +185,11 @@ package).
 | Marquee promo tile (optional) | 1400 × 560 PNG | ⚠️ `store-assets/promo-marquee-1400x560.png` (pre-1.2 UI) | — |
 
 Chrome Web Store requires at least **one** screenshot; five is the max.
-We're shipping the full five (regenerated for 1.2.0 — 1280 × 800, real
-extension). The two promo tiles are optional and still show the pre-1.2 UI;
-regenerate them if you want them current, or drop them.
+We're shipping the full five (1280 × 800, real extension). Screenshots 1,
+3, 4 and 5 are current; **screenshot 2 (Jump popover) should be regenerated
+for 1.2.2** so it shows the ★ pin / ✕ delete and drag-to-reorder — the
+existing image predates them. The two promo tiles are optional and still
+show the pre-1.2 UI; regenerate them if you want them current, or drop them.
 
 ---
 
@@ -330,9 +334,11 @@ tabs apart at a glance.
       into `console-hopper.zip`, excluding docs, `store-assets/`, `samples/`,
       and `.git/`.
 - [x] Test the built `dist/` by loading it unpacked in a clean profile —
-      verified end-to-end (real extension, mock-SAML → role picker, jump /
-      filters / side-menu / dark theme all render; footer reads v1.2.0).
-- [x] Five 1280×800 screenshots ready in `store-assets/` (regenerated for 1.2.0).
+      verified end-to-end (real extension, mock-SAML → role picker; jump
+      pin / reorder / delete, filters, side-menu and dark theme all render;
+      footer reads v1.2.2).
+- [x] Five 1280×800 screenshots in `store-assets/` — 1, 3, 4, 5 current;
+      screenshot 2 (Jump popover) to be refreshed for the 1.2.2 pin/reorder UI.
 - [ ] Promo tiles (440×280 and 1400×560) still show pre-1.2 UI — optional;
       regenerate or drop before publishing if you want them current.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is

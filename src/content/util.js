@@ -182,10 +182,11 @@ export const normalizeAssumeProfiles = (raw) => {
   return out;
 };
 
-// Jump "recents" — the most-recent chained jumps, newest first. Each entry is
-// { org, account (12-digit), label, ts }. Validated and capped on read so a
-// corrupted or oversized aws_jump_recents value can't reach the popover.
-export const normalizeJumpRecents = (raw) => {
+// Jump "recents" and "pinned" — chained jumps, newest first. Each entry is
+// { org, account (12-digit), label, role, ts }. Validated and capped on read
+// (default 6 for recents; the caller passes a larger cap for pinned) so a
+// corrupted or oversized stored value can't reach the popover.
+export const normalizeJumpRecents = (raw, cap = 6) => {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const r of raw) {
@@ -197,7 +198,7 @@ export const normalizeJumpRecents = (raw) => {
     const role = typeof r.role === "string" ? r.role.trim().slice(0, 128) : "";
     const ts = typeof r.ts === "number" && isFinite(r.ts) ? r.ts : 0;
     out.push({ org, account, label, role, ts });
-    if (out.length >= 6) break;
+    if (out.length >= cap) break;
   }
   return out;
 };

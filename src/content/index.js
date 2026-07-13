@@ -66,9 +66,10 @@ import {
       START_VIEW: "aws_start_view",
       ASSUME_PROFILES: "aws_assume_profiles",
       JUMP_RECENTS: "aws_jump_recents",
+      JUMP_PINNED: "aws_jump_pinned",
     },
-    TAB_GROUP_MODES: ["role", "org", "off"],
-    TAB_GROUP_MODE_LABELS: { role: "By role", org: "By org", off: "Off" },
+    TAB_GROUP_MODES: ["role", "org", "off", "custom"],
+    TAB_GROUP_MODE_LABELS: { role: "By role", org: "By org", off: "Off", custom: "Custom tag" },
     DEFAULT_RECENT_LIMIT: 10,
     // Each entry: { id, label, color, patterns:[] }. `id` is a stable internal
     // key used in DOM data-attrs and signed-in-confirm references; `label` is
@@ -261,7 +262,8 @@ import {
   // from now on tags its console tab into a group named after this value
   // instead of the default account/role grouping.
   let tabGroupTagCache = "";
-  // Default tab-group mode used when the tag input is empty.
+  // The inline "Tabs:" grouping choice: "role" | "org" | "off" | "custom".
+  // "custom" means group by the tag below (empty tag → no group).
   let tabGroupModeCache = "role";
 
   // Compact mode setting
@@ -596,6 +598,30 @@ import {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.JUMP_RECENTS]: JSON.stringify(list),
+        });
+        return true;
+      }, false);
+    },
+    async getJumpPinned() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.JUMP_PINNED);
+        return result[CONFIG.STORAGE_KEYS.JUMP_PINNED] ?? null;
+      }, null);
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          parsed = null;
+        }
+      }
+      // Pinned jumps are user-curated, so they get a larger cap than recents.
+      return normalizeJumpRecents(parsed, 12);
+    },
+    async saveJumpPinned(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.JUMP_PINNED]: JSON.stringify(list),
         });
         return true;
       }, false);
@@ -1301,6 +1327,7 @@ import {
   // applies everywhere. Edit via Account Names.
   let assumeProfilesCache = [];
   let jumpRecentsCache = [];
+  let jumpPinnedCache = [];
   let jumpPopoverOpen = false;
 
   const AssumeProfilesManager = {
@@ -2870,16 +2897,107 @@ import {
             border-color: #0073bb !important;
         }
 
-        /* Jump-history rows highlight on hover, the same idea as the standard
-           role rows above, so it's clear which recent jump you're about to
-           re-run. (A background tint rather than a border/shadow, since these
-           are borderless list rows — no layout shift.) */
+        /* Jump-history rows mirror the main role list: a ★ favourite/pin toggle
+           FIRST, then the click-to-rejump body, then a ✕ delete. Pinned rows
+           (gold ★) sort to the top — no "Pinned" header, the star says it — and
+           can be dragged to reorder; recent rows (outline ☆, revealed on hover)
+           follow. The list scrolls past a cap so the popover can't run off-screen. */
+        #tm_jump_recents {
+            max-height: 220px !important;
+            overflow-y: auto !important;
+            margin-top: 8px !important;
+        }
         .tm_jump_recent {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            padding: 6px 4px !important;
+            border-top: 1px solid #eee !important;
+            font-size: 12px !important;
+            cursor: pointer !important;
             transition: background-color 0.12s ease !important;
         }
         .tm_jump_recent:hover {
             background-color: #eef5fc !important;
         }
+        .tm_jump_recent_body {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 2px !important;
+        }
+        .tm_jump_recent_l1 {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 8px !important;
+        }
+        .tm_jump_recent_lbl {
+            color: #16191f !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+        }
+        .tm_jump_recent_acct {
+            color: #6c757d !important;
+            font-family: monospace !important;
+            flex: none !important;
+        }
+        .tm_jump_recent_meta {
+            color: #8a9099 !important;
+            font-size: 11px !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+        }
+        .tm_jump_action {
+            flex: none !important;
+            width: 20px !important;
+            height: 20px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 14px !important;
+            line-height: 1 !important;
+            opacity: 0 !important;
+            transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease !important;
+        }
+        .tm_jump_recent:hover .tm_jump_action {
+            opacity: 1 !important;
+        }
+        .tm_jump_pin { color: #c7ccd1 !important; }
+        .tm_jump_pin:hover { color: #e0a800 !important; background-color: #fbf3d6 !important; }
+        /* A pinned row always shows its filled gold star, and drags to reorder. */
+        .tm_jump_recent[data-pinned="1"] .tm_jump_pin {
+            color: #e0a800 !important;
+            opacity: 1 !important;
+        }
+        /* Pinned rows reorder with the same FLIP pointer-drag as the main list:
+           a transform transition so siblings glide as the dragged row passes. */
+        .tm_jump_recent[data-pinned="1"] {
+            cursor: grab !important;
+            touch-action: none !important;
+            will-change: transform !important;
+            transition: transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.12s ease !important;
+        }
+        .tm_jump_recent.tm_dragging {
+            cursor: grabbing !important;
+            opacity: 0.98 !important;
+            background: #ffffff !important;
+            border-top-color: transparent !important;
+            border-radius: 6px !important;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22), 0 0 0 2px rgba(0, 115, 187, 0.55) !important;
+            position: relative !important;
+            z-index: 30 !important;
+        }
+        body.tm_jump_dragging_active #tm_jump_recents .tm_jump_recent[data-pinned="1"]:not(.tm_dragging) {
+            opacity: 0.85 !important;
+        }
+        .tm_jump_del { color: #8a9199 !important; }
+        .tm_jump_del:hover { color: #c0392b !important; background-color: #fbeae8 !important; }
 
         .saml-role.tm_kb_selected {
             outline: 2px solid #0073bb !important;
@@ -3329,6 +3447,7 @@ import {
   await AccountNamesManager.loadCache();
   await AssumeProfilesManager.loadCache();
   jumpRecentsCache = await StorageManager.getJumpRecents();
+  jumpPinnedCache = await StorageManager.getJumpPinned();
   // Pattern caches must be loaded before filtering / styling kicks in.
   await EnvironmentsManager.loadCache();
   await OrganizationsManager.loadCache();
@@ -3622,12 +3741,31 @@ import {
   });
 
   $("body").on("click", ".tm_jump_recent", function (e) {
+    // The ★/✕ actions sit inside the row; leave those clicks to their handlers.
+    if (e.target.closest && e.target.closest(".tm_jump_action")) return;
     e.preventDefault();
     jumpToAccount(
       $(this).attr("data-org"),
       $(this).attr("data-account"),
       $(this).attr("data-label")
     );
+  });
+
+  // ★ toggles pin/unpin on a jump row.
+  $("body").on("click", ".tm_jump_pin", function (e) {
+    e.preventDefault();
+    const $row = $(this).closest(".tm_jump_recent");
+    const org = $row.attr("data-org");
+    const account = $row.attr("data-account");
+    if ($row.attr("data-pinned") === "1") unpinJump(org, account);
+    else pinJump(org, account);
+  });
+
+  // ✕ deletes a jump row (from recents or pinned).
+  $("body").on("click", ".tm_jump_del", function (e) {
+    e.preventDefault();
+    const $row = $(this).closest(".tm_jump_recent");
+    deleteJump($row.attr("data-org"), $row.attr("data-account"));
   });
 
   // Close the jump popover on any click outside it (and outside its pill).
@@ -3975,9 +4113,60 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   const recordJump = async (org, account, label, role) => {
     const entry = { org, account, label: (label || "").trim(), role: role || "", ts: Date.now() };
+    // If the destination is pinned, refresh that pinned entry (keep it pinned)
+    // instead of also spawning a recent for it.
+    const pi = jumpPinnedCache.findIndex((r) => r.org === org && r.account === account);
+    if (pi !== -1) {
+      jumpPinnedCache[pi] = { ...jumpPinnedCache[pi], label: entry.label, role: entry.role, ts: entry.ts };
+      await StorageManager.saveJumpPinned(jumpPinnedCache);
+      return;
+    }
     const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
     jumpRecentsCache = [entry, ...rest].slice(0, 6);
     await StorageManager.saveJumpRecents(jumpRecentsCache);
+  };
+
+  // Star a recent → move it into the pinned list (survives the 6-recents cap).
+  const pinJump = async (org, account) => {
+    const idx = jumpRecentsCache.findIndex((r) => r.org === org && r.account === account);
+    if (idx === -1) return;
+    const entry = jumpRecentsCache[idx];
+    jumpRecentsCache = jumpRecentsCache.filter((_, i) => i !== idx);
+    const rest = jumpPinnedCache.filter((r) => !(r.org === org && r.account === account));
+    jumpPinnedCache = [entry, ...rest].slice(0, 12);
+    await StorageManager.saveJumpRecents(jumpRecentsCache);
+    await StorageManager.saveJumpPinned(jumpPinnedCache);
+    refreshJumpRecents();
+  };
+
+  // Unpin → move it back to the top of recents so it doesn't just disappear.
+  const unpinJump = async (org, account) => {
+    const idx = jumpPinnedCache.findIndex((r) => r.org === org && r.account === account);
+    if (idx === -1) return;
+    const entry = jumpPinnedCache[idx];
+    jumpPinnedCache = jumpPinnedCache.filter((_, i) => i !== idx);
+    const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
+    jumpRecentsCache = [entry, ...rest].slice(0, 6);
+    await StorageManager.saveJumpPinned(jumpPinnedCache);
+    await StorageManager.saveJumpRecents(jumpRecentsCache);
+    refreshJumpRecents();
+  };
+
+  // Delete → drop the jump from whichever list holds it.
+  const deleteJump = async (org, account) => {
+    const match = (r) => r.org === org && r.account === account;
+    const inR = jumpRecentsCache.some(match);
+    const inP = jumpPinnedCache.some(match);
+    if (!inR && !inP) return;
+    if (inR) {
+      jumpRecentsCache = jumpRecentsCache.filter((r) => !match(r));
+      await StorageManager.saveJumpRecents(jumpRecentsCache);
+    }
+    if (inP) {
+      jumpPinnedCache = jumpPinnedCache.filter((r) => !match(r));
+      await StorageManager.saveJumpPinned(jumpPinnedCache);
+    }
+    refreshJumpRecents();
   };
 
   const jumpToAccount = (profileName, accountRaw, labelRaw) => {
@@ -4071,29 +4260,55 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (prev && profiles.some((p) => p.name === prev)) $sel.val(prev);
   };
 
+  // Rebuild jumpPinnedCache from the current DOM order of the pinned rows —
+  // the shared pointer-drag engine calls this (via dragState.onReorder) once a
+  // pinned-row reorder settles, mirroring RoleOrderManager.saveCurrentOrder().
+  const saveJumpPinnedFromDom = async () => {
+    const rows = Array.from(
+      document.querySelectorAll('#tm_jump_recents .tm_jump_recent[data-pinned="1"]')
+    );
+    const keyed = rows
+      .map((el) =>
+        jumpPinnedCache.find(
+          (r) => r.org === el.getAttribute("data-org") && r.account === el.getAttribute("data-account")
+        )
+      )
+      .filter(Boolean);
+    for (const e of jumpPinnedCache) if (!keyed.includes(e)) keyed.push(e);
+    jumpPinnedCache = keyed;
+    await StorageManager.saveJumpPinned(jumpPinnedCache);
+  };
+
   const refreshJumpRecents = () => {
     const $r = $("#tm_jump_recents");
     if (!$r.length) return;
-    if (!jumpRecentsCache.length) {
+    if (!jumpPinnedCache.length && !jumpRecentsCache.length) {
       $r.html("");
       return;
     }
-    const rows = jumpRecentsCache
-      .map((r) => {
-        const primary = escapeHtml(r.label || AccountNamesManager.nameFor(r.account) || r.account);
-        const acct = escapeHtml(r.account);
-        // Org + role (privilege) on a second line: identify the target and see
-        // which role it was reached with at a glance.
-        const meta = [r.org, r.role].filter(Boolean).map(escapeHtml).join(" · ");
-        return `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" title="Jump again" style="
-            display: flex !important; flex-direction: column !important; align-items: stretch !important;
-            gap: 2px !important; padding: 6px 4px !important; border-top: 1px solid #eee !important;
-            font-size: 12px !important; cursor: pointer !important;
-          "><div style="display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important;"><span style="color: #16191f !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${primary}</span><span style="color: #6c757d !important; font-family: monospace !important; flex: none !important;">${acct}</span></div>${meta ? `<div style="color: #8a9099 !important; font-size: 11px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;">${meta}</div>` : ""}</div>`;
-      })
-      .join("");
+    // One row, styled like the main role list: ★ toggle first, then the
+    // click-to-rejump body (label + account, then org · role), then ✕ delete.
+    const renderRow = (r, pinned) => {
+      const primary = escapeHtml(r.label || AccountNamesManager.nameFor(r.account) || r.account);
+      const acct = escapeHtml(r.account);
+      const meta = [r.org, r.role].filter(Boolean).map(escapeHtml).join(" · ");
+      const pinLabel = pinned ? "Unpin" : "Pin";
+      return (
+        `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" data-pinned="${pinned ? "1" : "0"}" title="${pinned ? "Drag to reorder · click to jump" : "Jump again"}">` +
+          `<span class="tm_jump_action tm_jump_pin" role="button" tabindex="-1" title="${pinLabel}" aria-label="${pinLabel}">${pinned ? "★" : "☆"}</span>` +
+          `<div class="tm_jump_recent_body">` +
+            `<div class="tm_jump_recent_l1"><span class="tm_jump_recent_lbl">${primary}</span><span class="tm_jump_recent_acct">${acct}</span></div>` +
+            (meta ? `<div class="tm_jump_recent_meta">${meta}</div>` : "") +
+          `</div>` +
+          `<span class="tm_jump_action tm_jump_del" role="button" tabindex="-1" title="Delete" aria-label="Delete">✕</span>` +
+        `</div>`
+      );
+    };
+    // Pinned first (they always sort to the top — the gold star says it, no
+    // header needed), then recents. One flat list like the main role listing.
     $r.html(
-      `<div style="font-size: 11px !important; color: #6c757d !important; margin: 10px 0 2px !important;">Recent</div>${rows}`
+      jumpPinnedCache.map((r) => renderRow(r, true)).join("") +
+      jumpRecentsCache.map((r) => renderRow(r, false)).join("")
     );
   };
 
@@ -4650,6 +4865,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   const DRAG_THRESHOLD_PX = 5;
   const DRAG_SETTLE_MS = 220;
   let dragState = null;
+  // A pointer-drag ends with the browser synthesising a `click` on the row it
+  // was released over. For the jump list that click would re-jump; suppress the
+  // one click that immediately follows an *activated* drag.
+  let dragSuppressClick = false;
 
   const isDragInteractive = (el) => {
     if (!el) return false;
@@ -4674,14 +4893,42 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       // Captured at gesture start so a mid-drag filter clear doesn't switch
       // mode underneath the user.
       filtersBlocked: document.body.classList.contains("tm_filters_active"),
+      // Shared-engine config (see activateDrag / finishDrag).
+      listId: RoleOrderManager.LIST_ID,
+      rowClass: "saml-role",
+      activeClass: "tm_role_dragging_active",
+      onReorder: () => RoleOrderManager.saveCurrentOrder(),
+    };
+  });
+
+  // The same pointer-drag engine reorders pinned jumps: only the pinned rows
+  // participate (the recents below stay put), and it saves the pinned order.
+  $("body").on("pointerdown", '#tm_jump_recents .tm_jump_recent[data-pinned="1"]', function (e) {
+    if (dragState) return;
+    if (e.button !== 0) return;
+    // The ★/✕ actions take their click rather than starting a drag.
+    if (e.target.closest && e.target.closest(".tm_jump_action")) return;
+    dragState = {
+      row: this,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startX: e.clientX,
+      activated: false,
+      filtersBlocked: false,
+      listId: "tm_jump_recents",
+      rowClass: "tm_jump_recent",
+      rowFilter: (el) => el.getAttribute("data-pinned") === "1",
+      activeClass: "tm_jump_dragging_active",
+      onReorder: () => saveJumpPinnedFromDom(),
     };
   });
 
   const activateDrag = () => {
-    const list = document.getElementById(RoleOrderManager.LIST_ID);
+    const list = document.getElementById(dragState.listId);
     if (!list) { dragState = null; return; }
     const visible = Array.from(list.children).filter((el) =>
-      el.classList && el.classList.contains("saml-role") &&
+      el.classList && el.classList.contains(dragState.rowClass) &&
+      (!dragState.rowFilter || dragState.rowFilter(el)) &&
       getComputedStyle(el).display !== "none"
     );
     const draggedIndex = visible.indexOf(dragState.row);
@@ -4708,7 +4955,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     // 0.2s ease !important }` rule, so the dragged row really has no
     // transition and tracks the cursor instantly.
     dragState.row.style.setProperty("transition", "none", "important");
-    document.body.classList.add("tm_role_dragging_active");
+    document.body.classList.add(dragState.activeClass);
     dragState.activated = true;
   };
 
@@ -4748,7 +4995,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (!dragState.activated) { dragState = null; return; }
     e && e.preventDefault && e.preventDefault();
 
-    const { row, rows, list, draggedIndex, targetIndex, pointerId } = dragState;
+    // The drag really happened, so the click the browser fires on release must
+    // not also count as a row click (which would re-jump). Swallow that one
+    // click; a failsafe clears the flag if — e.g. on pointercancel — none comes.
+    dragSuppressClick = true;
+    setTimeout(() => { dragSuppressClick = false; }, 250);
+
+    const { row, rows, list, draggedIndex, targetIndex, pointerId, activeClass, onReorder } = dragState;
     dragState = null;
 
     // === FLIP commit: no timing-based reorder, no DOM-commit jump. ===
@@ -4802,10 +5055,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         r.style.transform = "";
       });
       row.classList.remove("tm_dragging");
-      document.body.classList.remove("tm_role_dragging_active");
+      document.body.classList.remove(activeClass);
       try { row.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
       if (draggedIndex !== targetIndex) {
-        await RoleOrderManager.saveCurrentOrder();
+        await onReorder();
       }
     }, DRAG_SETTLE_MS + 30);
   };
@@ -4839,6 +5092,17 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (!dragState || dragState.pointerId !== e.pointerId) return;
     finishDrag(e);
   });
+
+  // Swallow the click the browser synthesises when a drag is released. Capture
+  // phase + stopPropagation runs before the delegated body click handlers, so
+  // the reorder never doubles as a re-jump / pin / delete. Cleared on consume;
+  // the finishDrag failsafe covers the (clickless) pointercancel path.
+  document.addEventListener("click", function (e) {
+    if (!dragSuppressClick) return;
+    dragSuppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 
   // --- Keyboard navigation ---
   // /, Ctrl+K, Cmd+K  -> focus search
@@ -5064,7 +5328,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Pick a region per sign-in",
             `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Regions</em>.`)}
           ${sectionHTML("Jump to account (role chaining)",
-            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away under <em>Recent</em> in the popover. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
           ${sectionHTML("Rename accounts",
             `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",
@@ -5190,7 +5454,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const inp = document.getElementById("tm_group_tag_input");
     const wrap = document.getElementById("tm_group_tag_field");
     if (!sel || !inp || !wrap) return;
-    if (tabGroupTagCache) {
+    if (tabGroupModeCache === "custom") {
       sel.value = "custom";
       inp.value = tabGroupTagCache;
       wrap.style.display = "block";
@@ -5441,6 +5705,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const inp = document.getElementById("tm_group_tag_input");
     const wrap = document.getElementById("tm_group_tag_field");
     if (v === "custom") {
+      // "Custom tag" is a saved choice in its own right — persist it so a Sign
+      // In (and a reload) honour the dropdown even before a tag is typed. An
+      // empty tag then means "no group" (the SW's resolveTitle returns null),
+      // rather than silently falling back to whatever mode was set before.
+      tabGroupModeCache = "custom";
+      await StorageManager.saveTabGroupMode("custom");
+      updateTabGroupModeButton();
       if (wrap) wrap.style.display = "block";
       if (inp) inp.focus();
       updateTagClearBtn();
@@ -5620,6 +5891,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     CONFIG.STORAGE_KEYS.SIGNIN_CONFIRM_TYPE_IDS,
     CONFIG.STORAGE_KEYS.ASSUME_PROFILES,
     CONFIG.STORAGE_KEYS.JUMP_RECENTS,
+    CONFIG.STORAGE_KEYS.JUMP_PINNED,
   ]);
 
   const collectExportPayload = async () => {
@@ -5894,6 +6166,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             typeof p.role === "string" && p.role.length <= 128
           ),
         [SK.JUMP_RECENTS]: (v) =>
+          Array.isArray(v) && v.every((r) =>
+            r && typeof r === "object" &&
+            typeof r.org === "string" && typeof r.account === "string" &&
+            (r.label === undefined || typeof r.label === "string") &&
+            (r.role === undefined || typeof r.role === "string")
+          ),
+        [SK.JUMP_PINNED]: (v) =>
           Array.isArray(v) && v.every((r) =>
             r && typeof r === "object" &&
             typeof r.org === "string" && typeof r.account === "string" &&

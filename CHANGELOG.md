@@ -3,6 +3,27 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.2.2 — 2026-07-13
+
+### Added
+
+- **Manage your jump history.** In the Jump popover, hovering a recent reveals a
+  **★ pin** and **✕ delete**. Pinned destinations (filled gold star) sit at the
+  top of the list and survive the 6-recents cap, so a place you jump to often
+  stays one click away without retyping its 12-digit account id — and you can
+  **drag pinned entries to reorder** them, with the same smooth motion as the
+  main role list. The list also caps its height and scrolls, so a long history
+  can't push the popover off the bottom of the screen.
+
+### Fixed
+
+- **"Custom tag" tab-grouping is now a saved choice**, like By role / By org /
+  Off. Previously, choosing "Custom tag" saved nothing, so with an empty tag a
+  Sign In silently grouped by whatever mode was set before (often "Off" → no
+  group at all), and the dropdown only re-synced after a page reload. Now the
+  dropdown is the single source of truth: an empty custom tag means no group —
+  every time — and the choice persists across sign-ins and reloads.
+
 ## 1.2.1 — 2026-07-12
 
 ### Changed
