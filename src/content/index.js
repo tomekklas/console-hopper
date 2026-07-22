@@ -15,10 +15,17 @@ import {
   parseAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
+  parseAccountTagLines,
+  formatAccountTagLines,
+  normalizeAccountTags,
+  normalizeTagList,
   parseAssumeProfileLines,
   formatAssumeProfileLines,
   normalizeAssumeProfiles,
   normalizeJumpRecents,
+  searchMatches,
+  parseQuery,
+  matchesQuery,
 } from "./util.js";
 
 (async function () {
@@ -59,6 +66,7 @@ import {
       AWS_REGION: "aws_region",
       REGION_LIST: "aws_region_list",
       ACCOUNT_NAMES: "aws_account_names",
+      ACCOUNT_TAGS: "aws_account_tags",
       HOMEPAGE_URL: "aws_homepage_url",
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
@@ -223,15 +231,47 @@ import {
 
   debug(`Console Hopper v${CONFIG.SCRIPT_VERSION}`);
 
-  // Global filter state
-  let activeFilters = {
-    org: [],
-    env: [],
-    type: [],
-    role: [],
-    show: [],
+  // Global filter state. FILTER_GROUPS is the canonical list of filter groups;
+  // emptyFilters/cloneFilters build the {group: string[]} shape everywhere it's
+  // needed (capture, apply, start-view chips) so the group list lives in one
+  // place. cloneFilters(src, true) also drops non-strings (restoring saved data).
+  const FILTER_GROUPS = ["org", "env", "type", "role", "show", "tag"];
+  const emptyFilters = () =>
+    FILTER_GROUPS.reduce((o, g) => { o[g] = []; return o; }, {});
+  const cloneFilters = (src, sanitize) => {
+    const f = src || {};
+    return FILTER_GROUPS.reduce((o, g) => {
+      const arr = Array.isArray(f[g]) ? f[g] : [];
+      o[g] = sanitize ? arr.filter((s) => typeof s === "string") : [...arr];
+      return o;
+    }, {});
   };
+  // Deep-equal two {search, filters} views — used to light up the shortcut chip
+  // and Start-View chip that match the current/saved view.
+  const viewsEqual = (a, b) => {
+    if (!a || !b) return false;
+    if (String(a.search || "") !== String(b.search || "")) return false;
+    const fa = a.filters || {}, fb = b.filters || {};
+    return FILTER_GROUPS.every((g) => {
+      const x = [...(Array.isArray(fa[g]) ? fa[g] : [])].sort();
+      const y = [...(Array.isArray(fb[g]) ? fb[g] : [])].sort();
+      return x.length === y.length && x.every((v, i) => v === y[i]);
+    });
+  };
+  let activeFilters = emptyFilters();
   let searchTerm = "";
+  // Reflects applyFilters' visible-row count so the search "N matches" readout
+  // doesn't re-scan the DOM (see updateSearchMatchCount).
+  let lastVisibleCount = 0;
+  // Autocomplete keyboard state: which suggestion chip is highlighted (-1 = none)
+  // and the values currently shown, so Alt/Option+↑↓ + Enter can act on them.
+  let searchSuggestHighlight = -1;
+  let searchSuggestItems = [];
+  // One physical key (Option on Mac, Alt on Windows/Linux) — e.altKey is true for
+  // both, so only the *label* differs. Chromium exposes userAgentData.platform.
+  const IS_MAC = /mac/i.test(
+    (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""
+  );
 
   // Cache favorites list for performance
   let favoritesCache = [];
@@ -645,6 +685,20 @@ import {
     async saveAccountNames(map) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.ACCOUNT_NAMES]: map });
+        return true;
+      }, false);
+    },
+
+    async getAccountTags() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.ACCOUNT_TAGS);
+        return result[CONFIG.STORAGE_KEYS.ACCOUNT_TAGS] ?? null;
+      }, null);
+      return normalizeAccountTags(raw);
+    },
+    async saveAccountTags(map) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.ACCOUNT_TAGS]: map });
         return true;
       }, false);
     },
@@ -1109,18 +1163,37 @@ import {
       }
     },
 
+    // Label → chip id. Labels differing only in punctuation ("Prod PA" vs
+    // "prod-pa") collapse to the same base, so ids are de-duped via uniqueId
+    // and stored on the shortcut — otherwise both chips share one data-filter.
+    idOf(label) {
+      return sanitizeInput(String(label || "")).toLowerCase().replace(/[^a-z0-9]/g, "");
+    },
+    uniqueId(label, taken) {
+      const base = this.idOf(label) || "shortcut";
+      let id = base;
+      let n = 2;
+      while (taken.has(id)) { id = `${base}${n}`; n += 1; }
+      return id;
+    },
+    idFor(sc) {
+      return (sc && sc.id) || this.idOf(sc && sc.label);
+    },
+    findByFilter(filterValue) {
+      const want = String(filterValue || "");
+      return customShortcutsCache.find((s) => `custom_${this.idFor(s)}` === want) || null;
+    },
+
     generateHTML() {
       let shortcutsHTML =
         '<a href="#" class="tm_filter_button" data-group="show" data-filter="favorites">Favorites</a>' +
         '<a href="#" class="tm_filter_button" data-group="show" data-filter="recent">Recent</a>';
 
       customShortcutsCache.forEach((shortcut) => {
-        const safeLabelId = sanitizeInput(shortcut.label)
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
-        const safeSearch = sanitizeInput(shortcut.search);
+        const safeId = sanitizeInput(this.idFor(shortcut));
+        const safeSearch = sanitizeInput(shortcut.search || "");
         const safeLabel = sanitizeInput(shortcut.label);
-        shortcutsHTML += `<a href="#" class="tm_filter_button tm_custom_shortcut" data-group="show" data-filter="custom_${safeLabelId}" data-search="${safeSearch}">${safeLabel}</a>`;
+        shortcutsHTML += `<a href="#" class="tm_filter_button tm_custom_shortcut" data-group="show" data-filter="custom_${safeId}" data-search="${safeSearch}">${safeLabel}<span class="tm_shortcut_del" role="button" tabindex="-1" title="Remove shortcut" aria-label="Remove shortcut">✕</span></a>`;
       });
 
       return shortcutsHTML;
@@ -1130,6 +1203,68 @@ import {
       getCachedElement(CONFIG.SELECTORS.SHORTCUTS_SECTION).html(
         this.generateHTML()
       );
+    },
+
+    // A shortcut reads as "active" when the live view equals what it stored.
+    // Derived rather than tracked, so any manual tweak de-activates it for free.
+    isActive(sc) {
+      return viewsEqual(sc, StartViewManager.capture());
+    },
+    refreshActive() {
+      // capture() once, not per chip — every chip compares against the same view.
+      const cur = StartViewManager.capture();
+      $(CONFIG.SELECTORS.CUSTOM_SHORTCUTS).each(function () {
+        const sc = ShortcutsManager.findByFilter($(this).data("filter"));
+        $(this).toggleClass("active", viewsEqual(sc, cur));
+      });
+    },
+
+    // Clicking a shortcut restores its whole view; clicking the active one clears.
+    applyShortcut(sc) {
+      if (!sc) return;
+      if (this.isActive(sc)) {
+        FilterManager.clearAll();
+      } else {
+        StartViewManager.apply({ search: sc.search || "", filters: sc.filters || {} }, false);
+      }
+      this.refreshActive();
+    },
+
+    // Save the current search + filter chips as a new named view.
+    async addCurrent(label) {
+      const name = String(label || "").trim();
+      if (!name) return false;
+      const cap = StartViewManager.capture();
+      // A saved view must never reference another shortcut, or applying it
+      // would re-enter this machinery.
+      cap.filters.show = cap.filters.show.filter((s) => !String(s).startsWith("custom_"));
+      const taken = new Set(customShortcutsCache.map((s) => this.idFor(s)));
+      const next = [
+        ...customShortcutsCache,
+        { id: this.uniqueId(name, taken), label: name, search: cap.search, filters: cap.filters },
+      ];
+      const ok = await this.saveShortcuts(next);
+      if (ok) {
+        this.updateSection();
+        updateFilterRowVisibility();
+        this.refreshActive();
+      }
+      return ok;
+    },
+
+    // Remove a saved view. The current filter/search state is left untouched —
+    // deleting the bookmark doesn't undo what it happened to be showing.
+    async remove(sc) {
+      if (!sc) return false;
+      const id = this.idFor(sc);
+      const next = customShortcutsCache.filter((s) => this.idFor(s) !== id);
+      const ok = await this.saveShortcuts(next);
+      if (ok) {
+        this.updateSection();
+        updateFilterRowVisibility();
+        this.refreshActive();
+      }
+      return ok;
     },
   };
 
@@ -1353,6 +1488,7 @@ import {
   };
 
   let accountNamesCache = {};
+  let accountTagsCache = {};
 
   const AccountNamesManager = {
     async loadCache() {
@@ -1374,6 +1510,172 @@ import {
     all() {
       return accountNamesCache;
     },
+  };
+
+  // Account tags: free-text labels attached to an account id so it can be found
+  // by concept (e.g. "palo alto"), not just by name. Keyed by account id, so a
+  // tag shows on — and edits from — every role row of that account.
+  const AccountTagsManager = {
+    async loadCache() {
+      accountTagsCache = await StorageManager.getAccountTags();
+      debug("Account tags cache loaded:", accountTagsCache);
+    },
+    async save(map) {
+      const clean = normalizeAccountTags(map);
+      const saved = await StorageManager.saveAccountTags(clean);
+      if (saved !== false) {
+        accountTagsCache = clean;
+        return true;
+      }
+      showToast("Failed to save account tags", "error");
+      return false;
+    },
+    all() {
+      return accountTagsCache;
+    },
+    tagsFor(id) {
+      return (id && accountTagsCache[id]) || [];
+    },
+    // Unique tag vocabulary across all accounts (canonical casing), sorted —
+    // powers the filter-row chips and the inline add-autocomplete.
+    allTags() {
+      const seen = new Map();
+      for (const tags of Object.values(accountTagsCache)) {
+        for (const t of tags) {
+          const k = t.toLowerCase();
+          if (!seen.has(k)) seen.set(k, t);
+        }
+      }
+      return [...seen.values()].sort((a, b) => a.localeCompare(b));
+    },
+    // Persist a whole account's tag list (inline add/remove + bulk). Emptying it
+    // drops the account key so allTags() stays clean.
+    async setTags(id, tags) {
+      if (!/^\d{12}$/.test(id || "")) return false;
+      const clean = normalizeTagList(tags);
+      const next = { ...accountTagsCache };
+      if (clean.length) next[id] = clean;
+      else delete next[id];
+      return this.save(next);
+    },
+    async addTag(id, tag) {
+      return this.setTags(id, [...this.tagsFor(id), tag]);
+    },
+    async removeTag(id, tag) {
+      const low = String(tag || "").toLowerCase();
+      return this.setTags(id, this.tagsFor(id).filter((t) => t.toLowerCase() !== low));
+    },
+  };
+
+  // ---- Account-tag row UI (on-demand chip + inline editor) ----
+  const TAG_SVG =
+    '<svg class="tm_tag_ico" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">' +
+    '<path d="M2 2h5.2a1 1 0 0 1 .7.3l6 6a1 1 0 0 1 0 1.4l-4 4a1 1 0 0 1-1.4 0l-6-6A1 1 0 0 1 2 7.2V2z" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+    '<circle cx="5.2" cy="5.2" r="1.1" fill="currentColor"/></svg>';
+
+  const tagChipInner = (id) => {
+    const n = AccountTagsManager.tagsFor(id).length;
+    return n
+      ? `${TAG_SVG}<span class="tm_tag_n">${n}</span>`
+      : `<span class="tm_tag_plus">+</span>tag`;
+  };
+
+  // Chip in the account-name cell: tag glyph + count when tagged, a dashed
+  // "+ tag" prompt otherwise (always shown, per the chosen design).
+  const tagChipHTML = (id) => {
+    if (!/^\d{12}$/.test(id || "")) return "";
+    const n = AccountTagsManager.tagsFor(id).length;
+    const cls = n ? "tm_tag_chip" : "tm_tag_chip tm_no_tags";
+    const title = n ? `${n} tag${n === 1 ? "" : "s"} — click to edit` : "Add a tag";
+    return `<button type="button" class="${cls}" data-account-id="${escapeHtml(id)}" aria-expanded="false" title="${title}">${tagChipInner(id)}</button>`;
+  };
+
+  const tagPillsHTML = (id) =>
+    AccountTagsManager.tagsFor(id)
+      .map((t) => {
+        const e = escapeHtml(t);
+        return `<span class="tm_tag_pill">${e}<button type="button" class="tm_tag_del" data-account-id="${escapeHtml(id)}" data-tag="${e}" aria-label="Remove ${e}">✕</button></span>`;
+      })
+      .join("");
+
+  // Editor body revealed under an open row: removable pills + an add affordance
+  // (the pills area re-renders on edit; the add area holds the button/input).
+  const tagEditorHTML = (id) => {
+    if (!/^\d{12}$/.test(id || "")) return "";
+    return (
+      `<div class="tm_tag_pills">${tagPillsHTML(id)}</div>` +
+      `<div class="tm_tag_addwrap"><button type="button" class="tm_tag_add" data-account-id="${escapeHtml(id)}"><span class="tm_tag_plus">+</span> tag</button></div>`
+    );
+  };
+
+  // Tags are per-account, so refresh the chip + pills on EVERY role row of the
+  // account, and re-run the filter so an active tag/text search stays accurate.
+  // Repaint one account-tag chip / editor-pills node in place. Shared by the
+  // inline-edit path (one account) and the bulk-edit path (every account).
+  const paintTagChip = (chip) => {
+    const id = chip.getAttribute("data-account-id");
+    chip.classList.toggle("tm_no_tags", AccountTagsManager.tagsFor(id).length === 0);
+    chip.innerHTML = tagChipInner(id);
+  };
+  const paintTagPills = (pillsEl) => {
+    const editor = pillsEl.closest(".tm_tag_editor");
+    if (editor) pillsEl.innerHTML = tagPillsHTML(editor.getAttribute("data-account-id"));
+  };
+  const updateTagUIForAccount = (id) => {
+    if (!/^\d{12}$/.test(id || "")) return;
+    document.querySelectorAll(`.tm_tag_chip[data-account-id="${id}"]`).forEach(paintTagChip);
+    document.querySelectorAll(`.tm_tag_editor[data-account-id="${id}"] .tm_tag_pills`).forEach(paintTagPills);
+    renderTagFilterRow();
+    FilterManager.applyFilters(true);
+  };
+
+  // The "Tags" toolbar row mirrors the org/env chips; its options are the whole
+  // tag vocabulary in use. Re-assert active chips after each rebuild.
+  const renderTagFilterRow = () => {
+    renderFilterRow("tag", AccountTagsManager.allTags().map((t) => ({ id: t, label: t })));
+    document.querySelectorAll('.tm_filter_button[data-group="tag"]').forEach((btn) => {
+      if ((activeFilters.tag || []).includes(btn.getAttribute("data-filter"))) btn.classList.add("active");
+    });
+  };
+
+  // Keep one shared datalist for add-tag autocomplete, repopulated from the
+  // current vocabulary each time an input opens.
+  const populateTagVocab = () => {
+    let dl = document.getElementById("tm_tag_vocab");
+    if (!dl) {
+      dl = document.createElement("datalist");
+      dl.id = "tm_tag_vocab";
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = AccountTagsManager.allTags()
+      .map((t) => `<option value="${escapeHtml(t)}"></option>`)
+      .join("");
+  };
+  const makeTagInput = (id) => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "tm_tag_input";
+    input.setAttribute("list", "tm_tag_vocab");
+    input.setAttribute("data-account-id", id);
+    input.setAttribute("placeholder", "tag…");
+    input.setAttribute("aria-label", "Add a tag");
+    return input;
+  };
+  const makeTagAddButton = (id) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tm_tag_add";
+    b.setAttribute("data-account-id", id);
+    b.innerHTML = '<span class="tm_tag_plus">+</span> tag';
+    return b;
+  };
+  // Turn an "+ tag" button into a focused, autocompleted input (one action).
+  const openTagInput = (addBtn) => {
+    populateTagVocab();
+    const input = makeTagInput(addBtn.getAttribute("data-account-id"));
+    addBtn.replaceWith(input);
+    input.focus();
+    return input;
   };
 
   // Generic factory: each manager backs a configurable filter row in the
@@ -1656,13 +1958,17 @@ import {
   // (Toggled via a class, not .hide(): the row's display:flex is !important,
   // which a plain inline display:none from .hide() would not override.)
   const updateFilterRowVisibility = (group) => {
-    const groups = group ? [group] : ["org", "env", "type", "role"];
+    const groups = group ? [group] : ["org", "env", "type", "role", "tag"];
     for (const g of groups) {
       const $group = $(`.tm_button_group[data-filter-group="${g}"]`);
       if (!$group.length) continue;
       const $row = $group.closest(".tm_frow");
       if (!$row.length) continue;
-      if ($group.find(".tm_filter_button").length >= 2) {
+      // Derived classifiers (org/env/type/role) need 2+ options to be a useful
+      // filter — with one value every row matches. Tags are explicit user
+      // intent, so a single tag is already a meaningful filter: show it from 1.
+      const minChips = g === "tag" ? 1 : 2;
+      if ($group.find(".tm_filter_button").length >= minChips) {
         $row.removeClass("tm_frow_hidden");
       } else {
         $row.addClass("tm_frow_hidden");
@@ -1674,7 +1980,7 @@ import {
     }
     // With no filter rows visible above it, the Shortcuts row's top divider
     // separates nothing — drop it so it doesn't float as a stray rule.
-    const anyVisible = ["org", "env", "type", "role"].some((g) => {
+    const anyVisible = ["org", "env", "type", "role", "tag"].some((g) => {
       const bg = document.querySelector(`.tm_button_group[data-filter-group="${g}"]`);
       const row = bg && bg.closest(".tm_frow");
       return row && !row.classList.contains("tm_frow_hidden");
@@ -1717,6 +2023,7 @@ import {
     renderFilterRow("env",  EnvironmentsManager.entries());
     renderFilterRow("type", AccountTypesManager.entries());
     renderFilterRow("role", RolesManager.entries());
+    renderTagFilterRow();
   };
 
   // Paint each role card's left stripe with the matched env color. Inline
@@ -1741,16 +2048,96 @@ import {
     });
   };
 
+  // Fields the search box understands as `field:value` qualifiers: text fields
+  // (tag/role/name/account/id) + classifier fields (env/type/org) resolved via
+  // the same managers that back the filter chips.
+  const KNOWN_QUERY_FIELDS = new Set([
+    "tag", "tags", "role", "name", "account", "acct", "id",
+    "env", "environment", "type", "org", "organization", "organisation",
+  ]);
+  // Parse the query once per applyFilters pass (all rows share searchTerm), and
+  // note which fields it references so rows only resolve the classifiers used.
+  let _queryCache = { raw: null, terms: [], used: new Set() };
+  const getQuery = () => {
+    if (_queryCache.raw !== searchTerm) {
+      const terms = searchTerm ? parseQuery(searchTerm, KNOWN_QUERY_FIELDS) : [];
+      _queryCache = {
+        raw: searchTerm,
+        terms,
+        used: new Set(terms.map((t) => t.field).filter(Boolean)),
+      };
+    }
+    return _queryCache;
+  };
+
+  // Saved Shortcuts run their search string through the same query engine, so a
+  // Shortcut like `tag:pci -role:readonly` becomes a boolean favourite. Parsed
+  // results are cached by string.
+  const _shortcutQueryCache = new Map();
+  const getShortcutQuery = (str) => {
+    if (!_shortcutQueryCache.has(str)) {
+      const terms = parseQuery(str, KNOWN_QUERY_FIELDS);
+      _shortcutQueryCache.set(str, {
+        terms,
+        used: new Set(terms.map((t) => t.field).filter(Boolean)),
+      });
+    }
+    return _shortcutQueryCache.get(str);
+  };
+
   // Optimized filter matching function
   const matchesFilters = ($role) => {
     const accountName = $role.find(".tm_account_name").text().toLowerCase();
     const accountId = $role.find(".tm_account_id").text().toLowerCase();
     const roleName = $role.find(".tm_role_name").text().toLowerCase();
-    const fullText = `${accountName} ${accountId} ${roleName}`;
+    // Account tags join the searchable text, so "palo alto" finds a tagged
+    // account even when the name/id/role don't contain it.
+    const tags = AccountTagsManager.tagsFor(accountId).join(" ").toLowerCase();
+    const fullText = `${accountName} ${accountId} ${roleName} ${tags}`;
     const roleArn = $role.find(".tm_signin_button").data("role-arn");
 
-    // Text search
-    if (searchTerm && !fullText.includes(searchTerm.toLowerCase())) {
+    // Scoped search: bare words hit everything; `field:value` scopes to a field;
+    // space = AND, comma = OR within a field, `-` excludes, "..." = exact.
+    const query = getQuery();
+    const terms = query.terms;
+
+    // Highlight the tag chip when a positive bare/tag term matched a tag.
+    const tagMatched = !!tags && terms.some((term) =>
+      !term.negate &&
+      (term.field === "" || term.field === "tag" || term.field === "tags") &&
+      term.values.some((v) =>
+        v.quoted ? tags.includes(v.text.toLowerCase()) : searchMatches(v.text, tags))
+    );
+    $role.find(".tm_tag_chip").toggleClass("tm_tag_matched", tagMatched);
+
+    // Build the field map for a query, resolving classifier fields (env/type/
+    // org) only for the fields actually referenced, so env:prod matches the env
+    // id or its chip label. Reused by the search box and by saved Shortcuts.
+    const acctBoth = `${accountName} ${accountId}`;
+    const fieldsFor = (used) => {
+      const qf = {
+        _all: fullText, tag: tags, tags: tags, role: roleName,
+        name: accountName, id: accountId, account: acctBoth, acct: acctBoth,
+      };
+      if (used.has("env") || used.has("environment")) {
+        const detected = EnvironmentsManager.classify(accountName, accountId);
+        const e = EnvironmentsManager.entries().find((x) => x.id === detected);
+        qf.env = qf.environment = `${detected || ""} ${e ? e.label : ""}`.toLowerCase();
+      }
+      if (used.has("type")) {
+        qf.type = AccountTypesManager.entries()
+          .filter((t) => AccountTypesManager.matches(t.id, accountName, accountId))
+          .map((t) => `${t.id} ${t.label}`).join(" ").toLowerCase();
+      }
+      if (used.has("org") || used.has("organization") || used.has("organisation")) {
+        qf.org = qf.organization = qf.organisation = OrganizationsManager.entries()
+          .filter((o) => OrganizationsManager.matches(o.id, accountName, accountId))
+          .map((o) => `${o.id} ${o.label}`).join(" ").toLowerCase();
+      }
+      return qf;
+    };
+
+    if (terms.length && !matchesQuery(terms, fieldsFor(query.used))) {
       return false;
     }
 
@@ -1791,6 +2178,12 @@ import {
       if (!roleMatch) return false;
     }
 
+    // Account-tag filters — the row's account must carry at least one active tag.
+    if (activeFilters.tag.length > 0) {
+      const rowTags = AccountTagsManager.tagsFor(accountId);
+      if (!activeFilters.tag.some((t) => rowTags.includes(t))) return false;
+    }
+
     // Special "show" filters: built-in Favorites/Recent + any user-defined
     // search shortcut (Shortcuts) where the shortcut's `search` string
     // must appear in the role text.
@@ -1805,12 +2198,10 @@ import {
             CONFIG.SELECTORS.CUSTOM_SHORTCUTS
           ).filter(`[data-filter="${show}"]`);
           if ($button.length > 0) {
-            const searchString = $button.data("search");
-            if (
-              searchString &&
-              !fullText.includes(String(searchString).toLowerCase())
-            )
+            const sc = getShortcutQuery(String($button.data("search") || ""));
+            if (sc.terms.length && !matchesQuery(sc.terms, fieldsFor(sc.used))) {
               return false;
+            }
           } else {
             return false;
           }
@@ -1848,6 +2239,7 @@ import {
       });
 
       debug(`Visible: ${visibleCount}, Total: ${totalCount}`);
+      lastVisibleCount = visibleCount; // reused by the search "N matches" readout
 
       applyEnvironmentStyling();
 
@@ -1860,6 +2252,9 @@ import {
       // hidden rows).
       document.body.classList.toggle("tm_filters_active", filtersActive);
 
+      // A saved-view chip lights up only while the live view still matches it.
+      ShortcutsManager.refreshActive();
+
       if (filtersActive && !silent) {
         showToast(
           `Showing ${visibleCount} of ${totalCount} roles`,
@@ -1870,7 +2265,7 @@ import {
     },
 
     clearAll() {
-      activeFilters = { org: [], env: [], type: [], role: [], show: [] };
+      activeFilters = emptyFilters();
       searchTerm = "";
 
       getCachedElement(CONFIG.SELECTORS.FILTER_BUTTONS).removeClass("active");
@@ -1894,28 +2289,14 @@ import {
 
   const StartViewManager = {
     capture() {
-      return {
-        filters: {
-          org: [...activeFilters.org],
-          env: [...activeFilters.env],
-          type: [...activeFilters.type],
-          role: [...activeFilters.role],
-          show: [...activeFilters.show],
-        },
-        search: searchTerm,
-      };
+      return { filters: cloneFilters(activeFilters), search: searchTerm };
     },
     hasCurrent() {
       return Object.values(activeFilters).flat().length > 0 || searchTerm.length > 0;
     },
     apply(view, silent) {
       if (!view || !view.filters) return false;
-      const f = view.filters;
-      const arr = (x) => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
-      activeFilters = {
-        org: arr(f.org), env: arr(f.env), type: arr(f.type),
-        role: arr(f.role), show: arr(f.show),
-      };
+      activeFilters = cloneFilters(view.filters, true);
       searchTerm = typeof view.search === "string" ? view.search : "";
       // Re-sync the visible chip + search-box state to match the restored data.
       $(".tm_filter_button").removeClass("active");
@@ -1942,6 +2323,46 @@ import {
     const hasSaved = !!startViewCache;
     const hasCurrent = StartViewManager.hasCurrent();
     const favCount = favoritesCache.length;
+    // Every pick chip is one {group, label, view, …} candidate. Building the
+    // list once means render, active-state, the "custom view" note, and the
+    // click handler all read one source — no per-kind branching. svFromShortcut
+    // deep-copies so storage never holds a live reference to a cached shortcut.
+    const svFromShortcut = (sc) => ({
+      search: typeof sc.search === "string" ? sc.search : "",
+      filters: cloneFilters(sc.filters),
+    });
+    const withShow = (s) => ({ search: "", filters: { ...emptyFilters(), show: [s] } });
+    const withTag = (t) => ({ search: "", filters: { ...emptyFilters(), tag: [t] } });
+    const candidates = [
+      { group: "Views", label: `★ Favorites${favCount ? ` (${favCount})` : ""}`, view: withShow("favorites"),
+        disabled: !favCount, title: favCount ? "Open showing only starred roles" : "Star some roles first — the ☆ on each row",
+        msg: "Start view set to your Favorites." },
+      { group: "Views", label: "↻ Recent", view: withShow("recent"),
+        title: "Open showing recently used roles", msg: "Start view set to Recent." },
+      ...customShortcutsCache.map((sc) => ({ group: "Shortcuts", label: escapeHtml(sc.label), view: svFromShortcut(sc),
+        title: "Open with this shortcut's search and filters", msg: `Start view set to "${sc.label}".` })),
+      ...AccountTagsManager.allTags().map((t) => ({ group: "Tags", label: escapeHtml(t), view: withTag(t),
+        title: "Open filtered to this tag", msg: `Start view set to tag "${t}".` })),
+    ];
+
+    // Render one label+chips row per group present (fixed order); each chip
+    // carries its candidate index, so the click handler needs no per-kind switch.
+    const isOn = (view) => hasSaved && viewsEqual(startViewCache, view);
+    const chipHTML = (c, i) => {
+      const on = isOn(c.view);
+      return `<button type="button" class="tm_sv_pick${on ? " tm_sv_active" : ""}"${c.disabled ? " disabled" : ""} title="${escapeHtml(c.title)}" data-sv-idx="${i}">${c.label}${on ? " ✓" : ""}</button>`;
+    };
+    const gridHTML = ["Views", "Shortcuts", "Tags"].map((g) => {
+      const chips = candidates.map((c, i) => (c.group === g ? chipHTML(c, i) : "")).join("");
+      return chips ? `<span class="tm_sv_rowlabel">${g}</span><div class="tm_sv_chips">${chips}</div>` : "";
+    }).join("");
+
+    // A start view set but matching no chip is a saved-filters snapshot — flag it.
+    const customActive = hasSaved && !candidates.some((c) => viewsEqual(startViewCache, c.view));
+    const customNote = customActive
+      ? `<div style="margin: 0 0 16px 0 !important; padding: 8px 10px !important; background: #e7f2fb !important; border-radius: 5px !important; color: #0073bb !important; font-size: 12.5px !important; line-height: 1.4 !important;">A custom start view (your saved filters) is active. Pick one below to replace it, or Clear.</div>`
+      : "";
+
     const modalHTML = `
             <div id="tm_start_view_modal" style="
                 position: fixed !important; top: 0 !important; left: 0 !important;
@@ -1953,43 +2374,18 @@ import {
                     background: white !important; border-radius: 8px !important; padding: 22px 24px !important;
                     max-width: 470px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Start View</h3>
-                    <p style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.5 !important;">
-                        Choose the view the role picker opens with — it's re-applied
-                        automatically every time this page loads.${hasSaved
-                          ? " <strong>A start view is currently set.</strong>"
-                          : ""}
+                    <h3 style="margin: 0 0 10px 0 !important; color: #16191f !important;">Start View</h3>
+                    <p style="margin: 0 0 16px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.5 !important;">
+                        Choose the view the role picker opens with — it's re-applied automatically every time this page loads.
                     </p>
-                    <button id="tm_start_view_fav" type="button" ${favCount ? "" : "disabled"} style="
-                        display: block !important; width: 100% !important; text-align: left !important;
-                        padding: 10px 12px !important; margin: 0 0 5px 0 !important;
-                        border: 1px solid #0073bb !important; border-radius: 5px !important;
-                        background: ${favCount ? "#0073bb" : "#7fb5d6"} !important; color: white !important;
-                        cursor: ${favCount ? "pointer" : "not-allowed"} !important; font-size: 14px !important; font-weight: 600 !important;
-                    ">★ Start with my Favorites${favCount ? ` (${favCount})` : ""}</button>
-                    <div style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.4 !important;">
-                        Opens showing only the roles you've starred.${favCount ? "" : " Star some roles first — the ☆ on each row."}
-                    </div>
-                    <button id="tm_start_view_save" type="button" ${hasCurrent ? "" : "disabled"} style="
-                        display: block !important; width: 100% !important; text-align: left !important;
-                        padding: 10px 12px !important; margin: 0 0 5px 0 !important;
-                        border: 1px solid #ccc !important; border-radius: 5px !important;
-                        background: white !important; color: #16191f !important;
-                        cursor: ${hasCurrent ? "pointer" : "not-allowed"} !important; opacity: ${hasCurrent ? "1" : "0.55"} !important; font-size: 14px !important; font-weight: 600 !important;
-                    ">Save my current filters</button>
-                    <div style="margin: 0 0 18px 0 !important; color: #6c757d !important; font-size: 12px !important; line-height: 1.4 !important;">
-                        Uses whatever filters and search you have active right now.${hasCurrent ? "" : " (Nothing selected yet.)"}
-                    </div>
-                    <div style="display: flex !important; justify-content: space-between !important; align-items: center !important;">
-                        <button id="tm_start_view_clear" type="button" ${hasSaved ? "" : "disabled"} style="
-                            padding: 7px 12px !important; border: 1px solid #ccc !important; background: white !important;
-                            border-radius: 4px !important; cursor: ${hasSaved ? "pointer" : "not-allowed"} !important;
-                            opacity: ${hasSaved ? "1" : "0.45"} !important; font-size: 13px !important;
-                        ">Clear start view</button>
-                        <button id="tm_start_view_cancel" type="button" style="
-                            padding: 7px 14px !important; border: 1px solid #ccc !important;
-                            background: white !important; border-radius: 4px !important; cursor: pointer !important; font-size: 13px !important;
-                        ">Close</button>
+                    ${customNote}
+                    <div class="tm_sv_grid">${gridHTML}</div>
+                    <div class="tm_sv_footer">
+                        <div class="tm_sv_footer_left">
+                            <button id="tm_start_view_save" type="button" class="tm_sv_btn" ${hasCurrent ? "" : "disabled"} title="Save whatever filters and search you have active right now">Save current filters</button>
+                            <button id="tm_start_view_clear" type="button" class="tm_sv_btn" ${hasSaved ? "" : "disabled"} title="Remove the start view (favorites untouched)">Clear</button>
+                        </div>
+                        <button id="tm_start_view_cancel" type="button" class="tm_sv_btn">Close</button>
                     </div>
                 </div>
             </div>
@@ -1997,12 +2393,12 @@ import {
 
     $("body").append(modalHTML);
 
-    const persistStartView = async (view, applyNow, msg) => {
+    const persistStartView = async (view, msg) => {
       const saved = await StorageManager.saveStartView(view);
       if (saved === false) return;
       startViewCache = view;
       updateStartViewButton();
-      if (applyNow) StartViewManager.apply(view, true);
+      StartViewManager.apply(view, true); // apply now so the effect is visible
       $("#tm_start_view_modal").remove();
       showToast(msg, "success", CONFIG.TOAST_DURATION);
     };
@@ -2011,24 +2407,16 @@ import {
       if (e.target === this) $("#tm_start_view_modal").remove();
     });
 
-    // One-click "open the picker showing only my starred roles" — the favorites
-    // filter as a start view. Applied immediately so the effect is visible.
-    $("#tm_start_view_fav").on("click", async function () {
-      if (!favoritesCache.length) return;
-      await persistStartView(
-        { filters: { org: [], env: [], type: [], role: [], show: ["favorites"] }, search: "" },
-        true,
-        "Start view set to your Favorites — this page will open showing only starred roles."
-      );
+    // One handler: the chip's index picks its candidate — no per-kind switch.
+    $("#tm_start_view_modal").on("click", ".tm_sv_pick", async function () {
+      if (this.disabled) return;
+      const c = candidates[Number(this.getAttribute("data-sv-idx"))];
+      if (c) await persistStartView(c.view, c.msg);
     });
 
     $("#tm_start_view_save").on("click", async function () {
       if (!StartViewManager.hasCurrent()) return;
-      await persistStartView(
-        StartViewManager.capture(),
-        false,
-        "Start view saved — the picker will open with these filters."
-      );
+      await persistStartView(StartViewManager.capture(), "Start view saved — the picker will open with these filters.");
     });
 
     $("#tm_start_view_clear").on("click", async function () {
@@ -2163,6 +2551,10 @@ import {
                         <span class="tm_frow_label">Roles</span>
                         <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="role"></div></div>
                     </div>
+                    <div class="tm_frow">
+                        <span class="tm_frow_label">Tags</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="tag"></div></div>
+                    </div>
                     <div class="tm_frow tm_frow_shortcuts">
                         <span class="tm_frow_label">Shortcuts</span>
                         <div class="tm_frow_body tm_shortcuts_section">
@@ -2175,8 +2567,23 @@ import {
                 </div>
                 <div class="tm_right_column">
                     <div id="tm_search_container">
-                        <input type="text" id="tm_search_input" placeholder="Find account..." autocomplete="off">
-                        <button type="button" id="tm_search_clear" class="tm_field_clear" aria-label="Clear search" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
+                        <div id="tm_search_pop">
+                            <div id="tm_search_field">
+                                <input type="text" id="tm_search_input" placeholder="Find account..." autocomplete="off">
+                                <button type="button" id="tm_search_clear" class="tm_field_clear" aria-label="Clear search" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
+                            </div>
+                            <div id="tm_search_suggest"></div>
+                            <div id="tm_search_foot">
+                                <div id="tm_search_save">
+                                    <button type="button" id="tm_search_save_btn" title="Save this search and its filters as a reusable Shortcut">☆ save as shortcut</button>
+                                    <span id="tm_search_save_form">
+                                        <input type="text" id="tm_search_save_name" placeholder="shortcut name" autocomplete="off" maxlength="40">
+                                        <button type="button" id="tm_search_save_go">save</button>
+                                    </span>
+                                </div>
+                                <div id="tm_search_matchcount"></div>
+                            </div>
+                        </div>
                     </div>
                     <div id="tm_jump_section" style="display: none;">
                         <div class="tm_col_divider"></div>
@@ -2256,6 +2663,7 @@ import {
                 <a href="#" class="tm_action_button" id="tm_manage_services">Services</a>
                 <a href="#" class="tm_action_button" id="tm_manage_regions">Regions</a>
                 <a href="#" class="tm_action_button" id="tm_manage_account_names">Account Names</a>
+                <a href="#" class="tm_action_button" id="tm_manage_account_tags">Account Tags</a>
                 <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Assume Profiles</a>
                 <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
                 <div class="tm_menu_header">Data</div>
@@ -2602,6 +3010,46 @@ import {
             transition: all 0.2s ease !important;
         }
 
+        /* Inline "remove shortcut" ✕ on saved-view chips. Subtle by default,
+           brighter on hover; a first click arms .tm_confirm_del (whole chip goes
+           red = "click again to remove"), so deletion always takes two clicks. */
+        .tm_shortcut_del {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 15px !important;
+            height: 15px !important;
+            margin-left: 6px !important;
+            margin-right: -3px !important;
+            border-radius: 50% !important;
+            font-size: 10px !important;
+            line-height: 1 !important;
+            color: #99a0a8 !important;
+            vertical-align: middle !important;
+            transition: color 0.12s ease, background-color 0.12s ease !important;
+        }
+        .tm_shortcut_del:hover { color: #c0392b !important; background-color: #fbeae8 !important; }
+        .tm_custom_shortcut.tm_confirm_del {
+            border-color: #c0392b !important;
+            background-color: #fbeae8 !important;
+            color: #c0392b !important;
+        }
+        .tm_custom_shortcut.tm_confirm_del .tm_shortcut_del {
+            color: #fff !important;
+            background-color: #c0392b !important;
+        }
+        body.tm_theme_dark .tm_shortcut_del { color: #8a94a0 !important; }
+        body.tm_theme_dark .tm_shortcut_del:hover { color: #f0a0a0 !important; background-color: #4a2222 !important; }
+        body.tm_theme_dark .tm_custom_shortcut.tm_confirm_del {
+            border-color: #e06060 !important;
+            background-color: #4a2222 !important;
+            color: #f0a0a0 !important;
+        }
+        body.tm_theme_dark .tm_custom_shortcut.tm_confirm_del .tm_shortcut_del {
+            color: #4a2222 !important;
+            background-color: #f0a0a0 !important;
+        }
+
         /* Tag field for the "Custom tag" grouping choice — shown only when the
            dropdown above is set to Custom tag. Its value groups every Sign In
            under that tag until another grouping option is picked. */
@@ -2706,10 +3154,31 @@ import {
             color: #fff !important;
         }
 
+        /* --- Search: a compact box in the 200px rail that pops out into a wide
+           floating card on focus (mirrors the Jump popover). The container
+           reserves a fixed 32px slot; #tm_search_pop is an absolute child that
+           fills that slot when collapsed and grows into a card while the input
+           is focused (:focus-within). There is no second input — the same
+           #tm_search_input is simply restyled, so search state stays single-
+           source. Suggest + match count are in-flow inside the card and hidden
+           when collapsed, so the rail slot stays clean. */
         #tm_search_container {
             width: 100% !important;
             position: relative !important;
+            height: 32px !important;
         }
+        #tm_search_pop {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 1002 !important;
+            box-sizing: border-box !important;
+            border: 1px solid transparent !important;
+            border-radius: 8px !important;
+            transition: box-shadow 0.12s ease, border-color 0.12s ease !important;
+        }
+        #tm_search_field { position: relative !important; }
 
         #tm_search_input {
             width: 100% !important;
@@ -2721,6 +3190,118 @@ import {
             font-size: 14px !important;
             transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease !important;
         }
+
+        /* Expanded: the box is focused → float a wide card leftward over the list. */
+        #tm_search_container:focus-within #tm_search_pop {
+            left: auto !important;
+            width: 400px !important;
+            max-width: calc(100vw - 60px) !important;
+            top: -7px !important;
+            padding: 6px !important;
+            background: #fff !important;
+            border-color: #0073bb !important;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15) !important;
+        }
+        #tm_search_container:focus-within #tm_search_input {
+            height: 36px !important;
+            border-color: #0073bb !important;
+        }
+
+        /* Autocomplete + legend + live match count: in-flow inside the card,
+           revealed only while the box is focused. */
+        #tm_search_suggest { display: none !important; margin-top: 8px !important; }
+        #tm_search_container:focus-within #tm_search_suggest { display: block !important; }
+        /* Footer: "save as shortcut" on the left, live match count on the right.
+           Only shown when there is actually something to save or count (JS adds
+           .tm_foot_on), so an empty box stays clean. */
+        #tm_search_foot { display: none !important; }
+        #tm_search_container:focus-within #tm_search_foot.tm_foot_on {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 8px !important;
+            margin-top: 8px !important;
+            padding-top: 7px !important;
+            border-top: 1px solid #ededed !important;
+        }
+        #tm_search_matchcount {
+            font-size: 12px !important;
+            color: #0073bb !important;
+            font-weight: 600 !important;
+            white-space: nowrap !important;
+        }
+        #tm_search_save_btn {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            border: 1px solid #d5d9de !important;
+            background: transparent !important;
+            color: #57606a !important;
+            border-radius: 4px !important;
+            padding: 3px 8px !important;
+            font-size: 11.5px !important;
+            font-family: inherit !important;
+            cursor: pointer !important;
+        }
+        #tm_search_save_btn:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        #tm_search_save_form { display: none !important; align-items: center !important; gap: 5px !important; }
+        #tm_search_save.tm_saving #tm_search_save_btn { display: none !important; }
+        #tm_search_save.tm_saving #tm_search_save_form { display: flex !important; }
+        #tm_search_save_name {
+            height: 26px !important;
+            width: 150px !important;
+            box-sizing: border-box !important;
+            padding: 0 7px !important;
+            border: 1px solid #0073bb !important;
+            border-radius: 4px !important;
+            font-size: 12px !important;
+            font-family: inherit !important;
+        }
+        #tm_search_save_go {
+            border: none !important;
+            background: #0073bb !important;
+            color: #fff !important;
+            border-radius: 4px !important;
+            padding: 4px 10px !important;
+            font-size: 11.5px !important;
+            font-family: inherit !important;
+            cursor: pointer !important;
+        }
+        body.tm_theme_dark #tm_search_save_btn { border-color: #55606e !important; color: #adb5bd !important; }
+        body.tm_theme_dark #tm_search_save_name { background: #3a4453 !important; color: #e9ecef !important; }
+        body.tm_theme_dark #tm_search_container:focus-within #tm_search_foot.tm_foot_on { border-top-color: #3a4148 !important; }
+        .tm_suggest_chips { display: flex !important; flex-wrap: wrap !important; gap: 5px !important; }
+        .tm_suggest_chip {
+            border: 1px solid #d5d9de !important;
+            background: #f6f8fa !important;
+            color: #24292f !important;
+            border-radius: 999px !important;
+            padding: 2px 9px !important;
+            font-size: 12px !important;
+            line-height: 1.5 !important;
+            cursor: pointer !important;
+            font-family: inherit !important;
+        }
+        .tm_suggest_chip:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        /* Keyboard highlight (Alt/Option+↑↓) — a filled chip so it reads even
+           among the row of outline chips. */
+        .tm_suggest_chip.tm_suggest_active {
+            background: #0073bb !important;
+            border-color: #0073bb !important;
+            color: #fff !important;
+        }
+        .tm_suggest_none { font-size: 12px !important; color: #8a9099 !important; }
+        .tm_suggest_legend { font-size: 11px !important; color: #8a9099 !important; margin-top: 8px !important; }
+        .tm_suggest_legend b { color: #57606a !important; font-weight: 600 !important; }
+        .tm_suggest_keys { font-size: 11px !important; color: #99a0a8 !important; margin-top: 4px !important; }
+        body.tm_theme_dark #tm_search_container:focus-within #tm_search_pop { background: #2d3542 !important; border-color: #55606e !important; }
+        body.tm_theme_dark .tm_suggest_chip { background: #3a4453 !important; border-color: #55606e !important; color: #e9ecef !important; }
+        body.tm_theme_dark .tm_suggest_chip.tm_suggest_active { background: #0073bb !important; border-color: #0073bb !important; color: #fff !important; }
+        body.tm_theme_dark .tm_suggest_none,
+        body.tm_theme_dark .tm_suggest_legend { color: #8a94a0 !important; }
+        body.tm_theme_dark .tm_suggest_legend b { color: #adb5bd !important; }
+        body.tm_theme_dark .tm_suggest_keys { color: #7d858f !important; }
+        body.tm_theme_dark #tm_search_container:focus-within #tm_search_matchcount:not(:empty) { color: #4aa3e0 !important; }
 
         #tm_actions_container {
             position: fixed !important;
@@ -2878,10 +3459,10 @@ import {
             margin-right: 0 !important;
             box-shadow: 0 1px 2px rgba(0,0,0,0.08) !important;
             display: grid !important;
-            /* fav | account name | role name | account id | service | region | sign in
+            /* fav | account name | tags | role name | account id | service | region | sign in
                The two name columns flex (1fr) so long names get room and ellipsis;
-               every column lines up vertically across rows like a table. */
-            grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto auto auto auto !important;
+               the fixed tag column keeps every tag chip aligned in one vertical strip. */
+            grid-template-columns: auto minmax(0, 1fr) 56px minmax(0, 1fr) auto auto auto auto !important;
             align-items: center !important;
             column-gap: 12px !important;
             transition: all 0.2s ease !important;
@@ -2998,6 +3579,13 @@ import {
         }
         .tm_jump_del { color: #8a9199 !important; }
         .tm_jump_del:hover { color: #c0392b !important; background-color: #fbeae8 !important; }
+        /* Armed (first ✕ click): red-filled "click again to remove". opacity:1
+           overrides the hover-reveal so it stays put after the pointer leaves. */
+        .tm_jump_del.tm_confirm_del {
+            opacity: 1 !important;
+            color: #fff !important;
+            background-color: #c0392b !important;
+        }
 
         .saml-role.tm_kb_selected {
             outline: 2px solid #0073bb !important;
@@ -3128,6 +3716,188 @@ import {
             text-overflow: ellipsis !important;
             white-space: nowrap !important;
         }
+
+        /* Account tags: on-demand chip in the name cell + an expandable inline
+           editor that spans the whole row (grid-column: 1 / -1). */
+        .tm_tag_cell {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            min-width: 0 !important;
+        }
+        .tm_tag_chip {
+            flex: none !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 3px !important;
+            border: 1px solid #d5d9de !important;
+            background: #fff !important;
+            color: #6c757d !important;
+            border-radius: 999px !important;
+            padding: 0 7px !important;
+            height: 18px !important;
+            font-size: 11px !important;
+            line-height: 1 !important;
+            cursor: pointer !important;
+            white-space: nowrap !important;
+            box-sizing: border-box !important;
+        }
+        .tm_tag_chip.tm_no_tags { border-style: dashed !important; color: #aab1b8 !important; }
+        .tm_tag_chip:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        .tm_tag_chip.tm_tag_matched {
+            border-color: #0073bb !important;
+            color: #0073bb !important;
+            background: #e6f1fb !important;
+        }
+        body.tm_theme_dark .tm_tag_chip.tm_tag_matched {
+            border-color: #3182ce !important;
+            color: #cfe4fb !important;
+            background: #24405c !important;
+        }
+        .tm_tag_ico { display: block !important; }
+        .tm_tag_plus { font-weight: 700 !important; }
+        .tm_tag_editor {
+            grid-column: 1 / -1 !important;
+            display: none !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 6px !important;
+            margin-top: 8px !important;
+            padding-top: 8px !important;
+            border-top: 1px solid #eef0f2 !important;
+        }
+        .saml-role.tm_tags_open .tm_tag_editor { display: flex !important; }
+        .tm_tag_pills { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; }
+        .tm_tag_addwrap { display: inline-flex !important; }
+        .tm_tag_pill {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            border: 1px solid #d5d9de !important;
+            background: #f6f8fa !important;
+            color: #444 !important;
+            border-radius: 999px !important;
+            padding: 2px 4px 2px 10px !important;
+            font-size: 12px !important;
+        }
+        .tm_tag_del {
+            border: none !important;
+            background: transparent !important;
+            color: #adb5bd !important;
+            cursor: pointer !important;
+            font-size: 11px !important;
+            line-height: 1 !important;
+            padding: 0 3px !important;
+        }
+        .tm_tag_del:hover { color: #c0392b !important; }
+        .tm_tag_add {
+            border: 1px dashed #c7ccd1 !important;
+            background: transparent !important;
+            color: #6c757d !important;
+            border-radius: 999px !important;
+            padding: 2px 10px !important;
+            font-size: 12px !important;
+            cursor: pointer !important;
+        }
+        .tm_tag_add:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        .tm_tag_input {
+            border: 1px solid #0073bb !important;
+            border-radius: 999px !important;
+            padding: 2px 10px !important;
+            font-size: 12px !important;
+            line-height: 1.4 !important;
+            min-width: 130px !important;
+            outline: none !important;
+            background: #fff !important;
+            color: #16191f !important;
+        }
+        /* The native datalist ▼ sits misaligned inside the pill-shaped input and
+           inflates its height; hide it. Autocomplete still works on type / ↓. */
+        .tm_tag_input::-webkit-calendar-picker-indicator { display: none !important; }
+        body.tm_theme_dark .tm_tag_chip { background: #3a4453 !important; border-color: #55606e !important; color: #c7ccd1 !important; }
+        body.tm_theme_dark .tm_tag_chip.tm_no_tags { color: #8a94a0 !important; }
+        body.tm_theme_dark .tm_tag_pill { background: #3a4453 !important; border-color: #55606e !important; color: #e9ecef !important; }
+        body.tm_theme_dark .tm_tag_editor { border-top-color: #3a4453 !important; }
+        body.tm_theme_dark .tm_tag_add { border-color: #55606e !important; color: #adb5bd !important; }
+        body.tm_theme_dark .tm_tag_input { background: #2d3542 !important; color: #e9ecef !important; }
+        /* Armed (first ✕ click) tag pill — red "click again to remove", matching
+           the shortcut chips (whole chip reddens, ✕ becomes white-on-red). */
+        .tm_tag_pill.tm_confirm_del {
+            border-color: #c0392b !important;
+            background-color: #fbeae8 !important;
+            color: #c0392b !important;
+        }
+        .tm_tag_pill.tm_confirm_del .tm_tag_del {
+            color: #fff !important;
+            background-color: #c0392b !important;
+            border-radius: 999px !important;
+        }
+        body.tm_theme_dark .tm_tag_pill.tm_confirm_del {
+            border-color: #e06060 !important;
+            background-color: #4a2222 !important;
+            color: #f0a0a0 !important;
+        }
+        body.tm_theme_dark .tm_tag_pill.tm_confirm_del .tm_tag_del {
+            color: #4a2222 !important;
+            background-color: #f0a0a0 !important;
+        }
+
+        /* Start View modal — every choice is one pick chip, grouped by a right-
+           aligned label (Views / Shortcuts / Tags), mirroring the main filter
+           panel. The active start view is highlighted with a ✓. The modal card
+           is always white, so no dark-theme variants are needed. */
+        .tm_sv_grid {
+            display: grid !important;
+            grid-template-columns: auto 1fr !important;
+            gap: 11px 12px !important;
+            align-items: baseline !important;
+            margin: 2px 0 18px 0 !important;
+        }
+        .tm_sv_rowlabel {
+            text-align: right !important;
+            color: #6c757d !important;
+            font-size: 12px !important;
+            white-space: nowrap !important;
+        }
+        .tm_sv_chips { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; }
+        .tm_sv_pick {
+            border: 1px solid #d5d9de !important;
+            background: #f6f8fa !important;
+            color: #24292f !important;
+            border-radius: 15px !important;
+            padding: 3px 12px !important;
+            font-size: 13px !important;
+            cursor: pointer !important;
+            font-family: inherit !important;
+        }
+        .tm_sv_pick:hover:not(:disabled) { border-color: #0073bb !important; color: #0073bb !important; }
+        .tm_sv_pick:disabled { opacity: 0.5 !important; cursor: not-allowed !important; }
+        .tm_sv_pick.tm_sv_active {
+            border-color: #0073bb !important;
+            background: #e7f2fb !important;
+            color: #0073bb !important;
+            font-weight: 600 !important;
+        }
+        .tm_sv_footer {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            border-top: 1px solid #eee !important;
+            padding-top: 14px !important;
+        }
+        .tm_sv_footer_left { display: flex !important; gap: 8px !important; }
+        .tm_sv_btn {
+            padding: 7px 14px !important;
+            border: 1px solid #ccc !important;
+            background: white !important;
+            color: #16191f !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 13px !important;
+            font-family: inherit !important;
+        }
+        .tm_sv_btn:hover:not(:disabled) { border-color: #0073bb !important; color: #0073bb !important; }
+        .tm_sv_btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
 
         body.tm_theme_dark .tm_account_id {
             background-color: #4a5568 !important;
@@ -3445,6 +4215,7 @@ import {
   await RegionsManager.loadCache();
   await RegionsManager.loadLastRegionsCache();
   await AccountNamesManager.loadCache();
+  await AccountTagsManager.loadCache();
   await AssumeProfilesManager.loadCache();
   jumpRecentsCache = await StorageManager.getJumpRecents();
   jumpPinnedCache = await StorageManager.getJumpPinned();
@@ -3498,6 +4269,7 @@ import {
                 <div class="tm_role_info">
                     <button type="button" class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
                     <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="${safeAwsName}">${safeAccountName}</div>
+                    <div class="tm_tag_cell">${tagChipHTML(accountInfo.id)}</div>
                     <div class="tm_role_name">${safeRoleName}</div>
                 </div>
                 <div class="tm_role_buttons">
@@ -3506,6 +4278,7 @@ import {
                     ${RegionsManager.generateRegionDropdownHTML(roleArn)}
                     <button type="button" class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in — ⌘/Ctrl-click or middle-click toggles new tab">Sign In</button>
                 </div>
+                <div class="tm_tag_editor" data-account-id="${safeAccountId}">${tagEditorHTML(accountInfo.id)}</div>
             `;
 
       $role.append(roleInfoHTML);
@@ -3637,6 +4410,76 @@ import {
     await FavoritesManager.toggleFavorite(roleArn, accountName, roleName);
   });
 
+  // --- Account tags: chip toggles the row's inline editor; ✕ removes a tag;
+  //     "+ tag" opens an autocompleted input (Enter/comma commit, Esc cancels,
+  //     focusout commits any pending value). Tags are per-account, so edits
+  //     refresh every role row of that account via updateTagUIForAccount. ---
+  $("body").on("click", ".tm_tag_chip", function (e) {
+    e.preventDefault();
+    const row = this.closest(".saml-role");
+    if (!row) return;
+    const open = row.classList.toggle("tm_tags_open");
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      // Opening a row drops straight into a ready input — no second click.
+      const addBtn = row.querySelector(".tm_tag_add");
+      if (addBtn) openTagInput(addBtn);
+    } else {
+      // Collapsing commits any pending text and restores the button.
+      const input = row.querySelector(".tm_tag_input");
+      if (input) input.blur();
+    }
+  });
+
+  // ✕ on a tag pill — two-step confirm, matching the shortcut chips and jump
+  // rows: first click arms the pill (red), a second click removes the tag.
+  $("body").on("click", ".tm_tag_del", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const del = this;
+    twoStepDelete($(this).closest(".tm_tag_pill"), this, async () => {
+      const id = del.getAttribute("data-account-id");
+      await AccountTagsManager.removeTag(id, del.getAttribute("data-tag"));
+      updateTagUIForAccount(id);
+    });
+  });
+
+  $("body").on("click", ".tm_tag_add", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    openTagInput(this);
+  });
+
+  $("body").on("keydown", ".tm_tag_input", async function (e) {
+    const id = this.getAttribute("data-account-id");
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      const val = this.value.trim();
+      this.value = "";
+      if (val) {
+        await AccountTagsManager.addTag(id, val);
+        updateTagUIForAccount(id);
+        populateTagVocab();
+        this.focus();
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      this.value = "";
+      this.replaceWith(makeTagAddButton(id));
+    }
+  });
+
+  $("body").on("focusout", ".tm_tag_input", async function () {
+    if (!this.isConnected) return; // already removed by Enter/Escape
+    const id = this.getAttribute("data-account-id");
+    const val = this.value.trim();
+    this.replaceWith(makeTagAddButton(id));
+    if (val) {
+      await AccountTagsManager.addTag(id, val);
+      updateTagUIForAccount(id);
+    }
+  });
+
   // --- Handle theme toggle ---
   $("body").on("click", CONFIG.SELECTORS.THEME_TOGGLE, async function (e) {
     e.preventDefault();
@@ -3684,6 +4527,11 @@ import {
   $("body").on("click", "#tm_manage_account_names", function (e) {
     e.preventDefault();
     showAccountNamesModal();
+  });
+
+  $("body").on("click", "#tm_manage_account_tags", function (e) {
+    e.preventDefault();
+    showAccountTagsModal();
   });
 
   $("body").on("click", "#tm_manage_assume_profiles", function (e) {
@@ -3761,11 +4609,49 @@ import {
     else pinJump(org, account);
   });
 
-  // ✕ deletes a jump row (from recents or pinned).
+  // --- Two-step confirm delete, shared by saved-view chips and jump rows.
+  // First click on a ✕ arms its element (.tm_confirm_del → red "click again");
+  // a second click deletes. Auto-cancels after a few seconds, or on any click
+  // that isn't inside the armed element. delEl is the ✕ whose tooltip we flip.
+  let confirmDelArmTimer = null;
+  const disarmConfirmDelete = () => {
+    if (!confirmDelArmTimer) return; // nothing armed → the class can't be present
+    clearTimeout(confirmDelArmTimer);
+    confirmDelArmTimer = null;
+    $(".tm_confirm_del").removeClass("tm_confirm_del");
+  };
+  const armConfirmDelete = ($el, delEl) => {
+    disarmConfirmDelete();
+    $el.addClass("tm_confirm_del");
+    if (delEl && delEl.setAttribute) delEl.setAttribute("title", "Click again to remove");
+    confirmDelArmTimer = setTimeout(disarmConfirmDelete, 3500);
+  };
+  // Drive a ✕ click's two-step: first click arms $armEl (red "click again"),
+  // second confirms. Shared by the shortcut chips, jump rows, and tag pills.
+  const twoStepDelete = ($armEl, delEl, onConfirm) => {
+    if ($armEl.hasClass("tm_confirm_del")) {
+      disarmConfirmDelete();
+      onConfirm();
+    } else {
+      armConfirmDelete($armEl, delEl);
+    }
+  };
+  // Any click not inside the armed element cancels the pending delete.
+  $("body").on("click", function (e) {
+    const t = e.target;
+    if (t && t.closest && t.closest(".tm_confirm_del")) return;
+    disarmConfirmDelete();
+  });
+
+  // ✕ deletes a jump row (from recents or pinned) — two-step confirm, matching
+  // the saved-view chips: first click arms the ✕ (red), second click deletes.
   $("body").on("click", ".tm_jump_del", function (e) {
     e.preventDefault();
-    const $row = $(this).closest(".tm_jump_recent");
-    deleteJump($row.attr("data-org"), $row.attr("data-account"));
+    const $del = $(this);
+    twoStepDelete($del, this, () => {
+      const $row = $del.closest(".tm_jump_recent");
+      deleteJump($row.attr("data-org"), $row.attr("data-account"));
+    });
   });
 
   // Close the jump popover on any click outside it (and outside its pill).
@@ -3816,7 +4702,8 @@ import {
                 ">
                     <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Custom Shortcuts</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important;">
-                        Create shortcuts with a label and search string. Each line: <code>Label: "search text"</code>
+                        Create shortcuts with a label and search string. Each line: <code>Label: "search text"</code>.
+                        Shortcuts saved from the search box also remember their filter chips — those are kept as long as you don't rename the label.
                     </p>
                     <textarea id="tm_shortcuts_input" style="
                         width: 100% !important;
@@ -3868,15 +4755,28 @@ Account 123456789012: &quot;123456789012&quot;">${currentShortcuts}</textarea>
       if (input) {
         const lines = input.split("\n").filter((line) => line.trim());
         for (const line of lines) {
-          const match = line.match(/^(.+?):\s*["'](.+?)["']\s*$/);
+          // .*? (not .+?) so a filters-only view, which renders as Label: "",
+          // survives a round-trip through this editor instead of being dropped.
+          const match = line.match(/^(.+?):\s*["'](.*?)["']\s*$/);
           if (match) {
+            const label = match[1].trim();
+            // Views saved from the search box also carry filter chips, which
+            // this text format can't express — keep them while the label matches.
+            const prev = customShortcutsCache.find((s) => s.label === label);
             shortcuts.push({
-              label: match[1].trim(),
+              label,
               search: match[2].trim(),
+              filters: prev ? prev.filters : undefined,
             });
           }
         }
       }
+      // Re-issue ids so two labels that normalise the same don't share a chip.
+      const takenIds = new Set();
+      shortcuts.forEach((s) => {
+        s.id = ShortcutsManager.uniqueId(s.label, takenIds);
+        takenIds.add(s.id);
+      });
 
       const saved = await ShortcutsManager.saveShortcuts(shortcuts);
       if (saved) {
@@ -4081,6 +4981,71 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         $("#tm_account_names_modal").remove();
         refreshAccountNames();
         showToast("Account names updated.", "success", CONFIG.TOAST_DURATION);
+      }
+    });
+  };
+
+  // Re-render every row's tag chip + pills after a bulk edit, then re-filter.
+  const refreshAllTagUI = () => {
+    document.querySelectorAll(".tm_tag_chip[data-account-id]").forEach(paintTagChip);
+    document.querySelectorAll(".tm_tag_editor[data-account-id] .tm_tag_pills").forEach(paintTagPills);
+    renderTagFilterRow();
+    FilterManager.applyFilters(true);
+  };
+
+  const showAccountTagsModal = () => {
+    const current = formatAccountTagLines(accountTagsCache);
+    const modalHTML = `
+            <div id="tm_account_tags_modal" style="
+                position: fixed !important; top: 0 !important; left: 0 !important;
+                right: 0 !important; bottom: 0 !important;
+                background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+            ">
+                <div style="
+                    background: white !important; border-radius: 8px !important; padding: 20px !important;
+                    max-width: 520px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
+                ">
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Account Tags</h3>
+                    <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
+                        Attach free-text tags to accounts so you can find them by concept,
+                        not just by name. One account per line:
+                        <code>123456789012: palo alto, firewall, pci</code>. Tags may contain
+                        spaces, and searching any tag surfaces the account. Leave the box empty
+                        to clear all tags.
+                    </p>
+                    <textarea id="tm_account_tags_input" style="
+                        width: 100% !important; height: 220px !important; border: 1px solid #ccc !important;
+                        border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
+                        font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
+                    " placeholder="123456789012: palo alto, firewall&#10;999999999999: splunk, siem">${escapeHtml(current)}</textarea>
+                    <div style="margin-top: 15px !important; text-align: right !important;">
+                        <button id="tm_account_tags_cancel" style="
+                            padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
+                            background: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Cancel</button>
+                        <button id="tm_account_tags_save" style="
+                            padding: 8px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                            color: white !important; border-radius: 4px !important; cursor: pointer !important;
+                        ">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    $("body").append(modalHTML);
+
+    $("#tm_account_tags_cancel, #tm_account_tags_modal").on("click", function (e) {
+      if (e.target === this) $("#tm_account_tags_modal").remove();
+    });
+
+    $("#tm_account_tags_save").on("click", async function () {
+      const map = parseAccountTagLines($("#tm_account_tags_input").val());
+      const saved = await AccountTagsManager.save(map);
+      if (saved) {
+        $("#tm_account_tags_modal").remove();
+        refreshAllTagUI();
+        showToast("Account tags updated.", "success", CONFIG.TOAST_DURATION);
       }
     });
   };
@@ -5145,6 +6110,19 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const $openModal = $('[id$="_modal"]').first();
     const modalOpen = $openModal.length > 0;
 
+    // Option/Alt focuses the search box on PRESS, so you can hold it and flow
+    // straight into Option+arrow suggestion nav in one gesture. Skipped while a
+    // modal is up, while typing in another field, and for Cmd/Ctrl combos so
+    // system shortcuts (⌘⌥I and friends) never get hijacked.
+    if (
+      e.key === "Alt" && !e.repeat && !modalOpen &&
+      !e.metaKey && !e.ctrlKey &&
+      !isTypingTarget(document.activeElement)
+    ) {
+      const $sf = $searchInput();
+      if ($sf.length) $sf.trigger("focus");
+    }
+
     // Esc — universal close/clear.
     if (e.key === "Escape") {
       if (jumpPopoverOpen) {
@@ -5153,6 +6131,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       }
       if (modalOpen) {
         $openModal.remove();
+        return;
+      }
+      // First Esc cancels a suggestion highlight (box stays open); a second Esc
+      // then blurs the box via the isTypingTarget branch below.
+      if (searchSuggestHighlight >= 0 && document.activeElement && document.activeElement.id === "tm_search_input") {
+        searchSuggestHighlight = -1;
+        renderSearchSuggest();
         return;
       }
       if ($(".saml-role.tm_kb_selected").length) {
@@ -5198,6 +6183,19 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       return; // typing somewhere else (e.g. modal textarea) — don't hijack arrows
     }
 
+    // Alt/Option + arrows walk the autocomplete chips in all four directions;
+    // plain arrows keep driving the results list, so list nav is unchanged.
+    // e.altKey is true for Option (Mac) and Alt (Windows/Linux) alike.
+    if (
+      e.altKey &&
+      (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+      document.activeElement && document.activeElement.id === "tm_search_input" &&
+      searchSuggestItems.length
+    ) {
+      e.preventDefault();
+      moveSuggestByArrow(e.key);
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       moveKbSelection(+1);
@@ -5209,19 +6207,27 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       return;
     }
     if (e.key === "Enter") {
-      // Click Sign In on selected, or on the first visible if no selection.
-      let $sel = $(".saml-role.tm_kb_selected").first();
-      if ($sel.length === 0) {
-        const rows = visibleRoles();
-        if (rows.length === 0) return;
-        $sel = $(rows[0]);
+      e.preventDefault();
+      // A suggestion highlighted via Alt/Option+↑↓ is inserted — this is the only
+      // way Enter touches the autocomplete, so it can never sign in unexpectedly.
+      if (
+        searchSuggestHighlight >= 0 &&
+        document.activeElement && document.activeElement.id === "tm_search_input" &&
+        searchSuggestItems[searchSuggestHighlight] != null
+      ) {
+        acceptSearchSuggest(searchSuggestItems[searchSuggestHighlight]);
+        return;
       }
-      const $btn = $sel.find(".tm_signin_button");
+      // Otherwise Enter acts ONLY on a row you've explicitly arrow-selected that
+      // is STILL visible. No visible selection → Enter does nothing: it never
+      // auto-signs-in from a lone match, and never fires on a filtered-out row
+      // (a stale .tm_kb_selected on a now-hidden row was the sign-in regression).
+      const rows = visibleRoles();
+      const sel = $(".saml-role.tm_kb_selected").get().find((el) => rows.includes(el));
+      if (!sel) return;
+      const $btn = $(sel).find(".tm_signin_button");
       if ($btn.length) {
-        e.preventDefault();
-        // ⌘/Ctrl+Enter sends the modifier through so the sign-in opens in a
-        // new tab, mirroring the mouse-click behaviour. jQuery's synthetic
-        // click event accepts our own metaKey/ctrlKey on the original event.
+        // ⌘/Ctrl+Enter carries the modifier so the sign-in opens in a new tab.
         const evt = $.Event("click", { metaKey: e.metaKey, ctrlKey: e.ctrlKey });
         $btn.trigger(evt);
       }
@@ -5318,9 +6324,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           <h3 style="margin: 0 0 12px 0 !important; color:#16191f !important; font-size: 18px !important;">Console Hopper</h3>
           ${intro}
           ${sectionHTML("Filter, search, favorite",
-            `The toolbar at the top lets you narrow the role list by organisation, environment, account type or role name, plus full-text search. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly.`)}
+            `Narrow the role list from the toolbar — by organisation, environment, account type, role name or <strong>tag</strong> — or use the search box. Search is <strong>separator-insensitive</strong> (<code>test 123</code> finds <code>test123</code>) and understands <strong>scoped terms</strong>: <code>tag:</code>, <code>role:</code>, <code>name:</code>, <code>account:</code>, <code>env:</code>, <code>type:</code>, <code>org:</code>. Combine them with a space (<em>and</em>), a comma (<em>or</em>) or a leading <code>-</code> (<em>exclude</em>), with <code>"quotes"</code> for an exact phrase. Focus the box and it pops out with click-to-insert suggestions and a live match count. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly.`)}
+          ${sectionHTML("Account tags",
+            `Tag accounts with your own labels — <code>palo-alto</code>, <code>prod-network</code>, a ticket number — and organise by them. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Account Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
+          ${sectionHTML("Save a search as a Shortcut",
+            `Built a query and filter set you'll want again? Click <strong>☆ save as shortcut</strong> in the search card and name it — it becomes a chip in the <em>Shortcuts</em> row, and one click re-applies the whole view (search <em>and</em> filters). Remove one with its <strong>✕</strong> — click to arm, click again to confirm.`)}
           ${sectionHTML("Start view",
-            `Have the picker open with your filters already applied. Set filters/search, then use <em>Start View</em> in the side menu — or one click on <strong>★ Start with my Favorites</strong> to open showing only your starred roles. It re-applies automatically every load; <em>Clear</em> removes it (your favorites stay put).`)}
+            `Have the picker open on a view every load. Open <em>Start View</em> in the side menu and pick one chip — <strong>★ Favorites</strong>, <strong>↻ Recent</strong>, one of your saved <em>Shortcuts</em>, or a <em>Tag</em>. The active choice is highlighted; <strong>Save current filters</strong> snapshots whatever you have on right now, and <strong>Clear</strong> removes it (your favorites stay put).`)}
           ${sectionHTML("Reorder by drag",
             `Drag any role row to reposition it; the order persists across sessions. <strong>Reorder is disabled while any filter or search is active</strong> — otherwise you'd only be sorting visible rows, which gives surprising results. Clear filters first. <em>Reset Order</em> in the side menu restores AWS's default order.`)}
           ${sectionHTML("Deep-link into a service",
@@ -5378,6 +6388,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     e.preventDefault();
     const isMac = /Mac/i.test(navigator.platform);
     const cmd = isMac ? "⌘" : "Ctrl";
+    const alt = isMac ? "⌥" : "Alt";
     const modalHTML = `
       <div id="tm_kb_help_modal" style="
           position: fixed !important;
@@ -5397,8 +6408,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         ">
           <h3 style="margin: 0 0 14px 0 !important; color: #16191f !important;">Keyboard Shortcuts</h3>
           <table style="width: 100% !important; border-collapse: collapse !important; font-size: 13px !important;">
-            <tr><td style="padding: 6px 0 !important;"><kbd>/</kbd> or <kbd>${cmd}</kbd>+<kbd>K</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Focus the search box</td></tr>
+            <tr><td style="padding: 6px 0 !important;"><kbd>/</kbd>, <kbd>${cmd}</kbd>+<kbd>K</kbd> or tap <kbd>${alt}</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Focus the search box</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>↑</kbd> / <kbd>↓</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Move selection through visible roles</td></tr>
+            <tr><td style="padding: 6px 0 !important;"><kbd>${alt}</kbd>+<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Move through search suggestions (<kbd>Enter</kbd> adds the highlighted one)</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>Enter</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Sign in to the selected role</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>${cmd}</kbd>+<kbd>Enter</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Sign in, toggling new-tab vs. your default (also: ${cmd}-click / middle-click)</td></tr>
             <tr><td style="padding: 6px 0 !important;"><kbd>Esc</kbd></td><td style="padding: 6px 0 !important; color: #6c757d !important;">Close modal / clear selection / clear filters</td></tr>
@@ -6124,6 +7136,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const isPlainStringMap = (v) =>
         v && typeof v === "object" && !Array.isArray(v) &&
         Object.values(v).every((x) => typeof x === "string");
+      const isAccountTagMap = (v) =>
+        v && typeof v === "object" && !Array.isArray(v) &&
+        Object.values(v).every((arr) =>
+          Array.isArray(arr) && arr.every((t) => typeof t === "string"));
 
       const SK = CONFIG.STORAGE_KEYS;
       const validators = {
@@ -6140,6 +7156,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.LAST_REGION]:  isPlainStringMap,
         [SK.REGION_LIST]:  isRegionList,
         [SK.ACCOUNT_NAMES]: isPlainStringMap,
+        [SK.ACCOUNT_TAGS]: isAccountTagMap,
         [SK.ENV_PATTERNS]: isPatternEntryList,
         [SK.ORG_PATTERNS]: isPatternEntryList,
         [SK.TYPE_PATTERNS]: isPatternEntryList,
@@ -6555,10 +7572,35 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   $("body").on("click", ".tm_filter_button", function (e) {
     e.preventDefault();
     const $button = $(this);
-    const group = $button.data("group");
-    const filter = $button.data("filter");
+    const group = String($button.data("group"));
+    // .data() mirrors jQuery's coercion, so a numeric tag ("123") or one named
+    // "true" comes back as a Number/Boolean and then fails the string compare in
+    // matchesFilters (rowTags are strings). Force it back to a string at the one
+    // place it enters activeFilters.
+    const filter = String($button.data("filter"));
 
     debug(`Filter clicked: ${group}:${filter}`);
+
+    // A custom shortcut is a saved VIEW, not a single toggle: restore its
+    // search + filter chips wholesale (clicking the active one clears).
+    if ($button.hasClass("tm_custom_shortcut")) {
+      const onDelete = e.target && e.target.closest && e.target.closest(".tm_shortcut_del");
+      if (onDelete) {
+        // Two-step: first ✕ click arms (red), second removes. Any other click
+        // (below, or the disarm handler) cancels — so it can't fire by accident.
+        twoStepDelete($button, onDelete, () => {
+          const sc = ShortcutsManager.findByFilter(filter);
+          const label = sc ? sc.label : "";
+          ShortcutsManager.remove(sc).then((ok) => {
+            if (ok) showToast(`Removed shortcut "${label}"`, "info", CONFIG.TOAST_DURATION_SHORT);
+          });
+        });
+        return;
+      }
+      disarmConfirmDelete(); // a normal chip click cancels any pending delete
+      ShortcutsManager.applyShortcut(ShortcutsManager.findByFilter(filter));
+      return;
+    }
 
     $button.toggleClass("active");
 
@@ -6581,13 +7623,267 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // would break searches for & or other meta-characters.
   getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT).on("input", function () {
     searchTerm = ($(this).val() || "").trim();
-    syncFieldClear("tm_search_input", "tm_search_container");
+    searchSuggestHighlight = -1; // typing starts a fresh token — drop any highlight
+    // Typing changes the result set, so a prior arrow-selection is stale — drop it
+    // (also stops it lingering on a row the filter hides, then re-appearing).
+    $(".saml-role.tm_kb_selected").removeClass("tm_kb_selected");
+    syncFieldClear("tm_search_input", "tm_search_field");
     if (searchTerm.length >= 2 || searchTerm.length === 0) {
       FilterManager.applyFilters();
     }
   });
 
-  // ✕ clears the account search and re-shows the full list.
+  // --- Search autocomplete: a click-to-insert suggestion strip (field prefixes,
+  // then values for that field) plus an always-visible syntax legend. Keyboard
+  // is untouched — chips are inserted by click, so Enter/arrows behave exactly
+  // as elsewhere. ---
+  // "id" is deliberately absent — it's an alias of "account" and only doubled up
+  // the chips. Typing it by hand still parses (see KNOWN_QUERY_FIELDS).
+  const SEARCH_FIELD_SUGGESTIONS = ["tag", "role", "name", "account", "env", "type", "org"];
+  const searchFieldValues = (field) => {
+    switch (field) {
+      case "tag": case "tags": return AccountTagsManager.allTags();
+      case "env": case "environment":
+        return EnvironmentsManager.entries().map((e) => e.label).filter(Boolean);
+      case "type": return AccountTypesManager.entries().map((e) => e.label).filter(Boolean);
+      case "org": case "organization": case "organisation":
+        return OrganizationsManager.entries().map((e) => e.label).filter(Boolean);
+      case "role": {
+        const set = new Set();
+        document.querySelectorAll("#tm_role_list .tm_role_name").forEach((el) => {
+          const t = el.textContent.trim();
+          if (t) set.add(t);
+        });
+        return [...set].sort((a, b) => a.localeCompare(b));
+      }
+      default: return [];
+    }
+  };
+  // Describe the token being edited (around the cursor) so we know whether to
+  // suggest field prefixes or values, and where to splice a chosen suggestion.
+  const searchSuggestContext = () => {
+    const input = document.getElementById("tm_search_input");
+    if (!input) return null;
+    const value = input.value;
+    const cur = input.selectionStart == null ? value.length : input.selectionStart;
+    let start = cur;
+    while (start > 0 && !/\s/.test(value[start - 1])) start--;
+    let end = cur;
+    while (end < value.length && !/\s/.test(value[end])) end++;
+    let token = value.slice(start, end);
+    let neg = "";
+    if (token[0] === "-") { neg = "-"; token = token.slice(1); }
+    const colon = token.indexOf(":");
+    if (colon > 0 && KNOWN_QUERY_FIELDS.has(token.slice(0, colon).toLowerCase())) {
+      const field = token.slice(0, colon).toLowerCase();
+      const valPart = token.slice(colon + 1);
+      const frag = (valPart.split(",").pop() || "").toLowerCase();
+      const items = searchFieldValues(field)
+        .filter((v) => v.toLowerCase().includes(frag))
+        .slice(0, 8);
+      return { kind: "value", start, end, neg, field, valPart, items };
+    }
+    const t = token.toLowerCase();
+    const items = SEARCH_FIELD_SUGGESTIONS.filter((f) => t === "" || f.startsWith(t)).slice(0, 8);
+    return { kind: "field", start, end, neg, items };
+  };
+  // Free-text fields (account id / name) have no enumerable values, so rather
+  // than a dead-end "no matching values" we hint at what to type next.
+  const SEARCH_VALUE_HINTS = {
+    account: "type an account id", acct: "type an account id",
+    id: "type an account id", name: "type text to match",
+  };
+  // "N matches" reflects the post-filter visible-row count; blank when the box
+  // is empty. Only visible inside the expanded card (CSS :focus-within).
+  const updateSearchMatchCount = () => {
+    const el = document.getElementById("tm_search_matchcount");
+    const foot = document.getElementById("tm_search_foot");
+    // The footer earns its border only when there is a view worth saving or
+    // counting — otherwise an empty search box shows a stray divider.
+    if (foot) foot.classList.toggle("tm_foot_on", StartViewManager.hasCurrent());
+    if (!el) return;
+    const input = document.getElementById("tm_search_input");
+    const q = input ? input.value.trim() : "";
+    if (!q) { el.textContent = ""; return; }
+    // lastVisibleCount was just set by applyFilters (which runs before this on
+    // every input) — reuse it instead of re-scanning every .saml-role.
+    const n = lastVisibleCount;
+    el.textContent = n === 0 ? "no matches" : n === 1 ? "1 match" : `${n} matches`;
+  };
+  // Visibility of the whole card (input + suggest + count) is owned by the
+  // #tm_search_container:focus-within CSS — this only fills in the content.
+  // Alt/Option (Mac shows ⌥, Windows shows Alt) + arrows walk the chips below.
+  const SUGGEST_KEYS_HINT = `<div class="tm_suggest_keys">${IS_MAC ? "⌥↑↓" : "Alt+↑↓"} move · ↵ add</div>`;
+  const renderSearchSuggest = () => {
+    const box = document.getElementById("tm_search_suggest");
+    const input = document.getElementById("tm_search_input");
+    if (!box || !input) return;
+    const ctx = searchSuggestContext();
+    searchSuggestItems = ctx && ctx.items ? ctx.items : [];
+    // A highlight can outlive its list (query narrowed) — keep it in range.
+    if (searchSuggestHighlight >= searchSuggestItems.length) {
+      searchSuggestHighlight = searchSuggestItems.length - 1;
+    }
+    const chips = searchSuggestItems.length
+      ? searchSuggestItems.map((it, i) => {
+          const label = ctx.kind === "field" ? `${escapeHtml(it)}:` : escapeHtml(it);
+          const active = i === searchSuggestHighlight ? " tm_suggest_active" : "";
+          return `<button type="button" class="tm_suggest_chip${active}" data-val="${escapeHtml(it)}">${label}</button>`;
+        }).join("")
+      : "";
+    const noneMsg = ctx && ctx.kind === "value" && SEARCH_VALUE_HINTS[ctx.field]
+      ? escapeHtml(SEARCH_VALUE_HINTS[ctx.field])
+      : "no matching values";
+    box.innerHTML =
+      (chips
+        ? `<div class="tm_suggest_chips">${chips}</div>`
+        : `<div class="tm_suggest_none">${noneMsg}</div>`) +
+      `<div class="tm_suggest_legend"><b>prod dev</b> both · <b>prod,dev</b> either · <b>-dev</b> exclude · <b>"a b"</b> exact</div>` +
+      (chips ? SUGGEST_KEYS_HINT : "");
+    updateSearchMatchCount();
+  };
+  // Move the chip highlight with Alt/Option + arrows. Left/Right step through the
+  // chips in order; Up/Down jump to the nearest chip in the adjacent visual row
+  // (chips wrap into a grid, so a purely linear ↑↓ reads as ←→ — the "weird" bug).
+  const moveSuggestByArrow = (key) => {
+    const chips = [...document.querySelectorAll("#tm_search_suggest .tm_suggest_chip")];
+    const n = chips.length;
+    if (!n) return;
+    const idx = searchSuggestHighlight;
+    if (idx < 0) {
+      searchSuggestHighlight = (key === "ArrowUp" || key === "ArrowLeft") ? n - 1 : 0;
+      renderSearchSuggest();
+      return;
+    }
+    if (key === "ArrowRight") { searchSuggestHighlight = (idx + 1) % n; renderSearchSuggest(); return; }
+    if (key === "ArrowLeft") { searchSuggestHighlight = (idx - 1 + n) % n; renderSearchSuggest(); return; }
+    // Up / Down: nearest chip in the adjacent row by horizontal centre.
+    const rects = chips.map((c) => c.getBoundingClientRect());
+    const cur = rects[idx];
+    const curMid = cur.left + cur.width / 2;
+    const rowOf = (r) => Math.round(r.top);
+    const curRow = rowOf(cur);
+    const dir = key === "ArrowDown" ? 1 : -1;
+    let best = -1, bestRow = Infinity, bestDX = Infinity;
+    for (let i = 0; i < n; i++) {
+      const rowDelta = (rowOf(rects[i]) - curRow) * dir;
+      if (rowDelta <= 0) continue; // must be in the arrow's direction
+      const dx = Math.abs((rects[i].left + rects[i].width / 2) - curMid);
+      if (rowDelta < bestRow || (rowDelta === bestRow && dx < bestDX)) {
+        best = i; bestRow = rowDelta; bestDX = dx;
+      }
+    }
+    if (best >= 0) { searchSuggestHighlight = best; renderSearchSuggest(); }
+  };
+  const acceptSearchSuggest = (val) => {
+    const input = document.getElementById("tm_search_input");
+    const ctx = searchSuggestContext();
+    if (!input || !ctx || val == null) return;
+    searchSuggestHighlight = -1; // fresh token after insert — no stale highlight
+    let insert;
+    if (ctx.kind === "field") {
+      insert = `${ctx.neg}${val}:`;
+    } else {
+      const parts = ctx.valPart.split(",");
+      parts[parts.length - 1] = val;
+      insert = `${ctx.neg}${ctx.field}:${parts.join(",")} `;
+    }
+    const before = input.value.slice(0, ctx.start);
+    const after = input.value.slice(ctx.end);
+    input.value = before + insert + after;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    input.dispatchEvent(new Event("input", { bubbles: true })); // reuse the search handler
+    input.focus();
+    renderSearchSuggest();
+  };
+  const $si = getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT);
+  $si.on("focus", function () {
+    searchSuggestHighlight = -1;
+    closeShortcutSave(false); // never re-open the card mid-rename
+    renderSearchSuggest();
+  });
+  $si.on("input", renderSearchSuggest);
+  $si.on("keyup", renderSearchSuggest);
+  // No blur handler needed: the card and its suggest/count collapse via the
+  // #tm_search_container:focus-within CSS the moment focus leaves the input.
+  // mousedown keeps the input focused (no blur), so the strip survives the click.
+  $("body").on("mousedown", ".tm_suggest_chip", function (e) { e.preventDefault(); });
+  $("body").on("click", ".tm_suggest_chip", function (e) {
+    e.preventDefault();
+    acceptSearchSuggest(this.getAttribute("data-val"));
+  });
+
+  // --- Save the current search + filters as a named Shortcut, inline in the
+  // card. Writing the array directly (rather than through the modal's
+  // `Label: "search"` text format) is what lets a quoted/exact query round-trip.
+  const suggestShortcutName = () => {
+    const input = document.getElementById("tm_search_input");
+    const q = input ? input.value.trim() : "";
+    // Drop the field: prefixes and quotes so the default name reads naturally.
+    const words = q
+      .replace(/-?[A-Za-z]+:/g, " ")
+      .replace(/["',]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 4)
+      .join(" ");
+    if (words) return words;
+    const f = activeFilters;
+    const chips = [...f.tag, ...f.env, ...f.type, ...f.org, ...f.role].filter(Boolean);
+    return chips.slice(0, 3).join(" ") || "My view";
+  };
+  const closeShortcutSave = (refocus) => {
+    const wrap = document.getElementById("tm_search_save");
+    if (wrap) wrap.classList.remove("tm_saving");
+    const input = document.getElementById("tm_search_input");
+    if (refocus && input) input.focus();
+  };
+  const commitShortcutSave = async () => {
+    const name = document.getElementById("tm_search_save_name");
+    if (!name) return;
+    const label = name.value.trim();
+    if (!label) { name.focus(); return; }
+    const ok = await ShortcutsManager.addCurrent(label);
+    closeShortcutSave(true);
+    if (ok) showToast(`Saved shortcut "${label}"`, "success", CONFIG.TOAST_DURATION_SHORT);
+  };
+  // Keep focus inside the card on mousedown so :focus-within never collapses it
+  // mid-click (same trick as the suggest chips).
+  $("body").on("mousedown", "#tm_search_save_btn, #tm_search_save_go", function (e) {
+    e.preventDefault();
+  });
+  $("body").on("click", "#tm_search_save_btn", function (e) {
+    e.preventDefault();
+    const wrap = document.getElementById("tm_search_save");
+    const name = document.getElementById("tm_search_save_name");
+    if (!wrap || !name) return;
+    wrap.classList.add("tm_saving");
+    name.value = suggestShortcutName();
+    name.focus();
+    name.select();
+  });
+  $("body").on("click", "#tm_search_save_go", function (e) {
+    e.preventDefault();
+    commitShortcutSave();
+  });
+  // stopPropagation keeps Enter/Esc away from the global role-list shortcuts.
+  $("body").on("keydown", "#tm_search_save_name", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commitShortcutSave();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeShortcutSave(true);
+    }
+  });
+
+  // ✕ clears the account search and re-shows the full list. mousedown-
+  // preventDefault keeps focus on the input so the pop-out card doesn't collapse
+  // (focus-within) before the click lands — same trick as the suggest chips.
+  $("body").on("mousedown", "#tm_search_clear", function (e) { e.preventDefault(); });
   $("body").on("click", "#tm_search_clear", function (e) {
     e.preventDefault();
     const inp = document.getElementById("tm_search_input");
@@ -6597,7 +7893,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     }
     searchTerm = "";
     FilterManager.applyFilters();
-    syncFieldClear("tm_search_input", "tm_search_container");
+    syncFieldClear("tm_search_input", "tm_search_field");
+    renderSearchSuggest();
   });
 
   // Listen for system theme changes
@@ -6689,7 +7986,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     console.error("Error loading tab group mode:", e);
   }
   syncGroupControl();
-  syncFieldClear("tm_search_input", "tm_search_container");
+  syncFieldClear("tm_search_input", "tm_search_field");
 
   // Center the side-menu pull-tab on the filter panel (not on the tall menu it
   // belongs to, which pushed the tab well below the panel). Re-measured on any

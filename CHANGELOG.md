@@ -3,6 +3,56 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.3.0 — 2026-07-22
+
+### Added
+
+- **Account tags.** Give any account one or more short tags and organise your
+  list by *your* vocabulary, not just AWS's names. A small tag chip sits on each
+  role row — click it to add or remove tags inline (with autocomplete from tags
+  you already use), or manage them in bulk from **Account Tags** in the side
+  menu. Tags join the search text, get their own filter row (shown from the very
+  first tag), and are searchable with `tag:`.
+
+- **A far more powerful search box.** The search field **pops out into a roomy
+  card** when focused, with click-to-insert suggestions and a syntax legend.
+  Matching is now **separator-insensitive** (`test 123` finds `test123`), with
+  `"quotes"` for an exact phrase. Scope a term to a field with **`field:value`**
+  — `tag:`, `role:`, `name:`, `account:`, `env:`, `type:`, `org:` — and combine
+  terms with a space (**and**), a comma (**or**), or a leading `-` to
+  **exclude**. A live **match count** shows how many roles remain. When a tag
+  matches, its chip lights up.
+
+- **Save a search as a Shortcut.** Built a useful query + filter combination?
+  Click **☆ save as shortcut** in the search card, name it, and it becomes a chip
+  in the Shortcuts row — one click re-applies the whole view (search *and*
+  filters).
+
+- **Start View, redesigned and expanded.** The Start View dialog is now one tidy
+  set of chips grouped by *Views* (Favorites / Recent), *Shortcuts*, and *Tags* —
+  pick any one and the picker opens on it every load. The active choice is
+  highlighted, and **Save current filters** / **Clear** sit in the footer.
+
+### Changed
+
+- **Enter is now unambiguous.** Pressing Enter signs in **only** to a role you've
+  explicitly selected with the arrow keys — never to an arbitrary first result.
+  Type to filter, arrow to the row you want, then Enter. Use **⌥/Alt + ↑ ↓** to
+  move through the search suggestions instead, and Enter to add the highlighted
+  one. Tapping **⌥/Alt** jumps focus to the search box.
+
+- **Consistent "click again to remove" deletes.** Removing a saved shortcut, a
+  jump-history entry, or a tag all behave the same way now: the first **✕** click
+  arms it (turns red), a second confirms, and it auto-cancels if you click away —
+  clear, but hard to trigger by accident.
+
+### Fixed
+
+- **Tags made only of digits now filter correctly.** A numeric tag like `123`
+  was read as a number internally and silently failed to match the (string) tags
+  stored on each row; word tags were unaffected. Numeric tags now filter and
+  highlight like any other.
+
 ## 1.2.2 — 2026-07-13
 
 ### Added

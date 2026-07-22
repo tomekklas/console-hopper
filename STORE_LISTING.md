@@ -19,7 +19,7 @@ Console Hopper
 *(max 132 characters, single line, no rich text)*
 
 ```
-Hop between AWS consoles fast: SAML role-picker filters, deep-link services, env-coloured tabs, configurable tab groups.
+Hop between AWS consoles fast: role-picker search + account tags, deep-link services, env-coloured tabs, configurable tab groups.
 ```
 
 ### Detailed description
@@ -39,11 +39,26 @@ WHAT YOU GET
 
 • Filter and search the role list
   Filter by organisation, environment (prod/test/dev), account type
-  (Management / Security / Logging / …) or role-name keyword (Admin /
-  ReadOnly / PowerUser / …). Full-text search across account name,
-  account id, and role name. Every filter group is editable from the
-  side menu — rename the labels, change the colours, tweak the match
-  patterns to fit your org.
+  (Management / Security / Logging / …), role-name keyword (Admin /
+  ReadOnly / PowerUser / …) or your own tags. The search box is
+  separator-insensitive (type "test 123" to find "test123") and
+  supports scoped terms — tag:, role:, name:, account:, env:, type:,
+  org: — combined with a space (and), a comma (or) or a leading -
+  (exclude), with "quotes" for an exact phrase. It pops out into a
+  roomy card with click-to-insert suggestions and a live match count.
+  Every filter group is editable from the side menu.
+
+• Tag accounts
+  Give accounts your own short labels — palo-alto, prod-network, a
+  ticket number — and organise by them. Add or remove tags inline from
+  a chip on each row (with autocomplete), or edit in bulk from the side
+  menu. Tags get their own filter row and are searchable with tag:.
+
+• Save searches as shortcuts
+  Turn a useful query + filter combination into a named chip in one
+  click, then re-apply the whole view — search and filters — whenever
+  you need it. Set any shortcut (or Favorites, Recent, or a tag) as your
+  "Start View" so the picker opens on it every load.
 
 • Rename accounts
   Map specific account IDs to a friendly name via "Account Names". The
@@ -110,12 +125,13 @@ WHAT YOU GET
   in the side menu restores AWS's default.
 
 • Light / dark / auto theme, compact mode, keyboard shortcuts
-  / focuses search, ↑/↓ moves the selection, Enter signs in, Esc
-  closes modals / clears filters.
+  / or Ctrl/Cmd+K (or a tap of Alt) focuses search, ↑/↓ moves the
+  selection, Alt+arrows walk the search suggestions, Enter signs in to
+  the selected role, Esc closes modals / clears filters.
 
 • Export / import settings as JSON
   Share your configured orgs, envs, account types, role names,
-  services, favorites and shortcuts with a teammate.
+  services, tags, favorites and shortcuts with a teammate.
 
 • Org-agnostic
   Ships with generic placeholders. You rename Org A / Org B / Org C and
@@ -185,11 +201,12 @@ package).
 | Marquee promo tile (optional) | 1400 × 560 PNG | ⚠️ `store-assets/promo-marquee-1400x560.png` (pre-1.2 UI) | — |
 
 Chrome Web Store requires at least **one** screenshot; five is the max.
-We're shipping the full five (1280 × 800, real extension). Screenshots 1,
-3, 4 and 5 are current; **screenshot 2 (Jump popover) should be regenerated
-for 1.2.2** so it shows the ★ pin / ✕ delete and drag-to-reorder — the
-existing image predates them. The two promo tiles are optional and still
-show the pre-1.2 UI; regenerate them if you want them current, or drop them.
+We're shipping the full five (1280 × 800, real extension). For 1.3.0 the
+headline features — **account tags** and the **pop-out search with scoped
+`tag:` / `role:` queries** — aren't shown in any current shot; refreshing a
+couple (e.g. the main list with tag chips, and the search card mid-query)
+would best represent this release. The two promo tiles are optional and
+still show the pre-1.2 UI; regenerate them if you want them current, or drop them.
 
 ---
 
@@ -201,8 +218,8 @@ show the pre-1.2 UI; regenerate them if you want them current, or drop them.
 ```
 Console Hopper enhances the AWS Identity Federation sign-in page
 (https://signin.aws.amazon.com/saml) by adding filters, search,
-favorites, deep-link service shortcuts, environment colour-coding,
-keyboard navigation and tab grouping, so users who have access to
+account tags, favorites, deep-link service shortcuts, environment
+colour-coding, keyboard navigation and tab grouping, so users who have access to
 many AWS accounts via SAML SSO can find and sign into the right
 role faster. It also decorates AWS console tabs with a coloured
 favicon and account-name title prefix so multiple open consoles
@@ -333,12 +350,13 @@ tabs apart at a glance.
 - [x] `npm run build` packages the **contents** (not the wrapping directory)
       into `console-hopper.zip`, excluding docs, `store-assets/`, `samples/`,
       and `.git/`.
-- [x] Test the built `dist/` by loading it unpacked in a clean profile —
-      verified end-to-end (real extension, mock-SAML → role picker; jump
-      pin / reorder / delete, filters, side-menu and dark theme all render;
-      footer reads v1.2.2).
-- [x] Five 1280×800 screenshots in `store-assets/` — 1, 3, 4, 5 current;
-      screenshot 2 (Jump popover) to be refreshed for the 1.2.2 pin/reorder UI.
+- [ ] Test the built `dist/` by loading it unpacked in a clean profile —
+      re-verify end-to-end for 1.3.0 (mock-SAML → role picker; account tags,
+      the pop-out search + scoped queries, save/restore shortcuts, the
+      redesigned Start View, filters, side-menu and dark theme; footer reads
+      v1.3.0).
+- [ ] Screenshots in `store-assets/` don't yet show 1.3.0's tags or pop-out
+      search — refresh a couple (1280×800) to showcase them before publishing.
 - [ ] Promo tiles (440×280 and 1400×560) still show pre-1.2 UI — optional;
       regenerate or drop before publishing if you want them current.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is

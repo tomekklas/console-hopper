@@ -15,6 +15,13 @@ import {
   formatAssumeProfileLines,
   normalizeAssumeProfiles,
   normalizeJumpRecents,
+  normalizeTagList,
+  parseAccountTagLines,
+  formatAccountTagLines,
+  normalizeAccountTags,
+  searchMatches,
+  parseQuery,
+  matchesQuery,
 } from "../src/content/util.js";
 
 describe("escapeHtml", () => {
@@ -255,5 +262,156 @@ describe("normalizeAssumeProfiles", () => {
   it("returns [] for non-arrays", () => {
     expect(normalizeAssumeProfiles(null)).toEqual([]);
     expect(normalizeAssumeProfiles({})).toEqual([]);
+  });
+});
+
+describe("normalizeTagList", () => {
+  it("trims, collapses whitespace, drops empties, caps length", () => {
+    expect(normalizeTagList(["  palo   alto ", "", "  ", "x".repeat(60)])).toEqual([
+      "palo alto",
+      "x".repeat(40),
+    ]);
+  });
+  it("dedupes case-insensitively, first spelling wins", () => {
+    expect(normalizeTagList(["Palo Alto", "palo alto", "PALO ALTO"])).toEqual(["Palo Alto"]);
+  });
+  it("caps the number of tags per account", () => {
+    const many = Array.from({ length: 30 }, (_, i) => `t${i}`);
+    expect(normalizeTagList(many)).toHaveLength(24);
+  });
+  it("returns [] for non-arrays", () => {
+    expect(normalizeTagList(null)).toEqual([]);
+    expect(normalizeTagList("nope")).toEqual([]);
+  });
+});
+
+describe("parseAccountTagLines", () => {
+  it("parses 'id: tag, tag' lines", () => {
+    expect(
+      parseAccountTagLines("123456789012: palo alto, firewall, pci\n 210987654321 : splunk")
+    ).toEqual({
+      "123456789012": ["palo alto", "firewall", "pci"],
+      "210987654321": ["splunk"],
+    });
+  });
+  it("skips bad ids, missing colons, and empty tag lists", () => {
+    expect(parseAccountTagLines("12345: too short")).toEqual({});
+    expect(parseAccountTagLines("123456789012 no colon")).toEqual({});
+    expect(parseAccountTagLines("123456789012: , ,")).toEqual({});
+  });
+});
+
+describe("formatAccountTagLines", () => {
+  it("round-trips with parseAccountTagLines", () => {
+    const map = { "123456789012": ["palo alto", "pci"], "210987654321": ["splunk"] };
+    expect(parseAccountTagLines(formatAccountTagLines(map))).toEqual(map);
+  });
+  it("returns '' for non-objects", () => {
+    expect(formatAccountTagLines(null)).toBe("");
+    expect(formatAccountTagLines([])).toBe("");
+  });
+});
+
+describe("normalizeAccountTags", () => {
+  it("keeps valid entries, drops bad ids and empty tag lists", () => {
+    expect(
+      normalizeAccountTags({
+        "123456789012": [" palo alto ", "palo alto", ""],
+        99999: ["bad id"],
+        "210987654321": [],
+      })
+    ).toEqual({ "123456789012": ["palo alto"] });
+  });
+  it("returns {} for non-objects", () => {
+    expect(normalizeAccountTags(null)).toEqual({});
+    expect(normalizeAccountTags([])).toEqual({});
+  });
+});
+
+describe("searchMatches", () => {
+  it("is separator-insensitive for unquoted terms", () => {
+    expect(searchMatches("test 123", "xx test123 yy")).toBe(true);
+    expect(searchMatches("test123", "a test 123 b")).toBe(true);
+    expect(searchMatches("us-east-1", "region useast1 here")).toBe(true);
+  });
+  it("does not over-match unrelated numbers", () => {
+    expect(searchMatches("test 123", "test13")).toBe(false);
+  });
+  it("quoted terms match an exact literal substring", () => {
+    expect(searchMatches('"test 123"', "a test 123 b")).toBe(true);
+    expect(searchMatches('"test 123"', "test123")).toBe(false);
+  });
+  it("empty term matches everything", () => {
+    expect(searchMatches("", "anything")).toBe(true);
+    expect(searchMatches("   ", "anything")).toBe(true);
+  });
+});
+
+const QF = new Set(["tag", "tags", "role", "name", "account", "acct", "id"]);
+
+describe("parseQuery", () => {
+  it("splits AND-ed field terms", () => {
+    expect(parseQuery("tag:pci role:admin", QF)).toEqual([
+      { field: "tag", negate: false, values: [{ text: "pci", quoted: false }] },
+      { field: "role", negate: false, values: [{ text: "admin", quoted: false }] },
+    ]);
+  });
+  it("comma = OR within a field", () => {
+    expect(parseQuery("tag:pci,hipaa", QF)[0].values).toEqual([
+      { text: "pci", quoted: false },
+      { text: "hipaa", quoted: false },
+    ]);
+  });
+  it("leading - negates", () => {
+    expect(parseQuery("-role:readonly", QF)[0]).toMatchObject({ field: "role", negate: true });
+  });
+  it("keeps quoted phrases, bare and scoped", () => {
+    expect(parseQuery('"palo alto"', QF)).toEqual([
+      { field: "", negate: false, values: [{ text: "palo alto", quoted: true }] },
+    ]);
+    expect(parseQuery('tag:"cost center"', QF)[0]).toMatchObject({
+      field: "tag",
+      values: [{ text: "cost center", quoted: true }],
+    });
+  });
+  it("leaves unknown prefixes as bare terms", () => {
+    expect(parseQuery("arn:aws", new Set(["tag"]))).toEqual([
+      { field: "", negate: false, values: [{ text: "arn:aws", quoted: false }] },
+    ]);
+  });
+  it("bare multi-word becomes AND-ed terms", () => {
+    expect(parseQuery("palo alto", QF)).toHaveLength(2);
+  });
+});
+
+describe("matchesQuery", () => {
+  const fields = {
+    _all: "acme-net palo alto 658181310701 poweruser pci",
+    tag: "palo alto pci",
+    role: "poweruser",
+    name: "acme-net",
+    id: "658181310701",
+    account: "acme-net 658181310701",
+    acct: "acme-net 658181310701",
+  };
+  const q = (s) => matchesQuery(parseQuery(s, QF), fields);
+  it("matches a field term", () => expect(q("tag:pci")).toBe(true));
+  it("misses an absent field value", () => expect(q("tag:hipaa")).toBe(false));
+  it("ANDs across terms", () => {
+    expect(q("tag:pci role:poweruser")).toBe(true);
+    expect(q("tag:pci role:readonly")).toBe(false);
+  });
+  it("ORs comma values within a field", () => expect(q("tag:hipaa,pci")).toBe(true));
+  it("excludes with a leading -", () => {
+    expect(q("-tag:hipaa")).toBe(true);
+    expect(q("-tag:pci")).toBe(false);
+  });
+  it("bare terms hit the full text, separator-insensitive", () => {
+    expect(q("palo poweruser")).toBe(true);
+    expect(q("paloalto")).toBe(true);
+  });
+  it("a quoted scoped value is exact", () => {
+    expect(q('tag:"palo alto"')).toBe(true);
+    expect(q('tag:"palo  alto"')).toBe(false);
   });
 });

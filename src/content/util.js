@@ -136,6 +136,60 @@ export const normalizeAccountNames = (raw) => {
   return out;
 };
 
+// Account tags: a { accountId -> [tag, ...] } map. Tags are free-text labels
+// (spaces allowed) so an account can be found by concept, not just by its name.
+// Line-based editor like account names: "id: tag, tag, tag".
+const MAX_TAG_LEN = 40;
+const MAX_TAGS_PER_ACCOUNT = 24;
+
+// Trim each tag, collapse internal whitespace, drop empties, cap length, dedupe
+// case-insensitively (first spelling wins, so casing stays canonical), cap count.
+export const normalizeTagList = (list) => {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const tag = String(raw == null ? "" : raw).trim().replace(/\s+/g, " ").slice(0, MAX_TAG_LEN);
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= MAX_TAGS_PER_ACCOUNT) break;
+  }
+  return out;
+};
+
+export const parseAccountTagLines = (text) => {
+  const out = {};
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const sep = line.indexOf(":");
+    if (sep === -1) continue;
+    const id = line.slice(0, sep).trim();
+    if (!/^\d{12}$/.test(id)) continue;
+    const tags = normalizeTagList(line.slice(sep + 1).split(","));
+    if (tags.length) out[id] = tags;
+  }
+  return out;
+};
+
+export const formatAccountTagLines = (map) =>
+  Object.entries(map && typeof map === "object" && !Array.isArray(map) ? map : {})
+    .map(([id, tags]) => `${id}: ${(Array.isArray(tags) ? tags : []).join(", ")}`)
+    .join("\n");
+
+export const normalizeAccountTags = (raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [id, tags] of Object.entries(raw)) {
+    if (!/^\d{12}$/.test(id)) continue;
+    const clean = normalizeTagList(tags);
+    if (clean.length) out[id] = clean;
+  }
+  return out;
+};
+
 // Assume-role "jump" profiles — one per org, for accounts reached by chaining
 // from a hub. Each line is "Org name | hubAccountId | roleName": the hub is the
 // 12-digit account you sign into and roleName is the role to assume in targets.
@@ -201,4 +255,81 @@ export const normalizeJumpRecents = (raw, cap = 6) => {
     if (out.length >= cap) break;
   }
   return out;
+};
+
+// Search matching. A term wrapped in double quotes ("...") matches an exact
+// literal substring (spaces preserved), so `"test 123"` will NOT match
+// "test123". Any other term is separator-insensitive — both sides reduced to
+// alphanumerics — so "test 123" matches "test123" / "test-123" but not
+// "test13". An empty term matches everything (no constraint).
+export const searchMatches = (term, text) => {
+  const q = String(term == null ? "" : term).trim();
+  if (!q) return true;
+  const t = String(text == null ? "" : text);
+  if (q.length >= 2 && q.startsWith('"') && q.endsWith('"')) {
+    const inner = q.slice(1, -1).toLowerCase();
+    return inner === "" ? true : t.toLowerCase().includes(inner);
+  }
+  const alnum = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nq = alnum(q);
+  return nq === "" ? true : alnum(t).includes(nq);
+};
+
+// Parse a search query into AND-ed terms. Each term is { field, negate, values }:
+// `field` is a known qualifier (lowercased) or "" for a bare full-text term;
+// `negate` is a leading "-" (exclude); `values` is a comma-OR list of
+// { text, quoted }. A prefix is only treated as a field when it's in
+// `knownFields` — otherwise the colon stays part of a bare term (so e.g. a role
+// ARN searches literally). Quoted spans are kept intact by the tokenizer.
+export const parseQuery = (input, knownFields) => {
+  const known = knownFields instanceof Set ? knownFields : new Set(knownFields || []);
+  const terms = [];
+  const tokens = String(input == null ? "" : input).match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  for (const raw of tokens) {
+    let token = raw;
+    let negate = false;
+    if (token.length > 1 && token[0] === "-") { negate = true; token = token.slice(1); }
+    let field = "";
+    let rest = token;
+    if (token[0] !== '"') {
+      const ci = token.indexOf(":");
+      if (ci > 0 && known.has(token.slice(0, ci).toLowerCase())) {
+        field = token.slice(0, ci).toLowerCase();
+        rest = token.slice(ci + 1);
+      }
+    }
+    let values;
+    if (rest.length >= 2 && rest[0] === '"' && rest[rest.length - 1] === '"') {
+      values = [{ text: rest.slice(1, -1), quoted: true }];
+    } else {
+      values = rest
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => {
+          const q = p.length >= 2 && p[0] === '"' && p[p.length - 1] === '"';
+          return { text: q ? p.slice(1, -1) : p, quoted: q };
+        });
+    }
+    if (values.length) terms.push({ field, negate, values });
+  }
+  return terms;
+};
+
+// Evaluate parsed terms (AND-ed) against a row's fields. `fields` maps a field
+// name to its text; bare terms match against fields._all. Within a term the
+// values are OR-ed. Quoted values need an exact substring; bare values are
+// separator-insensitive (searchMatches). A negated term must NOT match.
+export const matchesQuery = (terms, fields) => {
+  const f = fields || {};
+  const valueHits = (v, text) =>
+    v.quoted
+      ? String(text == null ? "" : text).toLowerCase().includes(v.text.toLowerCase())
+      : searchMatches(v.text, text == null ? "" : text);
+  for (const term of terms) {
+    const text = (term.field ? f[term.field] : f._all) || "";
+    const hit = term.values.some((v) => valueHits(v, text));
+    if (term.negate ? hit : !hit) return false;
+  }
+  return true;
 };
