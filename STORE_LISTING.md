@@ -192,21 +192,20 @@ package).
 | Field | Spec | File | Shows |
 |---|---|---|---|
 | Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` | — |
-| Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` | The filterable role picker |
-| Screenshot 2 | 1280 × 800 | ⚠️ `store-assets/screenshot-2-jump.png` | Jump-to-account popover — **refresh for 1.2.2** to show pinned jumps + drag-reorder (current image is pre-1.2.2 recents) |
-| Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-side-menu.png` | Grouped side menu (View / Configure / Data) |
-| Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-filter.png` | Filtering by PROD + ReadOnly |
+| Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` | Role picker with account tags |
+| Screenshot 2 | 1280 × 800 | ✅ `store-assets/screenshot-2-search.png` | Pop-out search — scoped `tag:` query, autocomplete, live match count |
+| Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-tags.png` | Inline tag editor on a role row |
+| Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-start-view.png` | Start View picker (Views / Shortcuts / Tags) |
 | Screenshot 5 | 1280 × 800 | ✅ `store-assets/screenshot-5-dark.png` | Dark theme |
 | Small promo tile (optional) | 440 × 280 PNG | ⚠️ `store-assets/promo-small-440x280.png` (pre-1.2 UI) | — |
 | Marquee promo tile (optional) | 1400 × 560 PNG | ⚠️ `store-assets/promo-marquee-1400x560.png` (pre-1.2 UI) | — |
 
 Chrome Web Store requires at least **one** screenshot; five is the max.
-We're shipping the full five (1280 × 800, real extension). For 1.3.0 the
-headline features — **account tags** and the **pop-out search with scoped
-`tag:` / `role:` queries** — aren't shown in any current shot; refreshing a
-couple (e.g. the main list with tag chips, and the search card mid-query)
-would best represent this release. The two promo tiles are optional and
-still show the pre-1.2 UI; regenerate them if you want them current, or drop them.
+We're shipping the full five (1280 × 800, real extension, generic mock
+data) — all refreshed for 1.3.0 to showcase account tags, the pop-out
+search, the inline tag editor, and the redesigned Start View. The two
+promo tiles are optional and still show the pre-1.2 UI; regenerate them if
+you want them current, or drop them.
 
 ---
 
@@ -355,8 +354,8 @@ tabs apart at a glance.
       the pop-out search + scoped queries, save/restore shortcuts, the
       redesigned Start View, filters, side-menu and dark theme; footer reads
       v1.3.0).
-- [ ] Screenshots in `store-assets/` don't yet show 1.3.0's tags or pop-out
-      search — refresh a couple (1280×800) to showcase them before publishing.
+- [x] Five 1280×800 screenshots in `store-assets/`, all refreshed for 1.3.0
+      (main+tags, search, tag editor, Start View, dark) — generic mock data.
 - [ ] Promo tiles (440×280 and 1400×560) still show pre-1.2 UI — optional;
       regenerate or drop before publishing if you want them current.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is
