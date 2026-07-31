@@ -2647,6 +2647,8 @@ import {
   const floatingActionsHTML = `
         <div id="tm_actions_container">
             <div id="tm_actions_scroll">
+                <div class="tm_menu_header">SAML</div>
+                <a href="#" class="tm_action_button" id="tm_saml_copy">Copy SAML</a>
                 <div class="tm_menu_header">View</div>
                 <a href="#" class="tm_action_button" id="tm_theme_toggle">Theme: Light</a>
                 <a href="#" class="tm_action_button" id="tm_compact_toggle">Compact: Off</a>
@@ -4397,6 +4399,34 @@ import {
     }
   });
 
+  // --- Handle copy SAML ---
+  $('body').on('click', '#tm_saml_copy', async function(e) {
+      e.preventDefault();
+
+      try {
+          // Get the SAML response from the hidden form input
+          const samlResponse = $('input[name="SAMLResponse"]').val();
+
+          if (!samlResponse) {
+              showToast('SAML response not found', 'error');
+              return;
+          }
+
+          // Copy to clipboard
+		  const ok = await copyTextToClipboard(samlResponse);
+		  showToast(
+		    ok ? `SAML response copied to clipboard!` : `Failed to copy SAML response`,
+		    ok ? "success" : "error",
+		    CONFIG.TOAST_DURATION_LONG
+		  );
+
+        } catch (error) {
+          console.error('Error copying SAML response:', error);
+          showToast('Failed to copy SAML response', 'error');
+      }
+  });
+
+  
   // --- Handle favorite button clicks ---
   $("body").on("click", ".tm_favorite_button", async function (e) {
     e.preventDefault();
