@@ -12,6 +12,7 @@ import {
   parseRegionLines,
   formatRegionLines,
   normalizeRegionList,
+  isValidRegionCode,
   parseAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
@@ -64,6 +65,7 @@ import {
       TAB_GROUP_TAG: "aws_tab_group_tag",
       TAB_GROUP_MODE: "aws_tab_group_mode",
       AWS_REGION: "aws_region",
+      REMEMBER_REGION: "aws_remember_region",
       REGION_LIST: "aws_region_list",
       ACCOUNT_NAMES: "aws_account_names",
       ACCOUNT_TAGS: "aws_account_tags",
@@ -288,6 +290,10 @@ import {
   let rolePatternsCache = [];
   // General settings (region, homepage, sensitive-sign-in triggers).
   let awsRegionCache = "us-east-1";
+  // When true (the default), a row's region dropdown reopens on the region you
+  // last picked for that role; when false, every row falls back to
+  // awsRegionCache — "always start me in my default region".
+  let rememberRegionCache = true;
   let homepageUrlCache = "";
   let signinConfirmRoleKeywordsCache = ["admin"];
   let signinConfirmTypeIdsCache = [];
@@ -574,6 +580,21 @@ import {
     async saveAwsRegion(region) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.AWS_REGION]: region });
+        return true;
+      }, false);
+    },
+
+    async getRememberRegion() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.REMEMBER_REGION);
+        // Absent means "not configured yet" — remembering is the long-standing
+        // behaviour, so default to on.
+        return result[CONFIG.STORAGE_KEYS.REMEMBER_REGION] ?? true;
+      }, true);
+    },
+    async saveRememberRegion(remember) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.REMEMBER_REGION]: !!remember });
         return true;
       }, false);
     },
@@ -1401,6 +1422,12 @@ import {
   let regionListCache = [];
   let lastRegionsCache = {};
 
+  // The Jump popover's region control keeps its own last-pick memory in the same
+  // roleArn->code map, under a sentinel key that can't collide with a real role
+  // ARN. Kept separate from any row so a Jump defaults to the General Settings
+  // region, then remembers the last region you actually jumped into.
+  const JUMP_REGION_KEY = "__hop_jump__";
+
   const RegionsManager = {
     async loadCache() {
       regionListCache = await StorageManager.getRegionList();
@@ -1431,28 +1458,47 @@ import {
       return regionListCache;
     },
 
-    // The per-row region <select>: options come from the configured list (order
-    // preserved); the selection is this role's last-picked region, else the
-    // General Settings region. The selected region is always present even if it
-    // isn't in the list, so a sign-in never targets a missing region.
-    generateRegionDropdownHTML(roleArn) {
-      const def = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
-      const selected = this.getLastRegionSync(roleArn) || def;
+    // The <option> set for a region <select>: the configured list with order
+    // preserved, `selected` pre-chosen. The selected region is force-included
+    // even when it isn't in the list, so a sign-in never targets a missing one.
+    regionOptionsHTML(selected) {
       const list = regionListCache.slice();
       if (!list.some((r) => r.id === selected)) {
         list.unshift({ id: selected, label: selected });
       }
-      const optionsHTML = list
+      return list
         .map(
           (r) =>
             `<option value="${escapeHtml(r.id)}"${r.id === selected ? " selected" : ""}>${escapeHtml(r.label)}</option>`
         )
         .join("");
+    },
+
+    // The per-row region <select>: options come from the configured list (order
+    // preserved); the selection is this role's last-picked region, else the
+    // General Settings region. With "always start in my default region" on, the
+    // per-role memory is ignored so every row opens on the default — the user
+    // can still override a single sign-in by changing the dropdown.
+    generateRegionDropdownHTML(roleArn) {
+      const def = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+      const selected = GeneralSettingsManager.rememberRegion()
+        ? this.getLastRegionSync(roleArn) || def
+        : def;
       return `
         <select class="tm_region_dropdown" data-role-arn="${escapeHtml(roleArn)}" title="AWS region for this sign-in">
-          ${optionsHTML}
+          ${this.regionOptionsHTML(selected)}
         </select>
       `;
+    },
+
+    // The region a fresh Jump should default to: the last region you jumped
+    // into, else the General Settings region. Pinning the default region drops
+    // the last-jump memory too, so "always start in my default region" holds
+    // for jumps as well (an explicit per-profile region still wins over both).
+    jumpRegionSelected() {
+      const def = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+      if (!GeneralSettingsManager.rememberRegion()) return def;
+      return this.getLastRegionSync(JUMP_REGION_KEY) || def;
     },
   };
 
@@ -1804,24 +1850,29 @@ import {
   const GeneralSettingsManager = {
     async loadCache() {
       awsRegionCache = await StorageManager.getAwsRegion();
+      rememberRegionCache = await StorageManager.getRememberRegion();
       homepageUrlCache = await StorageManager.getHomepageUrl();
       signinConfirmRoleKeywordsCache = await StorageManager.getSigninConfirmRoleKeywords();
       signinConfirmTypeIdsCache = await StorageManager.getSigninConfirmTypeIds();
       debug("General settings cache loaded:", {
         region: awsRegionCache,
+        rememberRegion: rememberRegionCache,
         homepage: homepageUrlCache,
         signinRoleKeywords: signinConfirmRoleKeywordsCache,
         signinTypeIds: signinConfirmTypeIdsCache,
       });
     },
     region()              { return awsRegionCache; },
+    rememberRegion()      { return rememberRegionCache; },
     homepage()            { return homepageUrlCache; },
     signinRoleKeywords()  { return signinConfirmRoleKeywordsCache; },
     signinTypeIds()       { return signinConfirmTypeIdsCache; },
-    async save({ region, homepage, signinRoleKeywords, signinTypeIds }) {
+    async save({ region, rememberRegion, homepage, signinRoleKeywords, signinTypeIds }) {
       const r = (region || "").trim();
       awsRegionCache = r || CONFIG.DEFAULT_AWS_REGION;
-      homepageUrlCache = (homepage || "").trim();
+      rememberRegionCache = !!rememberRegion;
+      const home = (homepage || "").trim();
+      homepageUrlCache = !home || isSafeHttpUrl(home) ? home : "";
       signinConfirmRoleKeywordsCache = Array.isArray(signinRoleKeywords)
         ? signinRoleKeywords.map((s) => (s || "").trim()).filter(Boolean)
         : [];
@@ -2434,8 +2485,56 @@ import {
   // global one, and so multi-session routing (when enabled) kicks in directly.
   // Appends a URL fragment payload (env/account/role) so the console-side
   // decorator script can color and label the resulting tab.
+  // A #hop payload is just a URL fragment: any site can craft one and link a
+  // signed-in victim to a real console URL painted with the wrong environment
+  // colour, or pre-filled for a switch-role. So every payload we emit carries a
+  // single-use token, minted here and recorded in extension storage; the
+  // decorator trusts a fragment only when its token matches one we issued.
+  const SIGNIN_TOKEN_KEY = "hop_signin_tokens";
+  const SIGNIN_TOKEN_TTL_MS = 5 * 60 * 1000;
+
+  // Hand the tab decoration to the console side through extension storage,
+  // keyed by account id. The URL fragment alone isn't enough: with AWS
+  // multi-session the sign-in lands on the plain regional host and is then
+  // redirected to "{account}-{alias}.{region}.console…", a different origin —
+  // so both the fragment and any sessionStorage written on the first hop are
+  // gone by the time the tab the user actually sees loads.
+  const stashPendingLabel = async (account, label, envColor, envLetter, region) => {
+    if (!/^\d{12}$/.test(String(account || ""))) return;
+    await safeStorageOperation(async () => {
+      const cur =
+        (await chrome.storage.local.get("hop_pending_jumps"))["hop_pending_jumps"] || {};
+      const now = Date.now();
+      for (const k of Object.keys(cur)) {
+        if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
+      }
+      cur[account] = { label, envColor, envLetter, region: region || "", ts: now };
+      await chrome.storage.local.set({ hop_pending_jumps: cur });
+    });
+  };
+
+  const mintSigninToken = async () => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (x) => x.toString(16).padStart(2, "0")).join("");
+    await safeStorageOperation(async () => {
+      const cur = (await chrome.storage.local.get(SIGNIN_TOKEN_KEY))[SIGNIN_TOKEN_KEY] || {};
+      const now = Date.now();
+      for (const k of Object.keys(cur)) {
+        if (!cur[k] || now - cur[k] > SIGNIN_TOKEN_TTL_MS) delete cur[k];
+      }
+      cur[token] = now;
+      await chrome.storage.local.set({ [SIGNIN_TOKEN_KEY]: cur });
+    });
+    return token;
+  };
+
   const buildDestination = (servicePath, labelPayload, region) => {
-    const r = region || GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    // This value becomes the origin of the post-SAML redirect, so validate it
+    // here as well as at the edges — a region that reached storage from an
+    // imported settings file must never be able to bend the host.
+    const candidate = region || GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    const r = isValidRegionCode(candidate) ? candidate : CONFIG.DEFAULT_AWS_REGION;
     const host = `https://${r}.console.aws.amazon.com`;
     const path = (servicePath || "").replace(/\{region\}/g, r);
     const base = path ? `${host}/${path}` : `${host}/`;
@@ -2613,6 +2712,12 @@ import {
                                     <button type="button" id="tm_jump_account_clear" class="tm_field_clear" aria-label="Clear account id" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
                                 </div>
                             </div>
+                            <div id="tm_jump_region_wrap" style="margin-bottom: 8px !important;">
+                                <select id="tm_jump_region" title="AWS region to land in after the jump — defaults to your General Settings region" style="
+                                    width: 100% !important; padding: 6px 6px !important; border: 1px solid #ccc !important;
+                                    border-radius: 4px !important; font-size: 12px !important; background: white !important; color: #16191f !important; box-sizing: border-box !important;
+                                "></select>
+                            </div>
                             <div id="tm_jump_label_wrap" style="position: relative !important; margin-bottom: 8px !important;">
                                 <input id="tm_jump_label" type="text" placeholder="session label (optional)" autocomplete="off" style="
                                     width: 100% !important; padding: 6px 28px 6px 8px !important; border: 1px solid #ccc !important;
@@ -2639,6 +2744,21 @@ import {
                         <input id="tm_group_tag_input" class="tm_group_tag_input" type="text" placeholder="INC-4821" autocomplete="off" />
                         <button type="button" id="tm_group_tag_clear" class="tm_field_clear" aria-label="Clear tag" title="Clear tag" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
                     </div>
+                    <div id="tm_sessions_section" style="display: none;">
+                        <div id="tm_sessions_bar" style="position: relative;">
+                            <button type="button" id="tm_sessions_pill" title="AWS allows 5 concurrent console sessions — click to review or sign one out">
+                                <span id="tm_sessions_pill_text">sessions</span>
+                            </button>
+                            <div id="tm_sessions_popover" style="display: none;">
+                                <div id="tm_sessions_head">
+                                    <span id="tm_sessions_title">Active AWS sessions</span>
+                                    <span id="tm_sessions_close" role="button" tabindex="-1" aria-label="Close" title="Close">&#10005;</span>
+                                </div>
+                                <div id="tm_sessions_rows"></div>
+                                <div id="tm_sessions_hint">Sign out a session to free a slot for a new sign-in.</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2664,7 +2784,7 @@ import {
                 <a href="#" class="tm_action_button" id="tm_manage_regions">Regions</a>
                 <a href="#" class="tm_action_button" id="tm_manage_account_names">Account Names</a>
                 <a href="#" class="tm_action_button" id="tm_manage_account_tags">Account Tags</a>
-                <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Assume Profiles</a>
+                <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Jump Profiles</a>
                 <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
                 <div class="tm_menu_header">Data</div>
                 <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
@@ -2687,8 +2807,14 @@ import {
 
   // Show/hide the homepage link in the footer based on the configured URL.
   // Called after init and whenever General Settings is saved.
+  // The homepage value becomes a link href, so anything but http(s) — most
+  // obviously javascript: — must never reach it. Checked on save, on import and
+  // again at the sink, so a value already in storage can't slip through.
+  const isSafeHttpUrl = (v) => /^https?:\/\//i.test(String(v || "").trim());
+
   const updateHomepageFooter = () => {
-    const url = (homepageUrlCache || "").trim();
+    const raw = (homepageUrlCache || "").trim();
+    const url = isSafeHttpUrl(raw) ? raw : "";
     const $wrap = $("#tm_footer_homepage_wrap");
     const $a = $("#tm_footer_homepage");
     if (!$wrap.length || !$a.length) return;
@@ -2914,6 +3040,92 @@ import {
             flex-direction: column !important;
             gap: 9px !important;
         }
+        /* Active-session chip: the last control in the rail, below Tabs and
+           fenced by the same hairline. Non-!important display so the JS
+           show/hide toggle still wins. */
+        #tm_sessions_section {
+            display: flex;
+            flex-direction: column !important;
+            gap: 9px !important;
+        }
+        #tm_sessions_pill {
+            display: flex !important; align-items: center !important; justify-content: center !important;
+            gap: 6px !important; width: 100% !important; box-sizing: border-box !important;
+            padding: 7px 10px !important; border: 1px solid #ccc !important; border-radius: 6px !important;
+            background: white !important; color: #545b64 !important; cursor: pointer !important;
+            font-size: 12px !important; white-space: nowrap !important; overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        #tm_sessions_pill:hover { border-color: #8a9199 !important; }
+        /* One slot left, then none. */
+        #tm_sessions_pill.tm_sessions_warn {
+            border-color: #e0a800 !important; background: #fdf6e3 !important; color: #7a5b12 !important;
+        }
+        #tm_sessions_pill.tm_sessions_full {
+            border-color: #c0392b !important; background: #fbeae8 !important; color: #8a2d24 !important;
+        }
+        /* Wider than the 200px rail: the row detail needs the room, so the
+           popover opens upward and to the left, over the role list — the same
+           overlay trick the Jump popover uses. */
+        /* Opens DOWNWARD like the Jump popover: the rail's chip sits low, so
+           opening upward buried the filter rows and ran off the top of the
+           page — the space below the picker is empty anyway. */
+        #tm_sessions_popover {
+            position: absolute !important; top: calc(100% + 6px) !important; right: 0 !important; left: auto !important;
+            z-index: 10000 !important; width: 1100px !important; max-width: calc(100vw - 60px) !important;
+            background: white !important; border: 1px solid #ccc !important; border-radius: 8px !important;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.20) !important; padding: 12px 14px !important; text-align: left !important;
+        }
+        #tm_sessions_head {
+            display: flex !important; justify-content: space-between !important; align-items: center !important;
+            font-size: 15px !important; font-weight: 600 !important; color: #16191f !important;
+            padding-bottom: 8px !important; border-bottom: 1px solid #ededed !important;
+        }
+        #tm_sessions_close { cursor: pointer !important; color: #8a9199 !important; font-size: 14px !important; }
+        #tm_sessions_close:hover { color: #16191f !important; }
+        .tm_sess_th, .tm_sess_tr {
+            display: grid !important;
+            /* The three time/count columns are sized to their VALUES ("13m ago",
+               "47m", "1") — their headers are the widest thing in them, so any
+               extra width there is dead space stolen from the two columns that
+               actually truncate. */
+            grid-template-columns: 1fr 2fr 100px 230px 68px 60px 40px 28px !important;
+            gap: 16px !important; align-items: center !important;
+        }
+        /* Horizontal padding on the rows (matched by the header so columns stay
+           aligned) keeps the hover highlight off the text and off the ✕. */
+        .tm_sess_th { font-size: 12px !important; color: #8a9199 !important; padding: 10px 12px 8px !important; border-bottom: 1px solid #f2f4f5 !important; }
+        .tm_sess_tr { font-size: 13px !important; color: #16191f !important; padding: 13px 12px !important; line-height: 1.4 !important; border-bottom: 1px solid #f7f8f9 !important; border-radius: 4px !important; }
+        .tm_sess_tr:hover { background: #f7f8f9 !important; }
+        /* Every cell is single-line with an ellipsis, so no account name or role
+           can push the grid out of shape; the full value is in the title. */
+        .tm_sess_name, .tm_sess_meta {
+            overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;
+        }
+        .tm_sess_meta { color: #545b64 !important; }
+        /* A fixed square centred on its own glyph — the hover/armed background
+           has to sit squarely behind the ✕, not float off to one side of the
+           grid cell (which is what text-align + padding did). */
+        .tm_sess_del {
+            display: inline-flex !important; align-items: center !important; justify-content: center !important;
+            width: 22px !important; height: 22px !important; box-sizing: border-box !important;
+            justify-self: end !important; color: #c7ccd1 !important; cursor: pointer !important;
+            font-size: 13px !important; line-height: 1 !important; border-radius: 4px !important;
+        }
+        .tm_sess_del:hover { color: #c0392b !important; background-color: #fbeae8 !important; }
+        .tm_sess_del.tm_confirm_del {
+            color: white !important; background-color: #c0392b !important; font-size: 11px !important;
+        }
+        #tm_sessions_hint { font-size: 12px !important; color: #8a9199 !important; padding-top: 8px !important; }
+        #tm_sessions_empty { font-size: 13px !important; color: #8a9199 !important; padding: 10px 0 !important; }
+        body.tm_theme_dark #tm_sessions_pill { background: #2a2f36 !important; border-color: #3a4148 !important; color: #c7ccd1 !important; }
+        body.tm_theme_dark #tm_sessions_pill.tm_sessions_warn { background: #3a3320 !important; border-color: #7a5b12 !important; color: #f0c36d !important; }
+        body.tm_theme_dark #tm_sessions_pill.tm_sessions_full { background: #3d2422 !important; border-color: #8a2d24 !important; color: #e8a49c !important; }
+        body.tm_theme_dark #tm_sessions_popover { background: #232830 !important; border-color: #3a4148 !important; }
+        body.tm_theme_dark #tm_sessions_head { color: #e9ecef !important; border-bottom-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_sess_tr { color: #e9ecef !important; border-bottom-color: #2f353d !important; }
+        body.tm_theme_dark .tm_sess_tr:hover { background: #2a2f36 !important; }
+        body.tm_theme_dark .tm_sess_meta { color: #adb5bd !important; }
         .tm_group_mode_select {
             width: 100% !important;
             box-sizing: border-box !important;
@@ -4369,6 +4581,12 @@ import {
       }
     }
     await RecentRolesManager.recordSignIn(roleArn);
+    // Awaited: the token must be in storage before the form navigates away,
+    // or the decorator will (correctly) refuse to trust the payload.
+    labelPayload.tok = await mintSigninToken();
+    // No region here: a direct sign-in already lands in the right region, so
+    // there is nothing for the decorator to correct.
+    await stashPendingLabel(accountId, accountName, labelPayload.envColor, labelPayload.envLetter, "");
     signInToRole(roleArn, buildDestination(servicePath, labelPayload, region), {
       newTab,
     });
@@ -4553,6 +4771,62 @@ import {
     doJump();
   });
 
+  // Switching org retargets the region to that profile's landing region, so a
+  // per-org default (Jump Profiles field 4) takes effect immediately.
+  $("body").on("change", "#tm_jump_org", function () {
+    refreshJumpRegion();
+  });
+
+  // --- Active AWS sessions: chip, popover, per-session sign-out ---
+  $("body").on("click", "#tm_sessions_pill", function (e) {
+    e.preventDefault();
+    if (sessionsPopoverOpen) {
+      closeSessionsPopover();
+      return;
+    }
+    sessionsPopoverOpen = true;
+    $("#tm_sessions_popover").css("display", "block");
+    // Repaint on open so ages, expiries and tab counts are current, not stale
+    // from page load.
+    refreshSessions({ keepOpen: true });
+  });
+
+  $("body").on("click", "#tm_sessions_close", function (e) {
+    e.preventDefault();
+    closeSessionsPopover();
+  });
+
+  // Two-step confirm, matching shortcut chips, jump rows and tag pills — one
+  // stray click must not drop a session someone is working in.
+  $("body").on("click", ".tm_sess_del", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = this;
+    const $row = $(el).closest(".tm_sess_tr");
+    const diff = $row.attr("data-diff");
+    if (!diff) return;
+    twoStepDelete($(el), el, async () => {
+      showToast("Signing out that session…", "info", CONFIG.TOAST_DURATION);
+      chrome.runtime.sendMessage(
+        {
+          type: "hop_signout_session",
+          region: GeneralSettingsManager.region(),
+          differentiator: diff,
+        },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.ok) {
+            showToast("Could not sign that session out.", "error", CONFIG.TOAST_DURATION);
+            return;
+          }
+          // A freed slot means the cap warning is worth showing again.
+          sessionsFullToastShown = false;
+          showToast("Session signed out — a slot is free.", "success", CONFIG.TOAST_DURATION);
+          refreshSessions({ keepOpen: sessionsPopoverOpen });
+        }
+      );
+    });
+  });
+
   $("body").on("keydown", "#tm_jump_account, #tm_jump_label", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -4637,7 +4911,10 @@ import {
     }
   };
   // Any click not inside the armed element cancels the pending delete.
-  $("body").on("click", function (e) {
+  // Bound to `document`, not `body`: the picker is short, so a click below the
+  // content lands on <html> and never reaches a body-bound listener — which
+  // silently breaks every "click away to dismiss" behaviour on this page.
+  $(document).on("click", function (e) {
     const t = e.target;
     if (t && t.closest && t.closest(".tm_confirm_del")) return;
     disarmConfirmDelete();
@@ -4655,11 +4932,20 @@ import {
   });
 
   // Close the jump popover on any click outside it (and outside its pill).
-  $("body").on("click", function (e) {
+  $(document).on("click", function (e) {
     if (!jumpPopoverOpen) return;
     const t = e.target;
     if (t && t.closest && (t.closest("#tm_jump_popover") || t.closest("#tm_jump_pill"))) return;
     closeJumpPopover();
+  });
+
+  // Same for the sessions popover — clicking away closes it, like every other
+  // pop-out in the picker.
+  $(document).on("click", function (e) {
+    if (!sessionsPopoverOpen) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest("#tm_sessions_popover") || t.closest("#tm_sessions_pill"))) return;
+    closeSessionsPopover();
   });
 
   $("body").on("click", "#tm_start_view", function (e) {
@@ -5052,15 +5338,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   // --- Jump to account: sign into an org's hub, then chain (Switch Role) into
   // a destination account the hub is trusted to assume. Config lives in the
-  // Assume Profiles panel; the target rides the #hop payload and the
+  // Jump Profiles panel; the target rides the #hop payload and the
   // console-side decorator completes the switch on the hub console.
-  const findRoleArnForAccount = (accountId) => {
+  // Find the row to sign into for a jump's hub. With a roleName given, only that
+  // role matches — an account usually has several roles and most of them cannot
+  // assume anything, so picking "the first row for this account" silently lands
+  // on a role without sts:AssumeRole. Without one, first row wins (unchanged).
+  const findRoleArnForAccount = (accountId, roleName) => {
     let arn = "";
     $(".saml-role").each(function () {
       if (arn) return;
-      if ($(this).find(".tm_account_id").text().trim() === accountId) {
-        arn = $(this).find(".tm_signin_button").attr("data-role-arn") || "";
-      }
+      const $row = $(this);
+      if ($row.find(".tm_account_id").text().trim() !== accountId) return;
+      if (roleName && $row.find(".tm_role_name").text().trim() !== roleName) return;
+      arn = $row.find(".tm_signin_button").attr("data-role-arn") || "";
     });
     return arn;
   };
@@ -5134,7 +5425,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     refreshJumpRecents();
   };
 
-  const jumpToAccount = (profileName, accountRaw, labelRaw) => {
+  // Async because every hand-off below must be durably in chrome.storage BEFORE
+  // signInToRole submits the SAML form — that submit navigates this page away,
+  // and an unfinished storage write dies with it, leaving the decorator with no
+  // pending entry (no region pin, no tab decoration).
+  const jumpToAccount = async (profileName, accountRaw, labelRaw) => {
     const profile = AssumeProfilesManager.byName(profileName);
     if (!profile) {
       showToast("Pick an org first.", "error", CONFIG.TOAST_DURATION);
@@ -5145,11 +5440,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       showToast("Enter a 12-digit destination account ID.", "error", CONFIG.TOAST_DURATION);
       return;
     }
-    const hubArn = findRoleArnForAccount(profile.hub);
+    const hubArn = findRoleArnForAccount(profile.hub, profile.hubRole);
     if (!hubArn) {
       showToast(
-        `Hub account ${profile.hub} isn't in this role list — you can only jump ` +
-          `from an org whose hub you can sign into here.`,
+        profile.hubRole
+          ? `${profile.hubRole} in hub account ${profile.hub} isn't in this role ` +
+              `list — check the role name in the assume profile.`
+          : `Hub account ${profile.hub} isn't in this role list — you can only ` +
+              `jump from an org whose hub you can sign into here.`,
         "error",
         CONFIG.TOAST_DURATION_LONG
       );
@@ -5162,11 +5460,23 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const displayName = label || `${profile.name} · ${dest}`;
     const { envColor, envLetter } = computeDestEnv(dest);
 
+    // Region to land in after the switch-role. AWS otherwise drops a freshly
+    // switched role into that identity's own default region — the "random"
+    // region users complain about — so we carry the chosen one through to the
+    // decorator (see console-decorator.js). The <select> is populated from the
+    // validated region list, but re-validate anyway before it reaches a URL.
+    const pickedRegion = String($("#tm_jump_region").val() || "").trim().toLowerCase();
+    const region = isValidRegionCode(pickedRegion)
+      ? pickedRegion
+      : GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    // Remember it as the Jump default for next time (own memory, not a role's).
+    RegionsManager.saveLastRegion(JUMP_REGION_KEY, region);
+
     // Hand-off for the console side: the jumped-into tab lands on a different
     // subdomain, so sessionStorage can't carry the label/colour across. Stash
     // it in the extension's own storage keyed by the destination account; the
     // decorator picks it up on the target console and clears it.
-    safeStorageOperation(async () => {
+    await safeStorageOperation(async () => {
       const cur =
         (await chrome.storage.local.get("hop_pending_jumps"))["hop_pending_jumps"] || {};
       // Prune anything past the decorator's 5-min TTL so an abandoned jump
@@ -5175,13 +5485,23 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       for (const k of Object.keys(cur)) {
         if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
       }
-      cur[dest] = { label: displayName, envColor, envLetter, ts: now };
+      cur[dest] = { label: displayName, envColor, envLetter, region, ts: now };
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
-    recordJump(profileName, dest, label, profile.role);
 
-    const labelPayload = { chain: { account: dest, role: profile.role, displayName } };
-    const region = GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+    // If several console sessions are live, AWS interrupts the switch-role with
+    // its "Choose your session" picker. Leave a short-lived note saying which
+    // identity this jump signs in as — the hub, not the destination — so
+    // session-selector.js can pick that card and skip the wall.
+    const hubRoleName = String(hubArn).split("/").pop() || "";
+    await safeStorageOperation(async () => {
+      await chrome.storage.local.set({
+        hop_pending_hub: { account: profile.hub, role: hubRoleName, ts: Date.now() },
+      });
+    });
+    await recordJump(profileName, dest, label, profile.role);
+
+    const labelPayload = { chain: { account: dest, role: profile.role, displayName, region } };
 
     // Group this tab up-front, keyed by the DESTINATION account + assumed role
     // and the current grouping settings. A tab keeps its group across
@@ -5209,6 +5529,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       "info",
       CONFIG.TOAST_DURATION
     );
+    labelPayload.tok = await mintSigninToken();
     signInToRole(hubArn, buildDestination("", labelPayload, region), { newTab: false });
   };
 
@@ -5223,6 +5544,187 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         .join("")
     );
     if (prev && profiles.some((p) => p.name === prev)) $sel.val(prev);
+  };
+
+  // === ACTIVE CONSOLE SESSIONS ===
+  // AWS allows 5 concurrent console sessions per browser profile and only says
+  // so at the wall — the "Choose your session" screen, mid-navigation. The
+  // service worker can read the live set, so warn while there's still room to
+  // act. Silent when the count is comfortable, or when the list can't be read
+  // (signed out, endpoint changed) — a wrong count is worse than none.
+  // Only announce the cap once per page load, so the toast can't nag on every
+  // refresh after a sign-out.
+  let sessionsFullToastShown = false;
+
+  const describeAge = (unixSeconds) => {
+    if (!unixSeconds) return "";
+    const mins = Math.max(0, Math.round((Date.now() / 1000 - unixSeconds) / 60));
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`;
+  };
+
+  // Time until a session's AWS-side expiry, which is the most useful signal for
+  // deciding which one to drop: the one with minutes left is nearly free.
+  const describeRemaining = (unixSeconds) => {
+    if (!unixSeconds) return "—";
+    const mins = Math.round((unixSeconds - Date.now() / 1000) / 60);
+    if (mins <= 0) return "expired";
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  };
+
+  // The label you typed when you jumped into an account. AWS keeps no such
+  // field (a switched session inherits the SAML RoleSessionName), so the only
+  // honest source is our own jump history — pinned first, then recents.
+  const jumpLabelFor = (account, role) => {
+    if (!account) return "";
+    const hit = [...jumpPinnedCache, ...jumpRecentsCache].find(
+      (r) => r && r.account === account && (!role || !r.role || r.role === role)
+    );
+    return (hit && hit.label) || "";
+  };
+
+  let sessionsCache = [];
+  let sessionsLimit = 5;
+  let sessionsPopoverOpen = false;
+
+  const closeSessionsPopover = () => {
+    $("#tm_sessions_popover").css("display", "none");
+    sessionsPopoverOpen = false;
+    disarmConfirmDelete();
+  };
+
+  const renderSessionsRows = () => {
+    const $rows = $("#tm_sessions_rows");
+    if (!$rows.length) return;
+    if (!sessionsCache.length) {
+      $rows.html(`<div id="tm_sessions_empty">No active AWS console sessions.</div>`);
+      return;
+    }
+    const header =
+      `<div class="tm_sess_th"><span>Label</span><span>Account &middot; role</span>` +
+      `<span>Region</span><span>Tab group</span><span>Started</span><span>Expires</span><span>Tabs</span><span></span></div>`;
+    // Oldest first: the session you're most likely done with sits at the top.
+    const body = sessionsCache
+      .slice()
+      .sort((a, b) => (a.authTime || 0) - (b.authTime || 0))
+      .map((s) => {
+        const accountName =
+          AccountNamesManager.nameFor(s.account) || s.alias || s.account || "unknown";
+        const who = s.role ? `${accountName} · ${s.role}` : accountName;
+        // AWS has no per-session label of its own — the ARN's session name is
+        // just the SAML RoleSessionName (your email), identical on every row and
+        // so worth nothing as a column. Show only the label you gave the jump
+        // that created this session; the session name stays in the row tooltip.
+        const label = jumpLabelFor(s.account, s.role);
+        const session = label || "—";
+        const regions = (s.regions || []).join(", ") || "—";
+        // Chrome tab-group titles often start with an emoji run straight into
+        // the first word ("✅Claude"); space it so it reads as a label.
+        const group = (s.group || "").replace(/^(\p{Extended_Pictographic}+)(?=\S)/u, "$1 ") || "—";
+        // Every session is signable-out from here: the picker page is not itself
+        // inside a console session, so there is no "current" one to protect —
+        // and no row is singled out, which would only imply otherwise.
+        const action = `<span class="tm_sess_del" role="button" tabindex="-1" title="Sign this session out" aria-label="Sign out">&#10005;</span>`;
+        // Title on the ROW, not just the truncating cells, so hovering anywhere
+        // along it shows the full detail — the columns that never truncate
+        // (started, expires, tabs) would otherwise be dead to the pointer.
+        const rowTitle = [
+          label ? `Session: ${label}` : "",
+          `Account: ${s.account}${accountName && accountName !== s.account ? ` (${accountName})` : ""}`,
+          s.role ? `Role: ${s.role}` : "",
+          s.sessionName ? `Signed in as: ${s.sessionName}` : "",
+          (s.regions || []).length ? `Region: ${(s.regions || []).join(", ")}` : "",
+          s.group ? `Tab group: ${s.group}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        return (
+          `<div class="tm_sess_tr" data-diff="${escapeHtml(s.differentiator)}" title="${escapeHtml(rowTitle)}">` +
+            `<span class="tm_sess_name">${escapeHtml(session)}</span>` +
+            `<span class="tm_sess_name">${escapeHtml(who)}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(regions)}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(group)}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(describeAge(s.authTime))} ago</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(describeRemaining(s.expiry))}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(String(s.tabs || 0))}</span>` +
+            action +
+          `</div>`
+        );
+      })
+      .join("");
+    $rows.html(header + body);
+  };
+
+  // Pull the live session set and repaint the chip. Silent on failure (signed
+  // out, or AWS moved the endpoint) — a wrong count is worse than no count.
+  const refreshSessions = ({ keepOpen = false } = {}) => {
+    const $section = $("#tm_sessions_section");
+    if (!$section.length) return;
+    try {
+      chrome.runtime.sendMessage(
+        { type: "hop_list_sessions", region: GeneralSettingsManager.region() },
+        (res) => {
+          // lastError must be read, or Chrome logs an unchecked-error warning.
+          if (chrome.runtime.lastError || !res || !res.ok) {
+            $section.hide();
+            return;
+          }
+          sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
+          sessionsLimit = res.limit || 5;
+          if (!sessionsCache.length) {
+            $section.hide();
+            closeSessionsPopover();
+            return;
+          }
+          const n = sessionsCache.length;
+          const full = n >= sessionsLimit;
+          const warn = n === sessionsLimit - 1;
+          $("#tm_sessions_pill_text").text(
+            full ? `${n} of ${sessionsLimit} — sign one out` : `${n} of ${sessionsLimit} sessions`
+          );
+          $("#tm_sessions_pill")
+            .toggleClass("tm_sessions_warn", warn)
+            .toggleClass("tm_sessions_full", full);
+          $("#tm_sessions_title").text(`Active AWS sessions — ${n} of ${sessionsLimit}`);
+          $section.show();
+          renderSessionsRows();
+          if (!keepOpen && !sessionsPopoverOpen) closeSessionsPopover();
+
+          // The rail bottom is easy to miss, so at the cap say it out loud once.
+          if (full && !sessionsFullToastShown) {
+            sessionsFullToastShown = true;
+            showToast(
+              `All ${sessionsLimit} AWS sessions are in use — sign one out before signing in again.`,
+              "error",
+              CONFIG.TOAST_DURATION_LONG
+            );
+          }
+        }
+      );
+    } catch (e) {
+      /* service worker unavailable — leave the chip hidden */
+    }
+  };
+
+  // The region a jump through `profileName` should default to: the profile's
+  // own landing region (Jump Profiles field 4) wins, else the last region
+  // jumped into, else the General Settings region.
+  const jumpRegionForProfile = (profileName) => {
+    const profile = AssumeProfilesManager.byName(profileName);
+    return (profile && profile.region) || RegionsManager.jumpRegionSelected();
+  };
+
+  // Fill the Jump region <select> from the configured region list. Pass
+  // { preserve: true } to keep a pick the user has already made in an open
+  // popover (mirrors refreshJumpOrgs); otherwise the selection is recomputed
+  // from the chosen org's profile, so switching org retargets the region.
+  const refreshJumpRegion = ({ preserve = false } = {}) => {
+    const $sel = $("#tm_jump_region");
+    if (!$sel.length) return;
+    const prev = preserve ? String($sel.val() || "") : "";
+    const selected = prev || jumpRegionForProfile($("#tm_jump_org").val());
+    $sel.html(RegionsManager.regionOptionsHTML(selected));
   };
 
   // Rebuild jumpPinnedCache from the current DOM order of the pinned rows —
@@ -5280,6 +5782,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   const openJumpPopover = () => {
     if (!$("#tm_jump_popover").length) return;
     refreshJumpOrgs();
+    refreshJumpRegion();
     refreshJumpRecents();
     $("#tm_jump_popover").css("display", "block");
     jumpPopoverOpen = true;
@@ -5305,6 +5808,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $section.show();
     if (jumpPopoverOpen) {
       refreshJumpOrgs();
+      // Not preserved: the profiles were just edited, so a changed landing
+      // region must win over whatever the open popover happened to show.
+      refreshJumpRegion();
       refreshJumpRecents();
     }
   };
@@ -5322,20 +5828,26 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     background: white !important; border-radius: 8px !important; padding: 20px !important;
                     max-width: 560px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Assume Profiles</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Jump Profiles</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
                         For accounts you reach by <strong>assuming a role from a hub</strong>
                         (role chaining). One org per line:
-                        <code>Org name | 111111111111 | RoleName</code> — the 12-digit
+                        <code>Org name | 111111111111 | RoleName | region</code> — the 12-digit
                         <strong>hub</strong> account you sign into, and the <strong>role</strong>
-                        to assume in the target. These feed the <em>Jump to account</em> bar.
-                        The trust between hub and target must already exist in AWS.
+                        to assume in the target. If that hub account has several roles, say which
+                        one to sign in as with <code>111111111111/HubRole</code> — otherwise the
+                        first row for that account is used, which may be a role that isn't allowed
+                        to assume anything. The <strong>region</strong> is optional: set it
+                        and jumps through this org always land there (otherwise the Jump bar
+                        falls back to your General Settings region). These feed the
+                        <em>Jump to account</em> bar. The trust between hub and target must
+                        already exist in AWS.
                     </p>
                     <textarea id="tm_assume_profiles_input" style="
                         width: 100% !important; height: 200px !important; border: 1px solid #ccc !important;
                         border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
                         font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
-                    " placeholder="Acme Prod | 111111111111 | OrgAdmin&#10;Acme Dev | 222222222222 | OrgAdmin">${escapeHtml(current)}</textarea>
+                    " placeholder="Acme Prod | 111111111111/HubRole | OrgAdmin | eu-central-1&#10;Acme Dev | 222222222222 | OrgAdmin">${escapeHtml(current)}</textarea>
                     <div style="margin-top: 15px !important; text-align: right !important;">
                         <button id="tm_assume_profiles_cancel" style="
                             padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
@@ -5362,7 +5874,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (saved) {
         $("#tm_assume_profiles_modal").remove();
         refreshJumpBar();
-        showToast("Assume profiles saved.", "success", CONFIG.TOAST_DURATION);
+        showToast("Jump profiles saved.", "success", CONFIG.TOAST_DURATION);
       }
     });
   };
@@ -5457,9 +5969,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                 ">
                     <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Clear all AWS sessions?</h3>
                     <p style="margin: 0 0 18px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.5 !important;">
-                        This signs you out of every open AWS console by clearing AWS
-                        authentication cookies. Your console favorites and settings are
-                        kept — you'll just need to pick a role and sign in again.
+                        This signs you out of your AWS console sessions by clearing
+                        <code>aws.amazon.com</code> authentication cookies. Sessions held
+                        elsewhere — an IAM Identity Center portal on
+                        <code>awsapps.com</code>, for instance — are outside the
+                        extension's reach and stay signed in. Your console favorites and
+                        settings are kept; you'll just need to pick a role and sign in
+                        again.
                     </p>
                     <div style="text-align: right !important;">
                         <button id="tm_clear_sessions_cancel" type="button" style="
@@ -6336,9 +6852,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Deep-link into a service",
             `Each role row has a service dropdown (EC2 / S3 / IAM / …). Picking a service before <strong>Sign In</strong> drops you straight into that service's console for that role. Edit the list via <em>Services</em>.`)}
           ${sectionHTML("Pick a region per sign-in",
-            `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Edit which regions appear — and their order — via <em>Regions</em>.`)}
+            `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Prefer every row to always open on the same region? Untick <strong>Remember the region I pick per role</strong> in <em>General Settings</em> — rows and the Jump bar then always start on your default region, and you can still override any single sign-in from its dropdown. Edit which regions appear — and their order — via <em>Regions</em>.`)}
           ${sectionHTML("Jump to account (role chaining)",
-            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Assume Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume</code>) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
+          ${sectionHTML("Active AWS sessions",
+            `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open. <strong>✕</strong> signs an individual session out (click twice to confirm) so you can free a slot without leaving the picker — the session you signed in with is marked <em>you</em> and can't be closed from here. <em>Clear AWS sessions</em> in the side menu still signs them all out at once. Console Hopper only reads session metadata — never cookie contents.`)}
           ${sectionHTML("Rename accounts",
             `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",
@@ -6348,7 +6866,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Tab groups (visual containers)",
             `Chrome tab groups cluster console tabs by role, by organisation, or by a ticket tag — emulates Firefox containers visually. Choose how from the <strong>Tabs:</strong> dropdown in the search column — <em>By role</em>, <em>By org</em>, <em>Custom tag</em> (type a ticket or workstream to group everything under it), or <em>Off</em>. The <em>Tab Groups</em> side-menu entry explains the modes and stays in sync.`)}
           ${sectionHTML("Clear AWS sessions",
-            `<em>Clear AWS Sessions</em> in the side menu signs you out of all open AWS consoles in one click by deleting AWS authentication cookies (cookies only — your favorites and settings are kept). It asks for confirmation first.`)}
+            `<em>Clear AWS Sessions</em> in the side menu signs you out of your AWS console sessions in one click by deleting AWS authentication cookies (cookies only — your favorites and settings are kept). It asks for confirmation first.`)}
           ${sectionHTML("Make it yours",
             `Open the side menu (hover the right edge) to manage <em>Organizations</em>, <em>Environments</em>, <em>Account Types</em>, <em>Role Names</em>, <em>Services</em>, <em>Regions</em>, <em>Account Names</em>, and <em>General Settings</em> (default region, sensitive-sign-in triggers, footer URL). Defaults ship as generic placeholders — rename them to match your org.`)}
           ${sectionHTML("Privacy",
@@ -7150,10 +7668,15 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                               typeof s.label === "string" && s.label.length <= 64 &&
                               typeof s.search === "string" && s.search.length <= 256),
         [SK.COMPACT_MODE]: (v) => typeof v === "boolean",
+        [SK.REMEMBER_REGION]: (v) => typeof v === "boolean",
         [SK.SIGNIN_NEW_TAB]: (v) => typeof v === "boolean",
         [SK.SERVICES]:     isServiceList,
         [SK.LAST_SERVICE]: isPlainStringMap,
-        [SK.LAST_REGION]:  isPlainStringMap,
+        // Values are region codes that end up in a URL host, so charset-check
+        // them rather than accepting any string.
+        [SK.LAST_REGION]:  (v) =>
+                              isPlainStringMap(v) &&
+                              Object.values(v).every((r) => isValidRegionCode(r)),
         [SK.REGION_LIST]:  isRegionList,
         [SK.ACCOUNT_NAMES]: isPlainStringMap,
         [SK.ACCOUNT_TAGS]: isAccountTagMap,
@@ -7166,8 +7689,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.ROLE_ORDER]:   isStringList,
         [SK.TAB_GROUP_TAG]: (v) => typeof v === "string" && v.length <= 64,
         [SK.TAB_GROUP_MODE]: (v) => CONFIG.TAB_GROUP_MODES.includes(v),
-        [SK.AWS_REGION]:   (v) => typeof v === "string" && v.length <= 32,
-        [SK.HOMEPAGE_URL]: (v) => typeof v === "string" && v.length <= 512,
+        [SK.AWS_REGION]:   (v) => typeof v === "string" && isValidRegionCode(v),
+        [SK.HOMEPAGE_URL]: (v) =>
+                              typeof v === "string" && v.length <= 512 &&
+                              (v.trim() === "" || isSafeHttpUrl(v)),
         [SK.SIGNIN_CONFIRM_ROLE_KEYWORDS]: isStringList,
         [SK.SIGNIN_CONFIRM_TYPE_IDS]:      isStringList,
         [SK.WELCOME_SEEN]: (v) => typeof v === "boolean",
@@ -7467,6 +7992,19 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             </span>
           </label>
 
+          <label style="display: flex !important; align-items: flex-start !important; gap: 8px !important; margin-bottom: 14px !important; cursor: pointer !important;">
+            <input type="checkbox" id="tm_gs_remember_region" ${rememberRegionCache ? "checked" : ""} style="margin-top: 2px !important;" />
+            <span>
+              <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; font-size: 13px !important;">Remember the region I pick per role</span>
+              <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 2px !important;">
+                A role's region dropdown reopens on whatever you last chose for it.
+                Turn this off and every row — and the Jump bar — always starts on the
+                default region above. Either way you can change any single sign-in
+                from its own dropdown.
+              </span>
+            </span>
+          </label>
+
           <label style="display: block !important; margin-bottom: 14px !important;">
             <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 4px !important; font-size: 13px !important;">Homepage URL (footer link)</span>
             <input type="text" id="tm_gs_homepage" value="${sanitizeInput(homepageUrlCache)}" placeholder="https://your.docs/url (leave blank to hide)" style="
@@ -7525,6 +8063,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
     $m.find('[data-action="save"]').on("click", async function () {
       const region = ($("#tm_gs_region").val() || "").trim();
+      const rememberRegion = !!$m.find("#tm_gs_remember_region").prop("checked");
       const homepage = ($("#tm_gs_homepage").val() || "").trim();
       const keywordsRaw = ($("#tm_gs_signin_keywords").val() || "").trim();
       const signinRoleKeywords = keywordsRaw
@@ -7534,11 +8073,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         .get().map((el) => el.value);
 
       const prevRegion = awsRegionCache;
-      await GeneralSettingsManager.save({ region, homepage, signinRoleKeywords, signinTypeIds });
+      const prevRemember = rememberRegionCache;
+      await GeneralSettingsManager.save({ region, rememberRegion, homepage, signinRoleKeywords, signinTypeIds });
       updateHomepageFooter();
       close();
-      if (awsRegionCache !== prevRegion) {
-        showToast("Region changed — reloading to refresh service links…", "success", CONFIG.TOAST_DURATION);
+      // This changes what every row's region dropdown opens on, so the list has
+      // to re-render — same reload path as a region change.
+      if (awsRegionCache !== prevRegion || rememberRegionCache !== prevRemember) {
+        showToast("Region settings changed — reloading to refresh service links…", "success", CONFIG.TOAST_DURATION);
         setTimeout(() => location.reload(), 800);
       } else {
         showToast("Settings saved!", "success", CONFIG.TOAST_DURATION);
@@ -8022,6 +8564,31 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   // Reveal + populate the Jump-to-account bar if any assume profiles exist.
   refreshJumpBar();
+
+  // Ask the service worker which console sessions are live. Fire-and-forget:
+  // the chip stays hidden until there's a real count to show.
+  refreshSessions();
+
+  // Keep it live. A sign-in lands in another tab, so without these the picker
+  // would still show the count from page load:
+  //   * the service worker pings us when a console tab appears or closes
+  //   * coming back to this tab re-checks, covering anything the SW missed
+  //   * while the popover is open, tick so ages and expiries stay honest
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "hop_sessions_changed") {
+        refreshSessions({ keepOpen: sessionsPopoverOpen });
+      }
+    });
+  } catch (e) {
+    /* no extension context; the on-open refresh still covers most cases */
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshSessions({ keepOpen: sessionsPopoverOpen });
+  });
+  setInterval(() => {
+    if (sessionsPopoverOpen) refreshSessions({ keepOpen: true });
+  }, 30000);
 
   // Apply initial environment-based styling
   applyEnvironmentStyling();

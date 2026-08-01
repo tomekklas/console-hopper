@@ -26,7 +26,14 @@ export const parseAccountInfo = (accountText) => {
   if (match) {
     return { name: match[1].trim(), id: match[2].trim() };
   }
-  return { name: text.replace(/^Account:\s*/i, ""), id: "" };
+  // No "name (id)" form: AWS renders an account with no IAM alias as a bare
+  // 12-digit id with no parenthetical. Recover the id from a 12-digit run so
+  // id-keyed features — jump-hub matching, tags, filters, account names — keep
+  // working for alias-less accounts; fall back to id-less only when there's no
+  // account number at all.
+  const stripped = text.replace(/^Account:\s*/i, "").trim();
+  const idMatch = stripped.match(/\b\d{12}\b/);
+  return { name: stripped, id: idMatch ? idMatch[0] : "" };
 };
 
 // Shared matcher: a pattern is either an exact account-ID match (full 12-digit
@@ -86,6 +93,12 @@ export const formatRegionLines = (list) =>
   (Array.isArray(list) ? list : [])
     .map((r) => (r.label && r.label !== r.id ? `${r.id}: ${r.label}` : r.id))
     .join("\n");
+
+// True if `code` is a syntactically valid AWS region code. Lenient enough to
+// cover every partition (see REGION_CODE_RE), but strict enough to be safe to
+// drop straight into a console host segment or a `region=` query value — only
+// [a-z0-9-], so a value can never break out and inject elsewhere in the URL.
+export const isValidRegionCode = (code) => REGION_CODE_RE.test(String(code || ""));
 
 // Validate a stored / imported region list into clean [{ id, label }] entries.
 export const normalizeRegionList = (raw) => {
@@ -201,21 +214,38 @@ export const parseAssumeProfileLines = (text) => {
     if (!line) continue;
     const parts = line.split("|").map((p) => p.trim());
     if (parts.length < 3) continue;
-    const hub = parts[1];
+    // The hub may name a specific role to sign into — "123456789012/AdminRole".
+    // Without it the first row for that account wins, which in an account with
+    // several roles may be one that can't assume anything.
+    const [hub, ...hubRoleRest] = parts[1].split("/");
+    const hubRole = hubRoleRest.join("/").trim().slice(0, 128);
     const name = parts[0].slice(0, 64);
     const role = parts[2].slice(0, 128);
     if (!name || !/^\d{12}$/.test(hub) || !role) continue;
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ name, hub, role });
+    // Optional 4th field: the region a jump through this profile should land
+    // in. Omitted (or invalid) leaves it empty, and the Jump popover falls back
+    // to the last jumped-into region / General Settings region.
+    const region = (parts[3] || "").toLowerCase();
+    const entry = { name, hub, role };
+    if (hubRole) entry.hubRole = hubRole;
+    if (isValidRegionCode(region)) entry.region = region;
+    out.push(entry);
   }
   return out;
 };
 
 export const formatAssumeProfileLines = (list) =>
   (Array.isArray(list) ? list : [])
-    .map((p) => `${p.name} | ${p.hub} | ${p.role}`)
+    .map((p) => {
+      // Only emit the optional parts when set, so simpler profiles round-trip
+      // unchanged.
+      const hub = p.hubRole ? `${p.hub}/${p.hubRole}` : p.hub;
+      const head = `${p.name} | ${hub} | ${p.role}`;
+      return p.region ? `${head} | ${p.region}` : head;
+    })
     .join("\n");
 
 export const normalizeAssumeProfiles = (raw) => {
@@ -231,7 +261,14 @@ export const normalizeAssumeProfiles = (raw) => {
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ name, hub, role });
+    // Optional per-profile landing region; dropped when absent or malformed so
+    // an imported settings file can't inject a bad value into a console URL.
+    const region = typeof p.region === "string" ? p.region.trim().toLowerCase() : "";
+    const hubRole = typeof p.hubRole === "string" ? p.hubRole.trim().slice(0, 128) : "";
+    const entry = { name, hub, role };
+    if (hubRole) entry.hubRole = hubRole;
+    if (isValidRegionCode(region)) entry.region = region;
+    out.push(entry);
   }
   return out;
 };

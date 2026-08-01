@@ -57,15 +57,26 @@ features.
   CloudFormation / … before clicking Sign In and land directly in that
   service's console for that role.
 - **Per-sign-in region** — each role row has a region dropdown, so you
-  choose which AWS region a sign-in lands in. Defaults to your region,
-  remembers your last pick per role, and the offered list is editable
-  via `Regions`.
+  choose which AWS region a sign-in lands in. Defaults to your region
+  (`General Settings`) and remembers your last pick per role; untick
+  **Remember the region I pick per role** to make every row always open
+  on the default instead. The offered list is editable via `Regions`.
 - **Jump to account (role chaining)** — for accounts you can only reach
-  by assuming a role from a hub. Configure per-org assume profiles once
-  (`Assume Profiles`: org name, hub account, role to assume), then the
-  **⤳ Jump to account** button signs into the hub and opens AWS's
-  Switch Role pre-filled for your destination account — with an optional
-  session label that becomes the new tab's title, and one-click recents.
+  by assuming a role from a hub, including accounts that aren't in your
+  role list at all. Configure each org once via `Jump Profiles`
+  (`Org name | hub account | role to assume | region`; add `/HubRole` to
+  the hub account when it has more than one role, and the region is
+  optional). The **⤳ Jump to account** button then signs into the hub and
+  opens AWS's Switch Role pre-filled — with a region to land in, an
+  optional session label that becomes the new tab's title, and one-click
+  recents you can pin.
+- **Lands where you chose** — AWS puts a switched role in whatever region
+  it likes; Console Hopper corrects it to the one you picked.
+- **Skips AWS's session picker** — with several console sessions open, AWS
+  interrupts a jump to ask which to switch from, and doesn't reliably
+  pre-select the right one. Console Hopper picks the hub session and
+  submits the pre-filled form, but only during a jump you started and only
+  when the match is unambiguous.
 - **Click-to-copy account ID** — click the account-ID button on any row
   to copy the 12-digit id.
 - **Coloured console tabs** — env-coloured favicon + account-name title
@@ -77,6 +88,12 @@ features.
 - **New-tab sign-in** — ⌘/Ctrl-click, middle-click, or ⌘+Enter opens the
   console in a new tab. A `Sign-in` side-menu option sets the default,
   and the modifier inverts it.
+- **Active AWS sessions** — AWS allows five concurrent console sessions
+  per browser profile and normally only tells you once you're stuck. A
+  counter at the foot of the right column turns amber with one slot left
+  and red when full; open it for every session's account, role, region,
+  tab group, age, time left and open tabs — and sign any one of them out
+  to free a slot. Session metadata only; cookie contents are never read.
 - **Clear AWS Sessions** — one click signs you out of all open AWS
   consoles by clearing AWS auth cookies (your console favourites and
   settings are kept).
@@ -99,7 +116,7 @@ account types.
 | `cookies` | Delete AWS authentication cookies for the **Clear AWS Sessions** button. Cookies are only deleted — never read or transmitted. |
 | Host: `*.aws.amazon.com/*` (incl. `signin.` and `console.`) | Enhance the role picker, decorate console tabs, and clear AWS session cookies. |
 
-No `<all_urls>`, no remote code, no telemetry, no external requests of
+No `<all_urls>`, no remote code, no telemetry, no third-party requests of
 any kind. Everything stays in your browser.
 
 ## Privacy

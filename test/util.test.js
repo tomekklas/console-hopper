@@ -8,6 +8,7 @@ import {
   parseRegionLines,
   formatRegionLines,
   normalizeRegionList,
+  isValidRegionCode,
   parseAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
@@ -44,6 +45,17 @@ describe("parseAccountInfo", () => {
     expect(parseAccountInfo("Account: Foo Prod (123456789012)")).toEqual({
       name: "Foo Prod",
       id: "123456789012",
+    });
+  });
+  it("recovers the id from a bare 12-digit account (no IAM alias)", () => {
+    // AWS renders an alias-less account as just its number, with no "(id)".
+    expect(parseAccountInfo("Account: 321098765432")).toEqual({
+      name: "321098765432",
+      id: "321098765432",
+    });
+    expect(parseAccountInfo("321098765432")).toEqual({
+      name: "321098765432",
+      id: "321098765432",
     });
   });
   it("strips the Account: prefix when there is no id", () => {
@@ -141,6 +153,25 @@ describe("normalizeRegionList", () => {
   });
 });
 
+describe("isValidRegionCode", () => {
+  it("accepts real region codes across partitions", () => {
+    for (const code of ["us-east-1", "eu-central-1", "ap-southeast-2", "us-gov-east-1", "cn-north-1"]) {
+      expect(isValidRegionCode(code)).toBe(true);
+    }
+  });
+  it("rejects empty, non-string, and injection-shaped values", () => {
+    expect(isValidRegionCode("")).toBe(false);
+    expect(isValidRegionCode(null)).toBe(false);
+    expect(isValidRegionCode(undefined)).toBe(false);
+    // A dot, slash, space, or uppercase would let a value escape a host segment
+    // or query value — all must be rejected.
+    expect(isValidRegionCode("eu-central-1.evil.com")).toBe(false);
+    expect(isValidRegionCode("us-east-1/path")).toBe(false);
+    expect(isValidRegionCode("us east 1")).toBe(false);
+    expect(isValidRegionCode("US-EAST-1")).toBe(false);
+  });
+});
+
 describe("parseAccountNameLines", () => {
   it("parses 'id: Name' lines, skipping invalid ids and blanks", () => {
     expect(
@@ -205,6 +236,38 @@ describe("parseAssumeProfileLines", () => {
     );
     expect(p.name).toHaveLength(64);
     expect(p.role).toHaveLength(128);
+  });
+  it("takes an optional 4th field as the landing region, dropping bad ones", () => {
+    expect(
+      parseAssumeProfileLines(
+        "Acme | 111111111111 | OrgAdmin | EU-CENTRAL-1\n" +
+          "Globex | 222222222222 | OrgAdmin | not a region!\n" +
+          "Initech | 333333333333 | OrgAdmin"
+      )
+    ).toEqual([
+      { name: "Acme", hub: "111111111111", role: "OrgAdmin", region: "eu-central-1" },
+      { name: "Globex", hub: "222222222222", role: "OrgAdmin" },
+      { name: "Initech", hub: "333333333333", role: "OrgAdmin" },
+    ]);
+  });
+  it("round-trips through formatAssumeProfileLines with and without a region", () => {
+    const text = "Acme | 111111111111 | OrgAdmin | eu-central-1\nGlobex | 222222222222 | OrgAdmin";
+    expect(formatAssumeProfileLines(parseAssumeProfileLines(text))).toBe(text);
+  });
+  it("takes an optional hub role as 'account/role'", () => {
+    // Without it the first row for the account wins, which may be a role that
+    // can't assume anything.
+    expect(parseAssumeProfileLines("Acme | 111111111111/HubRole | OrgAdmin | eu-west-1")).toEqual([
+      { name: "Acme", hub: "111111111111", role: "OrgAdmin", hubRole: "HubRole", region: "eu-west-1" },
+    ]);
+    // A bare account id still means "any role in that account".
+    expect(parseAssumeProfileLines("Acme | 111111111111 | OrgAdmin")).toEqual([
+      { name: "Acme", hub: "111111111111", role: "OrgAdmin" },
+    ]);
+  });
+  it("round-trips a hub role", () => {
+    const text = "Acme | 111111111111/CHHub | CHJump | eu-central-1";
+    expect(formatAssumeProfileLines(parseAssumeProfileLines(text))).toBe(text);
   });
 });
 
@@ -413,5 +476,31 @@ describe("matchesQuery", () => {
   it("a quoted scoped value is exact", () => {
     expect(q('tag:"palo alto"')).toBe(true);
     expect(q('tag:"palo  alto"')).toBe(false);
+  });
+});
+
+// Region codes reach a URL *host* (`https://<region>.console.aws.amazon.com`),
+// so these are the shapes a hostile settings import would try.
+describe("isValidRegionCode as a URL-host guard", () => {
+  it("rejects values that would bend the sign-in host", () => {
+    for (const bad of [
+      "evil.com/",
+      "eu-central-1.evil.com",
+      "eu-central-1/../..",
+      "eu central 1",
+      "eu_central_1",
+      "EU-CENTRAL-1",
+      "eu-central-1?x=1",
+      "eu-central-1#frag",
+      "//evil.com",
+      "",
+    ]) {
+      expect(isValidRegionCode(bad)).toBe(false);
+    }
+  });
+  it("accepts every partition's real codes", () => {
+    for (const ok of ["us-east-1", "eu-central-1", "us-gov-west-1", "cn-northwest-1", "ap-southeast-4"]) {
+      expect(isValidRegionCode(ok)).toBe(true);
+    }
   });
 });

@@ -3,6 +3,71 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.4.0 — 2026-08-01
+
+### Added
+
+- **Region control for jumps.** The Jump bar now has its own region selector, and
+  a jump profile can carry a default landing region as a fourth field
+  (`Org | hub | role | region`). AWS drops a switched role into whatever region
+  it likes — its per-identity default is "Last used Region" — so Console Hopper
+  corrects the landing region to the one you picked.
+- **Always start in your default region.** *Remember the region I pick per role*
+  in General Settings (on by default) can be turned off, so every row and the
+  Jump bar always open on your default region instead of the last one used.
+- **Active AWS sessions panel.** A counter at the foot of the right column shows
+  how many of AWS's five concurrent console sessions are in use — amber with one
+  slot left, red when full, plus a toast at the cap. Open it for each session's
+  account, role, region, tab group, start time, time remaining and open-tab
+  count, and sign any single session out to free a slot. Reads session metadata
+  only; cookie contents are never touched.
+- **Skips AWS's session picker during a jump.** With several sessions open, AWS
+  asks which to switch from and does not reliably pre-select the right one —
+  the cause of "the selected session doesn't have permission to switch to that
+  role". Console Hopper now selects the hub session and submits the pre-filled
+  form, but only during a jump you started, only when the match is unambiguous,
+  and only for the destination you entered.
+- **Hub role in a jump profile.** A hub account with several roles can name the
+  one to sign in as: `111111111111/HubRole`. Without it the first row for that
+  account is used, which may be a role that cannot assume anything.
+
+### Changed
+
+- **"Assume Profiles" is now "Jump Profiles"** in the side menu, so its name
+  matches the *⤳ Jump to account* button it configures. Stored settings are
+  unchanged.
+
+### Fixed
+
+- **Console tabs stopped being decorated after sign-in.** With AWS multi-session
+  enabled, a sign-in lands on the regional console host and is then redirected to
+  a per-session one — a different origin, where the hand-off carrying the env
+  colour and account name no longer existed. Every direct sign-in was landing
+  without its coloured favicon or account title prefix. The hand-off now travels
+  through extension storage, which the redirect can't strip.
+- **Accounts without an IAM alias were unmatchable by ID.** AWS renders such an
+  account as a bare 12-digit number with no `name (id)` form, so the account id
+  was parsed as empty — silently breaking jump-hub matching, tags, filters and
+  account names for those accounts.
+- **A jump could lose its region and tab decoration.** The hand-off written for
+  the console side was not awaited before the page navigated away, so it
+  sometimes never reached storage.
+- **Jump tab decoration was dropped on landing.** The destination console loads
+  more than once; the first load consumed the single-use hand-off, leaving later
+  loads undecorated. The label is now persisted for the tab.
+- **Hardened settings-import validation.** Region values are now charset-checked
+  wherever they can reach a URL, and the footer link accepts only `http(s)`
+  URLs — on save, on import, and again where it is rendered.
+- **Sign-in payload provenance.** The label a sign-in passes to the console tab
+  now carries a single-use token, so only payloads this extension issued are
+  acted on.
+- **Clear AWS Sessions now removes non-Secure cookies too.** They were being
+  counted as cleared while silently surviving. The wording also now says which
+  sessions it can and cannot reach.
+- **Click-away did not dismiss pop-outs** (the Jump popover, the sessions
+  popover, an armed ✕) when the click landed below the page content, because the
+  listeners were bound to `body` rather than `document`.
+
 ## 1.3.0 — 2026-07-22
 
 ### Added

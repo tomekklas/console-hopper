@@ -11,6 +11,13 @@
   const SS_KEY = "hop_tab_label";
   const FRAGMENT_KEY = "hop";
 
+  // AWS region code shape — lenient (covers every partition) but injection-safe:
+  // only [a-z0-9-], so a value can't break out of a host segment or a query
+  // value. Mirrors isValidRegionCode in src/content/util.js; kept inline because
+  // this is a standalone classic script with no imports. Any region we drop into
+  // the switch-role URL or the destination host is validated against it first.
+  const REGION_CODE_RE = /^[a-z0-9-]+$/;
+
   // Fallback when the payload doesn't carry color/letter (older payloads or
   // unmatched envs): grey favicon with "?" glyph.
   const FALLBACK_COLOR = "#6c757d";
@@ -203,56 +210,158 @@
     } catch (err) { /* extension context may be unavailable; ignore */ }
   }
 
-  const fragment = readFragmentPayload();
-
-  // Chain-jump: a fresh sign-in landing that carries a chain target hops
-  // straight to AWS's Switch Role for the destination account. We read this from
-  // the URL fragment (not sessionStorage) so it fires ONLY on the fresh hub
-  // landing and never re-fires on the switched-into console; the chain is
-  // deliberately not persisted.
-  if (fragment && fragment.chain && fragment.chain.account && fragment.chain.role) {
-    const c = fragment.chain;
-    // The fragment is client-supplied, so re-validate before auto-navigating:
-    // a crafted #hop link must not be able to force a switch-role to an
-    // arbitrary target. Mirror the picker-side contract (12-digit account,
-    // bounded role/displayName).
-    if (/^\d{12}$/.test(String(c.account))) {
-      const role = String(c.role).slice(0, 128);
-      const display = c.displayName ? String(c.displayName).slice(0, 120) : "";
-      const url =
-        "https://signin.aws.amazon.com/switchrole?account=" +
-        encodeURIComponent(c.account) +
-        "&roleName=" +
-        encodeURIComponent(role) +
-        (display ? "&displayName=" + encodeURIComponent(display) : "");
-      window.location.assign(url);
+  // A jump asked to land in a specific region, but AWS drops a freshly switched
+  // role into that identity's own default region. If we didn't land in the
+  // requested one, this returns the same URL with the host's region segment
+  // rewritten, so the caller can reload the console in the right region; null
+  // when no rewrite is needed (already there, no target, or not a regional
+  // multi-session host). The once-only guard lives in the pending entry rather
+  // than sessionStorage: the region is part of the destination hostname, so
+  // changing it changes origin and would wipe any per-tab sessionStorage flag —
+  // exactly when a region AWS refuses bounces us back and we'd loop.
+  function regionPinUrl(region) {
+    try {
+      const target = String(region || "");
+      if (!target || !REGION_CODE_RE.test(target)) return null;
+      // Regional multi-session host: [account-alias, region, "console", …].
+      // Anything else (e.g. a global "…-alias.console.aws.amazon.com" host with
+      // no region segment) is left untouched.
+      const parts = window.location.hostname.split(".");
+      if (parts.length < 6 || parts[2] !== "console") return null;
+      if (!REGION_CODE_RE.test(parts[1]) || parts[1] === target) return null;
+      parts[1] = target;
+      // Keep the rest of the URL byte-for-byte (AWS console URLs carry opaque
+      // encoded params); only swap a region= query value if one is present.
+      const search = window.location.search.replace(/([?&]region=)[^&]*/i, "$1" + target);
+      return (
+        window.location.protocol + "//" + parts.join(".") +
+        window.location.pathname + search + window.location.hash
+      );
+    } catch (e) {
+      return null;
     }
-    return;
   }
 
-  const label = loadLabel(fragment);
-  if (label) {
-    decorate(label);
-    requestTabGrouping(label);
-  } else if (chrome && chrome.storage && chrome.storage.local) {
+  // A #hop payload arrives in the URL fragment, which anyone can craft — so a
+  // link from any site could otherwise paint a real production console as
+  // "DEV/green", relabel its tab, or send you into a pre-filled switch-role.
+  // Every payload the picker emits carries a single-use token recorded in
+  // extension storage; the fragment is trusted only if that token checks out.
+  // The callback always fires, with `false` when it doesn't.
+  function verifyToken(fragment, done) {
+    const tok = fragment && typeof fragment.tok === "string" ? fragment.tok : "";
+    if (!/^[a-f0-9]{32}$/.test(tok)) {
+      done(false);
+      return;
+    }
+    try {
+      chrome.storage.local.get("hop_signin_tokens", (res) => {
+        const all = (res && res.hop_signin_tokens) || {};
+        const issued = all[tok];
+        // Deliberately NOT single-use. A sign-in lands on the plain regional
+        // host and is then redirected to the session-prefixed one, replaying the
+        // same payload on a different origin — so consuming the token on first
+        // sight would leave the tab that actually survives undecorated. The
+        // token proves *we* minted the payload; an attacker cannot guess it, and
+        // the short TTL (pruned when the next one is minted) bounds replay.
+        done(issued != null && Date.now() - issued <= 5 * 60 * 1000);
+      });
+    } catch (e) {
+      done(false);
+    }
+  }
+
+  const rawFragment = readFragmentPayload();
+
+
+  // Decorate from a verified fragment, else from whatever this tab already
+  // trusts (sessionStorage), else from a pending jump hand-off.
+  function applyLabel(trustedFragment) {
+    const label = loadLabel(trustedFragment);
+    if (label) {
+      decorate(label);
+      requestTabGrouping(label);
+      return;
+    }
+    if (!(chrome && chrome.storage && chrome.storage.local)) return;
     // No sign-in label on this tab — but if we just chained into this account
     // via a Jump, the picker stashed a pending decoration keyed by the account
     // id (multi-session subdomains expose it as the leading host segment). Pick
     // it up, decorate the tab with the session label + env colour, and clear it.
     const m = window.location.hostname.match(/^(\d{12})-/);
-    if (m) {
-      const acct = m[1];
-      chrome.storage.local.get("hop_pending_jumps", (res) => {
-        const pending = (res && res.hop_pending_jumps) || {};
-        const hit = pending[acct];
-        if (!hit) return;
-        // Consume the entry on landing regardless of freshness, then decorate
-        // only if it hasn't expired (a missing timestamp counts as expired).
+    if (!m) return;
+    const acct = m[1];
+    chrome.storage.local.get("hop_pending_jumps", (res) => {
+      const pending = (res && res.hop_pending_jumps) || {};
+      const hit = pending[acct];
+      if (!hit) return;
+      // Expired (or clock-less) entry: consume and bail without decorating.
+      if (!hit.ts || Date.now() - hit.ts > 5 * 60 * 1000) {
         delete pending[acct];
         chrome.storage.local.set({ hop_pending_jumps: pending });
-        if (!hit.ts || Date.now() - hit.ts > 5 * 60 * 1000) return;
-        decorate({ account: hit.label || acct, envColor: hit.envColor, envLetter: hit.envLetter });
-      });
-    }
+        return;
+      }
+      // Pin the region first — but only once. The attempt is recorded in the
+      // entry (which lives in chrome.storage.local, so it survives the
+      // cross-origin region redirect) and the entry is left in place, so the
+      // post-redirect load still consumes it and decorates. If AWS refuses the
+      // region and bounces us back, regionPinTried is already set → we stop and
+      // decorate in whatever region we ended up in, rather than looping.
+      if (!hit.regionPinTried) {
+        const url = regionPinUrl(hit.region);
+        if (url) {
+          hit.regionPinTried = true;
+          chrome.storage.local.set({ hop_pending_jumps: pending }, () => {
+            window.location.assign(url);
+          });
+          return;
+        }
+      }
+      delete pending[acct];
+      chrome.storage.local.set({ hop_pending_jumps: pending });
+      const jumpLabel = {
+        account: hit.label || acct,
+        envColor: hit.envColor,
+        envLetter: hit.envLetter,
+      };
+      // The destination console loads more than once (AWS redirects after the
+      // switch-role settles). The entry is single-use, so without this the
+      // second load would land undecorated and wipe the title prefix applied by
+      // the first. Persist it per-origin — loadLabel() picks it up from here on
+      // every later load in this tab.
+      try {
+        sessionStorage.setItem(SS_KEY, JSON.stringify(jumpLabel));
+      } catch (e) { /* private mode or storage full; decoration is best-effort */ }
+      decorate(jumpLabel);
+    });
+  }
+
+  // Chain-jump: a verified sign-in landing that carries a chain target hops
+  // straight to AWS's Switch Role for the destination account. Read from the
+  // fragment (not sessionStorage) so it fires ONLY on the fresh hub landing and
+  // never re-fires on the switched-into console.
+  if (rawFragment && rawFragment.chain && rawFragment.chain.account && rawFragment.chain.role) {
+    verifyToken(rawFragment, (trusted) => {
+      if (!trusted) return;
+      const c = rawFragment.chain;
+      // Re-validate even when trusted, mirroring the picker-side contract
+      // (12-digit account, bounded role/displayName).
+      if (!/^\d{12}$/.test(String(c.account))) return;
+      const role = String(c.role).slice(0, 128);
+      const display = c.displayName ? String(c.displayName).slice(0, 120) : "";
+      // A region on the chain asks AWS to land the switched role there. AWS
+      // doesn't document this param, so it's best-effort — the pending-jump
+      // branch pins the region for certain if AWS ignores it.
+      const region = REGION_CODE_RE.test(String(c.region || "")) ? String(c.region) : "";
+      window.location.assign(
+        "https://signin.aws.amazon.com/switchrole?account=" +
+          encodeURIComponent(c.account) +
+          "&roleName=" + encodeURIComponent(role) +
+          (display ? "&displayName=" + encodeURIComponent(display) : "") +
+          (region ? "&region=" + encodeURIComponent(region) : "")
+      );
+    });
+  } else {
+    verifyToken(rawFragment, (trusted) => applyLabel(trusted ? rawFragment : null));
   }
 })();

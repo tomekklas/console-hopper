@@ -1,7 +1,7 @@
 # Privacy Policy — Console Hopper
 
 **Effective date:** 19 May 2026
-**Last updated:** 19 May 2026
+**Last updated:** 1 August 2026
 
 This page explains what Console Hopper (the "extension") does and does
 not do with your data. The short version: **the extension does not
@@ -48,14 +48,23 @@ when you uninstall the extension.
 
 The extension does **not**:
 
-- Send any HTTP requests, WebSocket messages, or telemetry to any
-  server controlled by the authors or by anyone else
+- Send any HTTP requests, WebSocket messages, or telemetry to servers
+  controlled by the authors, or to any third party. The extension talks
+  only to AWS itself, and only for two things: reading the list of AWS
+  console sessions open in your browser (so it can show you how many of
+  AWS's five slots are in use), and signing a session out when you click
+  the ✕ next to it. Both are ordinary AWS endpoints, sent from your
+  browser with your existing AWS cookies, exactly as the AWS console
+  itself would
 - Use cookies, fingerprinting, analytics, error reporting, or any
   third-party SDK
 - Read or transmit your AWS credentials, SAML assertions, session
   tokens, or any authentication material. (The optional **Clear AWS
   Sessions** button deletes AWS session cookies on your device when you
-  click it — to sign you out — but never reads or transmits them.)
+  click it — to sign you out — but never reads or transmits them. The
+  session list described above returns only metadata — account id, role
+  name, when the session started and when it expires — never credentials
+  or cookie contents.)
 - Read content from pages outside the AWS sign-in and AWS console
   domains listed above
 - Collect personally identifiable information, health, financial,
@@ -70,7 +79,7 @@ The extension does **not**:
 | `tabs` | To read the calling tab's id and window in the service worker, so a newly opened AWS console tab can be placed into the correct Chrome tab group. |
 | `tabGroups` | To create and update Chrome tab groups that visually cluster AWS console tabs by account, role, or organisation. |
 | `cookies` | To delete AWS authentication cookies when you click **Clear AWS Sessions**, signing you out of all AWS consoles at once. The extension only deletes these cookies — it never reads their contents or sends them anywhere. |
-| Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, and clear AWS session cookies. |
+| Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, clear AWS session cookies, and call AWS's own session endpoints on `signin.aws.amazon.com` — one to list the console sessions open in your browser, one to sign a single session out when you ask. Requests go only to AWS, from your browser, with the cookies you already have. |
 
 ## Sharing
 
