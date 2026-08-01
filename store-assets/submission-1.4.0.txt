@@ -54,6 +54,31 @@ Creates and updates Chrome tab groups so AWS console tabs cluster visually by ac
 Used solely by the extension's "Clear AWS Sessions" feature, which lets the user sign out of all open AWS console sessions in one click. Only when the user clicks "Clear AWS Sessions" and confirms, the service worker enumerates cookies on aws.amazon.com and its sign-in / console subdomains (chrome.cookies.getAll) and deletes them (chrome.cookies.remove). It uses only each cookie's name and domain to target it for deletion; it does not use, store, log, or transmit any cookie value or content. No cookies are read for any other purpose.
 
 
+--- Host permission justification (COMBINED — the dashboard has one field)
+
+Use this single block for the "Host permission justification" textarea. The
+three per-pattern versions below it are kept for reference only; the form
+does not have a field per pattern.
+
+All host permissions are limited to aws.amazon.com and its subdomains. No other site is accessed.
+
+signin.aws.amazon.com/saml (and its regional subdomains) — injects the enhanced role-picker UI: filters, search, favorites, account tags, and the service and region dropdowns. Without this the extension has no user interface.
+
+signin.aws.amazon.com/sessions/* and /switchrole* — when the user starts a role-chaining "jump", AWS may interrupt it to ask which existing console session to switch from, and does not reliably pre-select the right one. The extension selects the session the jump signed in as and submits the pre-filled form. It acts only while a jump the user started is pending, only when the match is unambiguous, and only for the destination account the user entered.
+
+console.aws.amazon.com/* (and its regional subdomains) — sets the per-tab favicon colour and the account-name title prefix so many open AWS console tabs stay distinguishable.
+
+aws.amazon.com/* — two uses. First, the cookies API deletes AWS authentication cookies for the one-click "Clear AWS Sessions" feature; only cookie names and domains are used to target deletion, never their contents. Second, the service worker calls signin.aws.amazon.com/sessions/v1/list to show how many of AWS's five concurrent console sessions are in use, and .../sessions/{id}/v1/logout to sign a single session out when the user clicks. These requests go only to AWS, from the user's own browser, with the cookies they already have — exactly as the AWS console itself does. The list returns session metadata only (account id, role name, start and expiry time), which is displayed to the user and never stored or transmitted anywhere else. The extension makes no other network requests, and none at all to servers controlled by its author.
+
+
+--- Are you using remote code? --------------------------------------
+
+No, I am not using remote code.
+
+All code is contained in the package. There is no eval, no new Function,
+no remotely hosted script, and no external <script> tag.
+
+
 --- Host permission: https://aws.amazon.com/*, https://*.aws.amazon.com/*
 
 Two uses, both limited to aws.amazon.com and its subdomains — no other sites are touched. First, it grants the cookies API the access it needs to delete AWS authentication cookies for the "Clear AWS Sessions" feature. Second, it lets the service worker call two AWS endpoints on the user's behalf, with the user's existing AWS cookies, exactly as the AWS console itself does: signin.aws.amazon.com/sessions/v1/list to read how many of AWS's five concurrent console sessions are in use (the "Active AWS sessions" panel), and .../sessions/{id}/v1/logout to sign one session out when the user clicks the button next to it. The list response contains only session metadata — account id, role name, start and expiry time — which is displayed to the user and never stored or transmitted anywhere else. The extension makes no other network requests, and none at all to servers controlled by its authors.
