@@ -56,19 +56,25 @@ Used solely by the extension's "Clear AWS Sessions" feature, which lets the user
 
 --- Host permission justification (COMBINED — the dashboard has one field)
 
-Use this single block for the "Host permission justification" textarea. The
-three per-pattern versions below it are kept for reference only; the form
-does not have a field per pattern.
+Paste this whole block into the single "Host permission justification"
+textarea. The field caps at 1000 characters; this is 973, so it fits with
+a little room. The three per-pattern versions further down are reference
+only — the form has no field per pattern, do not paste those.
 
-All host permissions are limited to aws.amazon.com and its subdomains. No other site is accessed.
+If it ever needs to be shorter, cut the console.aws.amazon.com and
+signin.aws.amazon.com/saml lines first: those patterns are unchanged since
+1.0. The sessions/switchrole paragraph and the two named endpoints must
+stay — they are the only new claims a reviewer can challenge.
 
-signin.aws.amazon.com/saml (and its regional subdomains) — injects the enhanced role-picker UI: filters, search, favorites, account tags, and the service and region dropdowns. Without this the extension has no user interface.
+All patterns are aws.amazon.com subdomains; no other site is touched.
 
-signin.aws.amazon.com/sessions/* and /switchrole* — when the user starts a role-chaining "jump", AWS may interrupt it to ask which existing console session to switch from, and does not reliably pre-select the right one. The extension selects the session the jump signed in as and submits the pre-filled form. It acts only while a jump the user started is pending, only when the match is unambiguous, and only for the destination account the user entered.
+signin.aws.amazon.com/saml — injects the enhanced role-picker UI.
 
-console.aws.amazon.com/* (and its regional subdomains) — sets the per-tab favicon colour and the account-name title prefix so many open AWS console tabs stay distinguishable.
+signin.aws.amazon.com/sessions/* and /switchrole* — when the user starts a role-chaining jump, AWS asks which console session to switch from and often pre-selects the wrong one; the extension picks the right one and submits the form. Only during that jump, only for the account entered.
 
-aws.amazon.com/* — two uses. First, the cookies API deletes AWS authentication cookies for the one-click "Clear AWS Sessions" feature; only cookie names and domains are used to target deletion, never their contents. Second, the service worker calls signin.aws.amazon.com/sessions/v1/list to show how many of AWS's five concurrent console sessions are in use, and .../sessions/{id}/v1/logout to sign a single session out when the user clicks. These requests go only to AWS, from the user's own browser, with the cookies they already have — exactly as the AWS console itself does. The list returns session metadata only (account id, role name, start and expiry time), which is displayed to the user and never stored or transmitted anywhere else. The extension makes no other network requests, and none at all to servers controlled by its author.
+console.aws.amazon.com/* — sets the tab favicon colour and account-name title.
+
+aws.amazon.com/* — the cookies API deletes AWS auth cookies for "Clear AWS Sessions" (names and domains only, never contents). The service worker calls sessions/v1/list to show how many of AWS's five console sessions are in use, and sessions/{id}/v1/logout to sign one out on click — to AWS only, from the user's browser, with their existing cookies. The list returns metadata only (account id, role, start, expiry), shown to the user, never stored or sent elsewhere.
 
 
 --- Are you using remote code? --------------------------------------
