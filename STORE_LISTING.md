@@ -63,7 +63,7 @@ WHAT YOU GET
   Every filter group is editable from the side menu.
 
 • Tag accounts
-  Give accounts your own short labels — palo-alto, prod-network, a
+  Give accounts your own short labels — prod-network, pci, a
   ticket number — and organise by them. Add or remove tags inline from
   a chip on each row (with autocomplete), or edit in bulk from the side
   menu. Tags get their own filter row and are searchable with tag:.
