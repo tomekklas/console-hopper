@@ -4,9 +4,9 @@ If you have access to dozens — or hundreds — of AWS accounts via SAML SSO, t
 
 NEW IN 1.4.0
 
-• Active AWS sessions — AWS allows five concurrent console sessions and only tells you once you're at the limit. Now you can see how many are in use, what each one is, and sign a single one out to free a slot.
-• Region control for jumps — pick the region a jump lands in, or give a jump profile a default one, instead of taking whichever region AWS chooses for that account.
-• No more session picker mid-jump — with several sessions open AWS asks which to switch from, and doesn't reliably pre-select the right one. Console Hopper now picks it and submits the form for you.
+• Active AWS sessions — see how many console sessions you have open, and sign one out without closing the others.
+• Region control for jumps — choose the region a jump lands in, or set a default per jump profile.
+• Fewer clicks mid-jump — when AWS asks which session to switch from, Console Hopper answers for you.
 
 WHAT YOU GET
 
@@ -14,7 +14,7 @@ WHAT YOU GET
 Filter by organisation, environment (prod/test/dev), account type (Management / Security / Logging / …), role-name keyword (Admin / ReadOnly / PowerUser / …) or your own tags. The search box is separator-insensitive (type "test 123" to find "test123") and supports scoped terms — tag:, role:, name:, account:, env:, type:, org: — combined with a space (and), a comma (or) or a leading - (exclude), with "quotes" for an exact phrase. It pops out into a roomy card with click-to-insert suggestions and a live match count. Every filter group is editable from the side menu.
 
 • Tag accounts
-Give accounts your own short labels — palo-alto, prod-network, a ticket number — and organise by them. Add or remove tags inline from a chip on each row (with autocomplete), or edit in bulk from the side menu. Tags get their own filter row and are searchable with tag:.
+Give accounts your own short labels — prod-network, pci, a ticket number — and organise by them. Add or remove tags inline from a chip on each row (with autocomplete), or edit in bulk from the side menu. Tags get their own filter row and are searchable with tag:.
 
 • Save searches as shortcuts
 Turn a useful query + filter combination into a named chip in one click, then re-apply the whole view — search and filters — whenever you need it. Set any shortcut (or Favorites, Recent, or a tag) as your "Start View" so the picker opens on it every load.

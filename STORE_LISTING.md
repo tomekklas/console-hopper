@@ -42,15 +42,12 @@ name in the title.
 
 NEW IN 1.4.0
 
-• Active AWS sessions — AWS allows five concurrent console sessions and
-  only tells you once you're at the limit. Now you can see how many are
-  in use, what each one is, and sign a single one out to free a slot.
-• Region control for jumps — pick the region a jump lands in, or give a
-  jump profile a default one, instead of taking whichever region AWS
-  chooses for that account.
-• No more session picker mid-jump — with several sessions open AWS asks
-  which to switch from, and doesn't reliably pre-select the right one.
-  Console Hopper now picks it and submits the form for you.
+• Active AWS sessions — see how many console sessions you have open, and
+  sign one out without closing the others.
+• Region control for jumps — choose the region a jump lands in, or set a
+  default per jump profile.
+• Fewer clicks mid-jump — when AWS asks which session to switch from,
+  Console Hopper answers for you.
 
 WHAT YOU GET
 
