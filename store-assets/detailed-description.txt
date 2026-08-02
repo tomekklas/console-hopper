@@ -29,7 +29,7 @@ For accounts you can only reach by assuming a role from a hub — including acco
 Star roles you use often. Recently signed-in roles are tracked automatically (configurable limit).
 
 • Deep-link into a service
-Each role row has a service dropdown — EC2, S3, IAM, CloudWatch, Lambda, CloudFormation, VPC, RDS, plus anything you add. Pick a service before Sign In and you land directly in that service's console for that role.
+Each role row has a service dropdown. Pick one before Sign In and you land straight in that service's own console for that role, instead of the console home page and another two clicks. A handful of common destinations are set up by default, and you can add, rename or remove any of them from the side menu.
 
 • Per-sign-in region
 Each role row also has a region dropdown — choose which AWS region a sign-in lands in. It defaults to your region and remembers your last pick per role; turn off “Remember the region I pick per role” in General Settings and every row always opens on your default instead. Edit the offered regions via “Regions”.

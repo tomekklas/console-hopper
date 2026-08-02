@@ -102,10 +102,11 @@ WHAT YOU GET
   automatically (configurable limit).
 
 • Deep-link into a service
-  Each role row has a service dropdown — EC2, S3, IAM, CloudWatch,
-  Lambda, CloudFormation, VPC, RDS, plus anything you add. Pick a
-  service before Sign In and you land directly in that service's
-  console for that role.
+  Each role row has a service dropdown. Pick one before Sign In and you
+  land straight in that service's own console for that role, instead of
+  the console home page and another two clicks. A handful of common
+  destinations are set up by default, and you can add, rename or remove
+  any of them from the side menu.
 
 • Per-sign-in region
   Each role row also has a region dropdown — choose which AWS region a
