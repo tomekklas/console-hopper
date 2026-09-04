@@ -27,8 +27,6 @@ import {
   normalizeJumpDests,
   jumpDestKey,
   isSafeServicePath,
-  resolveServiceToken,
-  serviceTokenForPath,
   parseJumpDestLines,
   formatJumpDestLines,
   searchMatches,
@@ -5652,6 +5650,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $(".saml-role").each(function () {
       if (arn) return;
       const $row = $(this);
+      // Only DIRECT rows can be a hub: a ⤳ jump row for the same account
+      // carries a jump:: pseudo-ARN that the SAML form could never submit.
+      if ($row.attr("data-jump") === "1") return;
       if ($row.find(".tm_account_id").text().trim() !== accountId) return;
       if (roleName && $row.find(".tm_role_name").text().trim() !== roleName) return;
       arn = $row.find(".tm_signin_button").attr("data-role-arn") || "";

@@ -3,6 +3,56 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.5.0 — 2026-09-04
+
+### Added
+
+- **Jump destinations live in the role listing.** Save an account you chain
+  into and it appears as a **⤳ row** among your normal roles — searchable,
+  taggable, favouritable and drag-orderable like any other row, with its own
+  landing **Service** and **Region** dropdowns and a **Jump** button where a
+  direct role has Sign In. A dashed environment stripe and a small
+  "via *profile* hub · max 1 h" line keep the mechanism visible, and a
+  destination whose hub role isn't in today's role list greys out with the
+  reason on the row instead of failing at click time.
+- **Source filter and `is:jump` search.** Once at least one destination is
+  saved, a **Source** filter row (Direct roles / ⤳ Jumps) appears above the
+  listing, and `is:jump` / `source:direct` join the search syntax.
+- **Jump Destinations** in the side menu (Configure) — the one place
+  destinations are added, renamed, relabelled and removed: an add form (name
+  optional, 12-digit account, profile, session label), per-row landing
+  service/region that save as you change them, ✕ with the usual
+  click-again-to-confirm, and **Import…** for bulk paste — one per line,
+  `Name | account | profile | region | service | label`, or start the line
+  with the bare 12-digit id to skip the name (the box is pre-filled with the
+  current list in the same format).
+- **"Save as a named destination"** tick in the ⤳ Jump popover — jump
+  somewhere once and keep it as a listing row, with the label and region you
+  picked, no separate setup step.
+- **Jumps can land on a service.** A destination row's Service dropdown picks
+  where the jump lands — after the switch-role settles, the same single
+  navigation that already corrects the landing region now deep-links into the
+  chosen service console too.
+- **Sensitive-sign-in confirmation now covers jumps.** A jump whose
+  destination account or assumed role matches your confirmation triggers asks
+  first, exactly like a direct sign-in; previously jumps skipped the check.
+- **"Sign out all sessions"** in the Active AWS sessions panel — outlined
+  red, needs a second click to confirm, then signs out every session using the
+  same per-session logout the row ✕ uses. (It is not the cookie-clearing
+  *Clear AWS Sessions* — console settings and the multi-session opt-in are
+  untouched.)
+
+### Fixed
+
+- **The sessions panel could hand your click to a Sign In button.** The
+  panel's ✕ column sits directly above the listing's Sign In buttons, and
+  signing out the last session hid the whole panel — so a click aimed at the
+  next ✕ landed on the listing underneath and signed into a different
+  account. The panel now stays open at zero sessions ("0 of 5", with an
+  explicit Close), stays visible through a transient refresh failure while
+  open, and sits on a scrim that swallows any click outside it, so a stray
+  click can no longer reach the page below.
+
 ## 1.4.0 — 2026-08-01
 
 ### Added
