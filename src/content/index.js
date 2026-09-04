@@ -24,6 +24,13 @@ import {
   formatAssumeProfileLines,
   normalizeAssumeProfiles,
   normalizeJumpRecents,
+  normalizeJumpDests,
+  jumpDestKey,
+  isSafeServicePath,
+  resolveServiceToken,
+  serviceTokenForPath,
+  parseJumpDestLines,
+  formatJumpDestLines,
   searchMatches,
   parseQuery,
   matchesQuery,
@@ -77,6 +84,7 @@ import {
       ASSUME_PROFILES: "aws_assume_profiles",
       JUMP_RECENTS: "aws_jump_recents",
       JUMP_PINNED: "aws_jump_pinned",
+      JUMP_DESTS: "aws_jump_dests",
     },
     TAB_GROUP_MODES: ["role", "org", "off", "custom"],
     TAB_GROUP_MODE_LABELS: { role: "By role", org: "By org", off: "Off", custom: "Custom tag" },
@@ -636,6 +644,30 @@ import {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.ASSUME_PROFILES]: JSON.stringify(list),
+        });
+        return true;
+      }, false);
+    },
+    async getJumpDests() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.JUMP_DESTS);
+        return result[CONFIG.STORAGE_KEYS.JUMP_DESTS] ?? null;
+      }, null);
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          console.error("Error parsing jump destinations:", e);
+          parsed = null;
+        }
+      }
+      return normalizeJumpDests(parsed);
+    },
+    async saveJumpDests(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          [CONFIG.STORAGE_KEYS.JUMP_DESTS]: JSON.stringify(list),
         });
         return true;
       }, false);
@@ -1507,6 +1539,7 @@ import {
   // filters / search / grouping / tab titles all read the displayed name, it
   // applies everywhere. Edit via Account Names.
   let assumeProfilesCache = [];
+  let jumpDestsCache = [];
   let jumpRecentsCache = [];
   let jumpPinnedCache = [];
   let jumpPopoverOpen = false;
@@ -1530,6 +1563,50 @@ import {
     },
     byName(name) {
       return assumeProfilesCache.find((p) => p.name === name) || null;
+    },
+  };
+
+  // Saved jump destinations — the accounts you chain into often enough to want
+  // them as ⤳ rows in the main listing. Managed from the side menu (Jump
+  // Destinations) and grown organically by the Jump popover's save tick.
+  const JumpDestinationsManager = {
+    async loadCache() {
+      jumpDestsCache = await StorageManager.getJumpDests();
+      debug("Jump destinations cache loaded:", jumpDestsCache.length, "entries");
+    },
+    async save(list) {
+      const clean = normalizeJumpDests(list);
+      const saved = await StorageManager.saveJumpDests(clean);
+      if (saved !== false) {
+        jumpDestsCache = clean;
+        return true;
+      }
+      showToast("Failed to save jump destinations", "error");
+      return false;
+    },
+    all() {
+      return jumpDestsCache;
+    },
+    find(account, profile) {
+      const p = String(profile || "").toLowerCase();
+      return (
+        jumpDestsCache.find(
+          (d) => d.account === account && d.profile.toLowerCase() === p
+        ) || null
+      );
+    },
+    // Insert or update the entry for account+profile. Only the fields present
+    // in `patch` change, so a popover save can't wipe a name set in the dialog.
+    async upsert(account, profile, patch = {}) {
+      const existing = this.find(account, profile);
+      const merged = { ...(existing || { account, profile }), ...patch, account, profile };
+      const rest = jumpDestsCache.filter((d) => d !== existing);
+      return await this.save(existing ? [merged, ...rest] : [...rest, merged]);
+    },
+    async remove(account, profile) {
+      const hit = this.find(account, profile);
+      if (!hit) return true;
+      return await this.save(jumpDestsCache.filter((d) => d !== hit));
     },
   };
 
@@ -2749,13 +2826,17 @@ import {
                             <button type="button" id="tm_sessions_pill" title="AWS allows 5 concurrent console sessions — click to review or sign one out">
                                 <span id="tm_sessions_pill_text">sessions</span>
                             </button>
+                            <div id="tm_sessions_scrim" style="display: none;"></div>
                             <div id="tm_sessions_popover" style="display: none;">
                                 <div id="tm_sessions_head">
                                     <span id="tm_sessions_title">Active AWS sessions</span>
                                     <span id="tm_sessions_close" role="button" tabindex="-1" aria-label="Close" title="Close">&#10005;</span>
                                 </div>
                                 <div id="tm_sessions_rows"></div>
-                                <div id="tm_sessions_hint">Sign out a session to free a slot for a new sign-in.</div>
+                                <div id="tm_sessions_foot">
+                                    <div id="tm_sessions_hint">Sign out a session to free a slot for a new sign-in.</div>
+                                    <button type="button" id="tm_sess_signout_all" title="Sign out of every AWS console session — needs a second click to confirm">Sign out all sessions</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -3116,7 +3197,31 @@ import {
         .tm_sess_del.tm_confirm_del {
             color: white !important; background-color: #c0392b !important; font-size: 11px !important;
         }
-        #tm_sessions_hint { font-size: 12px !important; color: #8a9199 !important; padding-top: 8px !important; }
+        /* While the panel is open a near-invisible scrim sits between it and
+           the page. It exists to EAT clicks: the ✕ column and the sign-out-all
+           button align directly over the listing's Sign In buttons, so a stray
+           click (especially right after the panel changes under the pointer)
+           must never fall through and sign into an account. */
+        #tm_sessions_scrim {
+            position: fixed !important; top: 0 !important; left: 0 !important;
+            right: 0 !important; bottom: 0 !important; z-index: 9999 !important;
+            background: rgba(0, 0, 0, 0.12) !important;
+        }
+        #tm_sessions_foot {
+            display: flex !important; justify-content: space-between !important;
+            align-items: center !important; gap: 16px !important; padding-top: 8px !important;
+        }
+        #tm_sessions_hint { font-size: 12px !important; color: #8a9199 !important; flex: 1 !important; }
+        #tm_sess_signout_all {
+            border: 1px solid #c0392b !important; color: #c0392b !important; background: #fff !important;
+            border-radius: 4px !important; padding: 6px 12px !important; font-size: 12px !important;
+            cursor: pointer !important; white-space: nowrap !important;
+        }
+        #tm_sess_signout_all:hover { background: #fbeae8 !important; }
+        #tm_sess_signout_all.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
+        body.tm_theme_dark #tm_sessions_scrim { background: rgba(0, 0, 0, 0.35) !important; }
+        body.tm_theme_dark #tm_sess_signout_all { background: #232830 !important; }
+        body.tm_theme_dark #tm_sess_signout_all.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
         #tm_sessions_empty { font-size: 13px !important; color: #8a9199 !important; padding: 10px 0 !important; }
         body.tm_theme_dark #tm_sessions_pill { background: #2a2f36 !important; border-color: #3a4148 !important; color: #c7ccd1 !important; }
         body.tm_theme_dark #tm_sessions_pill.tm_sessions_warn { background: #3a3320 !important; border-color: #7a5b12 !important; color: #f0c36d !important; }
@@ -4429,6 +4534,7 @@ import {
   await AccountNamesManager.loadCache();
   await AccountTagsManager.loadCache();
   await AssumeProfilesManager.loadCache();
+  await JumpDestinationsManager.loadCache();
   jumpRecentsCache = await StorageManager.getJumpRecents();
   jumpPinnedCache = await StorageManager.getJumpPinned();
   // Pattern caches must be loaded before filtering / styling kicks in.
@@ -4785,6 +4891,7 @@ import {
       return;
     }
     sessionsPopoverOpen = true;
+    $("#tm_sessions_scrim").css("display", "block");
     $("#tm_sessions_popover").css("display", "block");
     // Repaint on open so ages, expiries and tab counts are current, not stale
     // from page load.
@@ -4821,6 +4928,44 @@ import {
           // A freed slot means the cap warning is worth showing again.
           sessionsFullToastShown = false;
           showToast("Session signed out — a slot is free.", "success", CONFIG.TOAST_DURATION);
+          refreshSessions({ keepOpen: sessionsPopoverOpen });
+        }
+      );
+    });
+  });
+
+  // Clicks on the scrim close the panel and go NO further — the scrim's whole
+  // job is to keep a click aimed at the panel from reaching the Sign In
+  // buttons underneath it.
+  $("body").on("click", "#tm_sessions_scrim", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeSessionsPopover();
+  });
+
+  // "Sign out all" — same two-step arm as the per-row ✕ (first click fills it
+  // red, second confirms), then one message signs out every live session.
+  $("body").on("click", "#tm_sess_signout_all", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sessionsCache.length) return;
+    twoStepDelete($(this), this, () => {
+      showToast("Signing out of every AWS session…", "info", CONFIG.TOAST_DURATION);
+      chrome.runtime.sendMessage(
+        { type: "hop_signout_all", region: GeneralSettingsManager.region() },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.ok) {
+            showToast("Could not sign the sessions out.", "error", CONFIG.TOAST_DURATION);
+            return;
+          }
+          sessionsFullToastShown = false;
+          showToast(
+            res.done === res.total
+              ? `Signed out of ${res.done} session${res.done === 1 ? "" : "s"}.`
+              : `Signed out of ${res.done} of ${res.total} sessions.`,
+            res.done === res.total ? "success" : "error",
+            CONFIG.TOAST_DURATION
+          );
           refreshSessions({ keepOpen: sessionsPopoverOpen });
         }
       );
@@ -5590,8 +5735,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   const closeSessionsPopover = () => {
     $("#tm_sessions_popover").css("display", "none");
+    $("#tm_sessions_scrim").css("display", "none");
     sessionsPopoverOpen = false;
     disarmConfirmDelete();
+    // The panel may have emptied while open (last ✕, or sign-out-all) — it
+    // stays up for the explicit close, and only now does the section go.
+    if (!sessionsCache.length) $("#tm_sessions_section").hide();
   };
 
   const renderSessionsRows = () => {
@@ -5599,8 +5748,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (!$rows.length) return;
     if (!sessionsCache.length) {
       $rows.html(`<div id="tm_sessions_empty">No active AWS console sessions.</div>`);
+      $("#tm_sess_signout_all").hide();
+      $("#tm_sessions_hint").text("All sessions are signed out — close the panel when you're done.");
       return;
     }
+    $("#tm_sessions_hint").text("Sign out a session to free a slot for a new sign-in.");
+    $("#tm_sess_signout_all")
+      .text(`Sign out all sessions (${sessionsCache.length})`)
+      .show();
     const header =
       `<div class="tm_sess_th"><span>Label</span><span>Account &middot; role</span>` +
       `<span>Region</span><span>Tab group</span><span>Started</span><span>Expires</span><span>Tabs</span><span></span></div>`;
@@ -5667,14 +5822,28 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         (res) => {
           // lastError must be read, or Chrome logs an unchecked-error warning.
           if (chrome.runtime.lastError || !res || !res.ok) {
-            $section.hide();
+            // While the panel is open, a transient read failure must not make
+            // it vanish under the pointer — stale-but-visible beats the
+            // fall-through click. Hidden is fine when it's closed anyway.
+            if (!sessionsPopoverOpen) $section.hide();
             return;
           }
           sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
           sessionsLimit = res.limit || 5;
           if (!sessionsCache.length) {
-            $section.hide();
-            closeSessionsPopover();
+            // With the panel open, vanishing here is the mis-click trap: the
+            // ✕ the user is hovering sits directly over a Sign In button, so
+            // the queued next click would log into another account. Keep the
+            // panel up with an explicit empty state; the section hides when
+            // the user closes it (see closeSessionsPopover).
+            if (sessionsPopoverOpen) {
+              $("#tm_sessions_pill_text").text(`0 of ${sessionsLimit} sessions`);
+              $("#tm_sessions_pill").removeClass("tm_sessions_warn tm_sessions_full");
+              $("#tm_sessions_title").text(`Active AWS sessions — 0 of ${sessionsLimit}`);
+              renderSessionsRows();
+            } else {
+              $section.hide();
+            }
             return;
           }
           const n = sessionsCache.length;
@@ -7422,6 +7591,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     CONFIG.STORAGE_KEYS.ASSUME_PROFILES,
     CONFIG.STORAGE_KEYS.JUMP_RECENTS,
     CONFIG.STORAGE_KEYS.JUMP_PINNED,
+    CONFIG.STORAGE_KEYS.JUMP_DESTS,
   ]);
 
   const collectExportPayload = async () => {
@@ -7706,6 +7876,21 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             typeof p.name === "string" && p.name.length <= 64 &&
             typeof p.hub === "string" && /^\d{12}$/.test(p.hub) &&
             typeof p.role === "string" && p.role.length <= 128
+          ),
+        // Jump destinations carry a region and a service path that both end up
+        // in a console URL, so they get the same charset gates as everywhere
+        // else — an imported file must not be able to bend a host or a path.
+        [SK.JUMP_DESTS]: (v) =>
+          Array.isArray(v) && v.length <= 100 && v.every((d) =>
+            d && typeof d === "object" &&
+            typeof d.account === "string" && /^\d{12}$/.test(d.account) &&
+            typeof d.profile === "string" && d.profile.length > 0 && d.profile.length <= 64 &&
+            (d.name === undefined || (typeof d.name === "string" && d.name.length <= 64)) &&
+            (d.label === undefined || (typeof d.label === "string" && d.label.length <= 120)) &&
+            (d.region === undefined || d.region === "" ||
+              (typeof d.region === "string" && isValidRegionCode(d.region))) &&
+            (d.service === undefined ||
+              (typeof d.service === "string" && isSafeServicePath(d.service)))
           ),
         [SK.JUMP_RECENTS]: (v) =>
           Array.isArray(v) && v.every((r) =>

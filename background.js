@@ -280,6 +280,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Sign out of EVERY live session — the sessions panel's "Sign out all" button.
+// The list is re-read here rather than trusted from the page, so the button
+// acts on the server's truth even if the panel was stale; one failing session
+// doesn't stop the rest. Same per-session logout endpoint as above — this is
+// NOT the cookie-clearing "Clear AWS Sessions".
+async function signOutAllAwsSessions(region) {
+  const sessions = await listAwsSessions(region);
+  let done = 0;
+  for (const s of sessions) {
+    try {
+      await signOutAwsSession(region, s.differentiator);
+      done++;
+    } catch (err) {
+      console.warn("[hop] sign-out-all: one session failed:", err);
+    }
+  }
+  return { done, total: sessions.length };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_signout_all") return;
+  signOutAllAwsSessions(message.region)
+    .then((r) => sendResponse({ ok: true, done: r.done, total: r.total }))
+    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  return true;
+});
+
 // Signing in opens the console in another tab, which leaves the role picker
 // showing a stale session count. Watch console tabs appearing and disappearing
 // and nudge any open picker so its list stays live. Debounced, because a single
