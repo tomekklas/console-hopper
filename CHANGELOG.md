@@ -19,13 +19,18 @@ All notable changes to Console Hopper are listed here. Dates are in
   saved, a **Source** filter row (Direct roles / ⤳ Jumps) appears above the
   listing, and `is:jump` / `source:direct` join the search syntax.
 - **Jump Destinations** in the side menu (Configure) — the one place
-  destinations are added, renamed, relabelled and removed: an add form (name
-  optional, 12-digit account, profile, session label), per-row landing
-  service/region that save as you change them, ✕ with the usual
-  click-again-to-confirm, and **Import…** for bulk paste — one per line,
+  destinations are added, edited and removed, laid out as **one grid with a
+  labelled column for everything**: name, account, profile, landing service,
+  landing region, session label. Names and labels edit in place (they read as
+  text until you point at them) and save when you click away; service and
+  region save on change; **the last line of the grid is the add row**, so
+  adding looks like every other line; ✕ keeps the usual
+  click-again-to-confirm; and **Import…** takes bulk paste — one per line,
   `Name | account | profile | region | service | label`, or start the line
   with the bare 12-digit id to skip the name (the box is pre-filled with the
-  current list in the same format).
+  current list in the same format). Account and profile are a destination's
+  identity and stay fixed once added; adding the same pair again updates the
+  existing entry and says so.
 - **"Save as a named destination"** tick in the ⤳ Jump popover — jump
   somewhere once and keep it as a listing row, with the label and region you
   picked, no separate setup step.

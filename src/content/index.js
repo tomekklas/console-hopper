@@ -4054,49 +4054,58 @@ import {
         }
         body.tm_theme_dark #tm_jump_save_wrap { color: #adb5bd !important; }
 
-        /* Jump Destinations dialog */
-        .tm_jd_row {
-            display: flex !important; align-items: center !important; gap: 10px !important;
-            padding: 9px 6px !important; border-top: 1px solid #eee !important;
+        /* Jump Destinations dialog — one grid, no modes: name and session
+           label are flat inputs that save on blur (they read as text until
+           hovered), service/region selects save on change, and the last line
+           is the add row. */
+        .tm_jdg_row {
+            display: grid !important;
+            grid-template-columns: minmax(130px, 1fr) 112px minmax(84px, 0.6fr) 130px 156px minmax(100px, 0.8fr) 48px !important;
+            gap: 10px !important; align-items: center !important;
+            padding: 7px 6px !important; border-top: 1px solid #f0f2f4 !important;
         }
-        .tm_jd_row:first-child { border-top: 0 !important; }
-        .tm_jd_editing { background: #f7fafd !important; border-radius: 6px !important; }
-        .tm_jd_main { flex: 1 1 auto !important; min-width: 0 !important; display: flex !important; flex-direction: column !important; gap: 2px !important; }
-        .tm_jd_name { font-size: 13.5px !important; font-weight: 600 !important; color: #16191f !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
-        .tm_jd_meta { font-size: 11.5px !important; color: #8a9099 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
-        .tm_jd_acct { font-family: monospace !important; font-size: 12px !important; color: #6c757d !important; flex: none !important; }
+        .tm_jdg_head {
+            border-top: 0 !important; padding-bottom: 4px !important;
+            font-size: 11px !important; color: #8a9199 !important;
+            letter-spacing: 0.02em !important; text-transform: uppercase !important;
+        }
+        .tm_jdg_acct { font-family: monospace !important; font-size: 12px !important; color: #6c757d !important; }
+        .tm_jdg_profile { font-size: 12.5px !important; color: #545b64 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
         .tm_jd_service, .tm_jd_region {
-            flex: none !important; padding: 5px 6px !important;
-            border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12px !important;
-            background: #fff !important; color: #16191f !important;
+            padding: 5px 6px !important; border: 1px solid #ccc !important; border-radius: 4px !important;
+            font-size: 12px !important; background: #fff !important; color: #16191f !important;
+            width: 100% !important; box-sizing: border-box !important;
         }
-        .tm_jd_service { width: 132px !important; }
-        .tm_jd_region { width: 158px !important; }
-        .tm_jd_actions { flex: none !important; display: flex !important; gap: 4px !important; }
-        .tm_jd_edit, .tm_jd_del {
+        .tm_jd_flat {
+            border: 1px solid transparent !important; background: transparent !important;
+            border-radius: 4px !important; padding: 5px 6px !important; font-size: 12.5px !important;
+            color: #16191f !important; width: 100% !important; box-sizing: border-box !important;
+        }
+        .tm_jd_flat:hover { border-color: #dfe2e5 !important; background: #fff !important; }
+        .tm_jd_flat:focus {
+            border-color: #0073bb !important; background: #fff !important;
+            outline: none !important; box-shadow: 0 0 0 2px rgba(0, 115, 187, 0.12) !important;
+        }
+        .tm_jdg_actions { display: flex !important; justify-content: flex-end !important; }
+        .tm_jd_del {
             width: 24px !important; height: 24px !important; border: none !important; background: transparent !important;
             border-radius: 4px !important; cursor: pointer !important; font-size: 13px !important; line-height: 1 !important;
             color: #8a9199 !important; padding: 0 !important;
         }
-        .tm_jd_edit:hover { background: #eef5fc !important; color: #0073bb !important; }
         .tm_jd_del:hover { background: #fbeae8 !important; color: #c0392b !important; }
         .tm_jd_del.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
-        .tm_jd_editgrid { flex: 1 1 auto !important; min-width: 0 !important; display: flex !important; gap: 8px !important; align-items: flex-end !important; }
-        .tm_jd_editgrid label { display: flex !important; flex-direction: column !important; gap: 3px !important; font-size: 11px !important; color: #6c757d !important; text-transform: uppercase !important; flex: 1 !important; min-width: 0 !important; }
-        .tm_jd_editgrid input { padding: 5px 8px !important; border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12.5px !important; width: 100% !important; box-sizing: border-box !important; text-transform: none !important; }
-        .tm_jd_editbtns { display: flex !important; gap: 6px !important; flex: none !important; }
-        .tm_jd_editbtns button { padding: 6px 12px !important; border-radius: 4px !important; font-size: 12px !important; cursor: pointer !important; }
-        .tm_jd_cancel { border: 1px solid #ccc !important; background: #fff !important; color: #16191f !important; }
-        .tm_jd_save { border: 1px solid #0073bb !important; background: #0073bb !important; color: #fff !important; }
-        .tm_jd_empty { padding: 14px 4px !important; font-size: 13px !important; color: #8a9199 !important; }
-        #tm_jd_add { margin-top: 12px !important; padding-top: 12px !important; border-top: 1px solid #ededed !important; }
-        .tm_jd_add_title { font-size: 12px !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 8px !important; }
-        .tm_jd_addgrid { display: flex !important; gap: 8px !important; align-items: flex-end !important; flex-wrap: wrap !important; }
-        .tm_jd_addgrid label { display: flex !important; flex-direction: column !important; gap: 3px !important; font-size: 11px !important; color: #6c757d !important; text-transform: uppercase !important; flex: 1 1 140px !important; min-width: 120px !important; }
-        .tm_jd_addgrid input, .tm_jd_addgrid select { padding: 6px 8px !important; border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12.5px !important; width: 100% !important; box-sizing: border-box !important; text-transform: none !important; }
-        .tm_jd_opt { text-transform: none !important; color: #8a9199 !important; }
-        #tm_jd_add_btn { flex: none !important; padding: 7px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important; color: #fff !important; border-radius: 4px !important; font-size: 12.5px !important; cursor: pointer !important; }
+        .tm_jdg_add { background: #f7fafd !important; border-radius: 6px !important; border-top-color: transparent !important; margin-top: 4px !important; }
+        .tm_jdg_add .tm_jd_addcell {
+            border: 1px solid #ccc !important; background: #fff !important; border-radius: 4px !important;
+            padding: 5px 6px !important; font-size: 12.5px !important; width: 100% !important; box-sizing: border-box !important;
+        }
+        .tm_jdg_acct_input { font-family: monospace !important; }
+        #tm_jd_add_btn {
+            padding: 6px 12px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+            color: #fff !important; border-radius: 4px !important; font-size: 12px !important; cursor: pointer !important;
+        }
         #tm_jd_add_err { color: #c0392b !important; font-size: 12px !important; margin-top: 6px !important; min-height: 14px !important; }
+        .tm_jd_empty { padding: 10px 6px !important; font-size: 13px !important; color: #8a9199 !important; }
 
         /* Env color is painted as a left-stripe inline (via applyEnvironmentStyling)
            so the colour comes from the user's Environments config, not
@@ -6332,14 +6341,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // === JUMP DESTINATIONS DIALOG ===
   // The one place a saved ⤳ destination is added, edited or deleted. The
   // listing rows are read-only views of this list; ☆ favourites, tags and
-  // manual order live on those rows, not here. Service/region selects save on
-  // change; name and session label edit behind ✎; ✕ uses the shared two-step
-  // confirm; Import… takes the pipe-delimited line format for bulk paste.
+  // manual order live on those rows, not here. One grid, no modes: name and
+  // session label are flat inputs that save on blur, service/region selects
+  // save on change, the last line is the add row, and ✕ keeps the shared
+  // two-step confirm. Import… takes the pipe-delimited format for bulk paste.
   const showJumpDestsModal = () => {
-    let editingKey = ""; // "account profile-lowercased" of the row being edited
-
-    const rowKey = (d) => `${d.account} ${d.profile.toLowerCase()}`;
-
     const svcOptionsHTML = (selected) =>
       `<option value=""${selected ? "" : " selected"}>Console only</option>` +
       servicesCache
@@ -6356,66 +6362,71 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.label)}</option>`)
         .join(""));
 
-    const rowHTML = (d) => {
-      const key = rowKey(d);
-      const profile = AssumeProfilesManager.byName(d.profile);
-      const role = (profile && profile.role) || "";
-      const meta = [d.profile, role, d.label ? `label "${d.label}"` : ""]
-        .filter(Boolean)
-        .join(" · ");
-      const editing = editingKey === key;
-      const main = editing
-        ? `
-          <div class="tm_jd_editgrid">
-            <label>Name<input type="text" class="tm_jd_name_input" maxlength="64" value="${escapeHtml(d.name || "")}" placeholder="${escapeHtml(AccountNamesManager.nameFor(d.account) || d.account)}"></label>
-            <label>Session label<input type="text" class="tm_jd_label_input" maxlength="120" value="${escapeHtml(d.label || "")}" placeholder="optional"></label>
-            <span class="tm_jd_editbtns">
-              <button type="button" class="tm_jd_cancel">Cancel</button>
-              <button type="button" class="tm_jd_save">Save</button>
-            </span>
-          </div>`
-        : `
-          <div class="tm_jd_main">
-            <div class="tm_jd_name">${escapeHtml(jumpDestDisplayName(d))}</div>
-            <div class="tm_jd_meta">${escapeHtml(meta)}</div>
-          </div>`;
-      return `
-        <div class="tm_jd_row${editing ? " tm_jd_editing" : ""}" data-account="${escapeHtml(d.account)}" data-profile="${escapeHtml(d.profile)}">
-          ${main}
-          <span class="tm_jd_acct" title="Destination account">${escapeHtml(d.account)}</span>
-          <select class="tm_jd_service" title="Land on service">${svcOptionsHTML(d.service || "")}</select>
-          <select class="tm_jd_region" title="Land in region — Default follows the profile's region, then General Settings">${regionOptionsWithDefault(d.region || "")}</select>
-          <span class="tm_jd_actions">
-            <button type="button" class="tm_jd_edit" title="Rename / relabel">&#9998;</button>
-            <button type="button" class="tm_jd_del" title="Remove this destination">&#10005;</button>
-          </span>
-        </div>`;
+    const profileTitleFor = (d) => {
+      const p = AssumeProfilesManager.byName(d.profile);
+      return p ? `assumes ${p.role} via hub ${p.hub}` : "profile not configured";
     };
 
-    const listHTML = () => {
-      const all = JumpDestinationsManager.all();
-      if (!all.length) {
-        return `<div class="tm_jd_empty">No saved destinations yet. Add one below, tick
-          "Save as a named destination" when you jump, or paste a list via Import.</div>`;
-      }
-      return all.map(rowHTML).join("");
-    };
+    const headerHTML = `
+      <div class="tm_jdg_row tm_jdg_head">
+        <span>Name</span><span>Account</span><span>Profile</span>
+        <span>Land on service</span><span>Land in region</span>
+        <span>Session label</span><span></span>
+      </div>`;
+
+    const rowHTML = (d) => `
+      <div class="tm_jdg_row" data-account="${escapeHtml(d.account)}" data-profile="${escapeHtml(d.profile)}">
+        <input type="text" class="tm_jd_flat tm_jd_name_input" maxlength="64"
+               value="${escapeHtml(d.name || "")}"
+               placeholder="${escapeHtml(AccountNamesManager.nameFor(d.account) || d.label || d.account)}"
+               title="Display name for the ⤳ row — saves when you click away">
+        <span class="tm_jdg_acct" title="Destination account">${escapeHtml(d.account)}</span>
+        <span class="tm_jdg_profile" title="${escapeHtml(profileTitleFor(d))}">${escapeHtml(d.profile)}</span>
+        <select class="tm_jd_service" title="Land on service — saves on change">${svcOptionsHTML(d.service || "")}</select>
+        <select class="tm_jd_region" title="Land in region — Default follows the profile's region, then General Settings">${regionOptionsWithDefault(d.region || "")}</select>
+        <input type="text" class="tm_jd_flat tm_jd_label_input" maxlength="120"
+               value="${escapeHtml(d.label || "")}" placeholder="optional"
+               title="Session label used when jumping here — saves when you click away">
+        <span class="tm_jdg_actions"><button type="button" class="tm_jd_del" title="Remove this destination">&#10005;</button></span>
+      </div>`;
 
     const profileOptionsHTML = () =>
       AssumeProfilesManager.all()
         .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
         .join("");
 
+    const addRowHTML = () => `
+      <div class="tm_jdg_row tm_jdg_add">
+        <input type="text" id="tm_jd_add_name" class="tm_jd_addcell" maxlength="64" placeholder="Name (optional)">
+        <input type="text" id="tm_jd_add_account" class="tm_jd_addcell tm_jdg_acct_input" maxlength="12" inputmode="numeric" placeholder="12-digit id">
+        <select id="tm_jd_add_profile" class="tm_jd_addcell">${profileOptionsHTML()}</select>
+        <select id="tm_jd_add_service" class="tm_jd_addcell">${svcOptionsHTML("")}</select>
+        <select id="tm_jd_add_region" class="tm_jd_addcell">${regionOptionsWithDefault("")}</select>
+        <input type="text" id="tm_jd_add_label" class="tm_jd_addcell" maxlength="120" placeholder="optional">
+        <span class="tm_jdg_actions"><button type="button" id="tm_jd_add_btn">Add</button></span>
+      </div>`;
+
+    const listHTML = () => {
+      const all = JumpDestinationsManager.all();
+      const rows = all.length
+        ? all.map(rowHTML).join("")
+        : `<div class="tm_jd_empty">No saved destinations yet — fill the row below, tick
+            "Save as a named destination" when you jump, or paste a list via Import.</div>`;
+      return headerHTML + rows + addRowHTML();
+    };
+
+    // Structural repaint (add / delete / import). Field saves deliberately
+    // don't repaint: the control already shows the new value, and rebuilding
+    // mid-tab would yank focus from under the user.
     const repaint = () => {
       $("#tm_jd_list").html(listHTML());
     };
 
-    // Persist a field change and refresh both this dialog and the listing rows
-    // behind it, so the edit is visibly live.
+    // Persist a field change and refresh the listing rows behind the dialog,
+    // so the edit is visibly live out there too.
     const commit = async (account, profile, patch) => {
       await JumpDestinationsManager.upsert(account, profile, patch);
       renderJumpDestinationRows();
-      repaint();
     };
 
     const modalHTML = `
@@ -6427,28 +6438,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       ">
         <div style="
             background: white !important; border-radius: 8px !important; padding: 20px !important;
-            max-width: 860px !important; width: 94% !important; max-height: 84vh !important; overflow-y: auto !important;
+            max-width: 940px !important; width: 94% !important; max-height: 84vh !important; overflow-y: auto !important;
         ">
           <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Jump Destinations</h3>
           <p style="margin: 0 0 12px 0 !important; color: #6c757d !important; font-size: 13.5px !important; line-height: 1.45 !important;">
             Saved chained-jump targets. Each one shows as a <strong>⤳ row in the role
             listing</strong> — searchable, taggable, favouritable like any row — and jumps
-            through its profile's hub. Name and session label edit behind ✎; the
-            service and region a jump lands on save as you change them. Removing a
-            destination only forgets this entry — it never touches AWS.
+            through its profile's hub. Click any name or session label and type — it saves
+            when you click away; service and region save as you change them. The last line
+            adds a new destination. Account and profile are fixed once added (remove and
+            re-add to change), and removing one only forgets this entry — it never
+            touches AWS.
           </p>
           <div id="tm_jd_list">${listHTML()}</div>
-          <div id="tm_jd_add">
-            <div class="tm_jd_add_title">Add a destination</div>
-            <div class="tm_jd_addgrid">
-              <label>Name <span class="tm_jd_opt">(optional)</span><input type="text" id="tm_jd_add_name" maxlength="64" placeholder="Payments sandbox"></label>
-              <label>Account<input type="text" id="tm_jd_add_account" maxlength="12" inputmode="numeric" placeholder="12-digit id"></label>
-              <label>Profile<select id="tm_jd_add_profile">${profileOptionsHTML()}</select></label>
-              <label>Session label <span class="tm_jd_opt">(optional)</span><input type="text" id="tm_jd_add_label" maxlength="120" placeholder="INC-4711"></label>
-              <button type="button" id="tm_jd_add_btn">Add</button>
-            </div>
-            <div id="tm_jd_add_err"></div>
-          </div>
+          <div id="tm_jd_add_err"></div>
           <div style="margin-top: 14px !important; display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 10px !important;">
             <button type="button" id="tm_jd_import" style="
                 padding: 8px 14px !important; border: 1px solid #ccc !important;
@@ -6474,7 +6477,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
 
     const rowCtx = (el) => {
-      const $row = $(el).closest(".tm_jd_row");
+      const $row = $(el).closest(".tm_jdg_row");
       return { account: $row.attr("data-account") || "", profile: $row.attr("data-profile") || "" };
     };
 
@@ -6486,22 +6489,21 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const { account, profile } = rowCtx(this);
       commit(account, profile, { region: String(this.value || "") });
     });
-    $modal.on("click", ".tm_jd_edit", function () {
+    // Flat cells save on blur — and only when the value actually changed, so
+    // tabbing through the grid writes nothing.
+    $modal.on("focusout", ".tm_jd_name_input", function () {
       const { account, profile } = rowCtx(this);
-      editingKey = `${account} ${profile.toLowerCase()}`;
-      repaint();
+      const d = JumpDestinationsManager.find(account, profile);
+      if (!d) return;
+      const name = String(this.value || "").trim();
+      if (name !== (d.name || "")) commit(account, profile, { name });
     });
-    $modal.on("click", ".tm_jd_cancel", function () {
-      editingKey = "";
-      repaint();
-    });
-    $modal.on("click", ".tm_jd_save", function () {
+    $modal.on("focusout", ".tm_jd_label_input", function () {
       const { account, profile } = rowCtx(this);
-      const $row = $(this).closest(".tm_jd_row");
-      const name = String($row.find(".tm_jd_name_input").val() || "").trim();
-      const label = String($row.find(".tm_jd_label_input").val() || "").trim();
-      editingKey = "";
-      commit(account, profile, { name, label });
+      const d = JumpDestinationsManager.find(account, profile);
+      if (!d) return;
+      const label = String(this.value || "").trim();
+      if (label !== (d.label || "")) commit(account, profile, { label });
     });
     $modal.on("click", ".tm_jd_del", function (e) {
       e.preventDefault();
@@ -6532,7 +6534,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       // already exists updates it (the fields given here win) — say so, or a
       // "second" add looks like it silently vanished.
       const existed = !!JumpDestinationsManager.find(account, profile);
-      await JumpDestinationsManager.upsert(account, profile, { name, label });
+      await JumpDestinationsManager.upsert(account, profile, {
+        name,
+        label,
+        service: String($("#tm_jd_add_service").val() || ""),
+        region: String($("#tm_jd_add_region").val() || ""),
+      });
       if (existed) {
         showToast(
           "That account + profile was already saved — updated the existing destination.",
@@ -6540,9 +6547,6 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           CONFIG.TOAST_DURATION_LONG
         );
       }
-      $("#tm_jd_add_name").val("");
-      $("#tm_jd_add_account").val("");
-      $("#tm_jd_add_label").val("");
       renderJumpDestinationRows();
       repaint();
     });
