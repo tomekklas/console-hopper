@@ -5895,8 +5895,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     return { ok: true, why: "" };
   };
 
+  // Display precedence: explicit name → the account's Account Names entry →
+  // the session label → the bare id. The label fallback matters for popover
+  // tick-saves, which carry only a label: without it those rows render as a
+  // raw 12-digit id while dialog-added ones show a name — same list, two
+  // looks. The label is also how the popover's own recents display a jump.
   const jumpDestDisplayName = (dest) =>
-    dest.name || AccountNamesManager.nameFor(dest.account) || dest.account;
+    dest.name || AccountNamesManager.nameFor(dest.account) || dest.label || dest.account;
 
   const renderJumpDestinationRows = () => {
     const $list = $("#" + RoleOrderManager.LIST_ID);
@@ -5907,7 +5912,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const profile = AssumeProfilesManager.byName(dest.profile);
       const roleName = (profile && profile.role) || "";
       const avail = jumpRowAvailability(dest);
-      const via = avail.ok ? `via ${dest.profile} hub · max 1 h` : avail.why;
+      const shownName = jumpDestDisplayName(dest);
+      const labelSuffix =
+        dest.label && dest.label !== shownName ? ` · "${dest.label}"` : "";
+      const via = avail.ok ? `via ${dest.profile} hub · max 1 h${labelSuffix}` : avail.why;
       const safeKey = escapeHtml(key);
       const safeAccountId = escapeHtml(dest.account);
       // Region precedence: per-row memory (when remembering) → the
@@ -5931,7 +5939,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             <div class="tm_role_info">
                 <button type="button" class="tm_favorite_button" data-role-arn="${safeKey}" title="Add to favorites">☆</button>
                 <div class="tm_jump_namewrap">
-                    <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="">⤳ ${escapeHtml(jumpDestDisplayName(dest))}</div>
+                    <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="">⤳ ${escapeHtml(shownName)}</div>
                     <div class="tm_jump_via">${escapeHtml(via)}</div>
                 </div>
                 <div class="tm_tag_cell">${tagChipHTML(dest.account)}</div>
@@ -6520,7 +6528,18 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         return;
       }
       $err.text("");
+      // Same account + profile = the same destination: an Add for one that
+      // already exists updates it (the fields given here win) — say so, or a
+      // "second" add looks like it silently vanished.
+      const existed = !!JumpDestinationsManager.find(account, profile);
       await JumpDestinationsManager.upsert(account, profile, { name, label });
+      if (existed) {
+        showToast(
+          "That account + profile was already saved — updated the existing destination.",
+          "info",
+          CONFIG.TOAST_DURATION_LONG
+        );
+      }
       $("#tm_jd_add_name").val("");
       $("#tm_jd_add_account").val("");
       $("#tm_jd_add_label").val("");
