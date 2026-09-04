@@ -23,6 +23,13 @@ import {
   searchMatches,
   parseQuery,
   matchesQuery,
+  normalizeJumpDests,
+  jumpDestKey,
+  parseJumpDestKey,
+  resolveServiceToken,
+  serviceTokenForPath,
+  parseJumpDestLines,
+  formatJumpDestLines,
 } from "../src/content/util.js";
 
 describe("escapeHtml", () => {
@@ -502,5 +509,131 @@ describe("isValidRegionCode as a URL-host guard", () => {
     for (const ok of ["us-east-1", "eu-central-1", "us-gov-west-1", "cn-northwest-1", "ap-southeast-4"]) {
       expect(isValidRegionCode(ok)).toBe(true);
     }
+  });
+});
+
+// --- Jump destinations (1.5.0) ---
+
+const SVC = [
+  { id: "cloudwatch", name: "CloudWatch", path: "cloudwatch/home?region={region}" },
+  { id: "rds", name: "RDS", path: "rds/home?region={region}" },
+];
+
+describe("normalizeJumpDests", () => {
+  it("keeps valid entries and fills defaults", () => {
+    const out = normalizeJumpDests([
+      { name: "Payments", account: "484848484848", profile: "Org A", region: "eu-west-1", service: "rds/home?region={region}", label: "db failover" },
+    ]);
+    expect(out).toEqual([
+      { name: "Payments", account: "484848484848", profile: "Org A", region: "eu-west-1", service: "rds/home?region={region}", label: "db failover" },
+    ]);
+  });
+  it("drops entries without a 12-digit account or a profile", () => {
+    expect(normalizeJumpDests([
+      { account: "123", profile: "Org A" },
+      { account: "484848484848", profile: "" },
+      "junk",
+      null,
+    ])).toEqual([]);
+  });
+  it("dedupes by account+profile (case-insensitive profile)", () => {
+    const out = normalizeJumpDests([
+      { account: "484848484848", profile: "Org A", name: "first" },
+      { account: "484848484848", profile: "org a", name: "second" },
+      { account: "484848484848", profile: "Org B", name: "third" },
+    ]);
+    expect(out.map((d) => d.name)).toEqual(["first", "third"]);
+  });
+  it("drops malformed regions and unsafe service paths, keeps the entry", () => {
+    const out = normalizeJumpDests([
+      { account: "484848484848", profile: "Org A", region: "EVIL.COM/", service: "https://evil" },
+      { account: "111111111111", profile: "Org A", service: "a/../../etc" },
+    ]);
+    expect(out[0].region).toBe("");
+    expect(out[0].service).toBe("");
+    expect(out[1].service).toBe("");
+  });
+  it("caps names/labels and the list length", () => {
+    const long = "x".repeat(200);
+    const many = Array.from({ length: 120 }, (_, i) => ({
+      account: String(100000000000 + i), profile: "Org A", name: long, label: long,
+    }));
+    const out = normalizeJumpDests(many);
+    expect(out.length).toBe(100);
+    expect(out[0].name.length).toBe(64);
+    expect(out[0].label.length).toBe(120);
+  });
+});
+
+describe("jumpDestKey / parseJumpDestKey", () => {
+  it("round-trips awkward profile names", () => {
+    for (const profile of ["Org A", "a::b", "100% legit", "ü:ber"]) {
+      const key = jumpDestKey("484848484848", profile);
+      expect(parseJumpDestKey(key)).toEqual({ account: "484848484848", profile });
+    }
+  });
+  it("never looks like a role ARN and rejects non-keys", () => {
+    expect(jumpDestKey("484848484848", "Org A").startsWith("jump::")).toBe(true);
+    expect(parseJumpDestKey("arn:aws:iam::484848484848:role/x")).toBe(null);
+    expect(parseJumpDestKey("jump::12345::x")).toBe(null);
+  });
+});
+
+describe("resolveServiceToken / serviceTokenForPath", () => {
+  it("resolves by id, name, or literal path", () => {
+    expect(resolveServiceToken("rds", SVC)).toBe("rds/home?region={region}");
+    expect(resolveServiceToken("CloudWatch", SVC)).toBe("cloudwatch/home?region={region}");
+    expect(resolveServiceToken("rds/home?region={region}", SVC)).toBe("rds/home?region={region}");
+  });
+  it("maps console/empty to the console home and unknowns to null", () => {
+    expect(resolveServiceToken("", SVC)).toBe("");
+    expect(resolveServiceToken("Console only", SVC)).toBe("");
+    expect(resolveServiceToken("nope", SVC)).toBe(null);
+  });
+  it("prefers the display name on the way back out", () => {
+    expect(serviceTokenForPath("rds/home?region={region}", SVC)).toBe("RDS");
+    expect(serviceTokenForPath("gone/home", SVC)).toBe("gone/home");
+    expect(serviceTokenForPath("", SVC)).toBe("");
+  });
+});
+
+describe("parseJumpDestLines / formatJumpDestLines", () => {
+  it("parses the full positional form", () => {
+    const out = parseJumpDestLines(
+      "Payments prod | 484848484848 | Org A | eu-west-1 | rds | db failover check",
+      SVC
+    );
+    expect(out).toEqual([{
+      name: "Payments prod", account: "484848484848", profile: "Org A",
+      region: "eu-west-1", service: "rds/home?region={region}", label: "db failover check",
+    }]);
+  });
+  it("accepts the bare-account shorthand and empty middle slots", () => {
+    const out = parseJumpDestLines(
+      "606060606060 | Org B\nCost | 505050505050 | Org A | | CloudWatch",
+      SVC
+    );
+    expect(out[0]).toMatchObject({ name: "", account: "606060606060", profile: "Org B" });
+    expect(out[1]).toMatchObject({ name: "Cost", region: "", service: "cloudwatch/home?region={region}" });
+  });
+  it("keeps pipes inside the label and drops unknown service tokens", () => {
+    const out = parseJumpDestLines(
+      "X | 484848484848 | Org A | eu-west-1 | wat | a | b",
+      SVC
+    );
+    expect(out[0].service).toBe("");
+    expect(out[0].label).toBe("a | b");
+  });
+  it("skips blank and invalid lines", () => {
+    expect(parseJumpDestLines("\n\nnot enough\n123 | Org A\n", SVC)).toEqual([]);
+  });
+  it("round-trips through format and back", () => {
+    const list = [
+      { name: "Payments prod", account: "484848484848", profile: "Org A", region: "eu-west-1", service: "rds/home?region={region}", label: "db failover" },
+      { name: "", account: "606060606060", profile: "Org B", region: "", service: "", label: "" },
+    ];
+    const text = formatJumpDestLines(list, SVC);
+    expect(text.split("\n")[1]).toBe("606060606060 | Org B");
+    expect(parseJumpDestLines(text, SVC)).toEqual(list);
   });
 });

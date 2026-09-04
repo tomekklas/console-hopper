@@ -370,3 +370,155 @@ export const matchesQuery = (terms, fields) => {
   }
   return true;
 };
+
+// === Jump destinations — saved chained-jump targets, shown as rows in the
+// role listing. One entry: { name, account, profile, region, service, label }
+//   name    — optional display name (max 64); the row falls back to the
+//             Account Names entry for the account, then the bare id
+//   account — required 12-digit destination account
+//   profile — required Jump Profile (org) name this jump goes through (max 64)
+//   region  — optional landing region code (validated, else dropped)
+//   service — optional landing service PATH from the Services config; path
+//             fragment only, charset-checked so it can never carry a scheme,
+//             a host, or a traversal into the console URL it lands in
+//   label   — optional default session label (max 120)
+
+// Path fragment only: no leading slash, no "..", no ":" (kills scheme
+// smuggling like https://), no whitespace. {region} placeholders are allowed.
+export const JUMP_DEST_SERVICE_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+]{0,199}$/;
+
+export const isSafeServicePath = (p) => {
+  const s = String(p == null ? "" : p);
+  if (s === "") return true;
+  return JUMP_DEST_SERVICE_RE.test(s) && !s.includes("..");
+};
+
+export const normalizeJumpDests = (raw, cap = 100) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const d of raw) {
+    if (!d || typeof d !== "object") continue;
+    const account = typeof d.account === "string" ? d.account.trim() : "";
+    const profile = typeof d.profile === "string" ? d.profile.trim().slice(0, 64) : "";
+    if (!/^\d{12}$/.test(account) || !profile) continue;
+    // One row per account+profile: the same target through the same hub is the
+    // same destination, whatever it's called.
+    const key = `${account} ${profile.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const name = typeof d.name === "string" ? d.name.trim().slice(0, 64) : "";
+    const label = typeof d.label === "string" ? d.label.trim().slice(0, 120) : "";
+    const region = typeof d.region === "string" ? d.region.trim().toLowerCase() : "";
+    const service = typeof d.service === "string" ? d.service.trim() : "";
+    out.push({
+      name,
+      account,
+      profile,
+      region: isValidRegionCode(region) ? region : "",
+      service: service && isSafeServicePath(service) ? service : "",
+      label,
+    });
+    if (out.length >= cap) break;
+  }
+  return out;
+};
+
+// Stable identity for a destination row. Stands in for a role ARN wherever the
+// listing keys per-row state (favorites, manual order, last service/region), so
+// it must never collide with a real ARN ("jump::" can't start one) and must
+// round-trip any profile name — encodeURIComponent leaves no ":" in the
+// profile part, so the "::" separators stay unambiguous.
+export const jumpDestKey = (account, profile) =>
+  `jump::${account}::${encodeURIComponent(String(profile || ""))}`;
+
+export const parseJumpDestKey = (key) => {
+  const m = /^jump::(\d{12})::(.*)$/.exec(String(key || ""));
+  if (!m) return null;
+  try {
+    return { account: m[1], profile: decodeURIComponent(m[2]) };
+  } catch (e) {
+    return null;
+  }
+};
+
+// Resolve a human service token — a Services entry's id, display name, or
+// literal path — to that entry's PATH. "", "console" and "console only" mean
+// the console home (""). Unknown tokens return null so callers can decide
+// whether to drop or report them.
+export const resolveServiceToken = (token, services) => {
+  const t = String(token == null ? "" : token).trim();
+  if (!t || /^console(\s+only)?$/i.test(t)) return "";
+  const lc = t.toLowerCase();
+  for (const s of Array.isArray(services) ? services : []) {
+    if (!s || typeof s !== "object") continue;
+    if (
+      String(s.id || "").toLowerCase() === lc ||
+      String(s.name || "").toLowerCase() === lc ||
+      String(s.path || "") === t
+    ) {
+      return String(s.path || "");
+    }
+  }
+  return null;
+};
+
+// Inverse for display/export: prefer the configured service's name, fall back
+// to the raw path so an entry for a since-deleted service still round-trips.
+export const serviceTokenForPath = (path, services) => {
+  const p = String(path == null ? "" : path);
+  if (!p) return "";
+  for (const s of Array.isArray(services) ? services : []) {
+    if (s && typeof s === "object" && String(s.path || "") === p) {
+      return String(s.name || s.id || p);
+    }
+  }
+  return p;
+};
+
+// Parse the pipe-delimited bulk format, one destination per line:
+//   Name | account | profile | region | service | label
+// Fields are positional; trailing fields are optional and empty middle slots
+// are allowed ("x | 111111111111 | Org A | | rds"). A line may start with the
+// bare 12-digit account id to skip the name. The service slot accepts a
+// Services id, display name, or path; unknown tokens are dropped to "console".
+export const parseJumpDestLines = (text, services) => {
+  const out = [];
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let parts = line.split("|").map((p) => p.trim());
+    if (/^\d{12}$/.test(parts[0] || "")) parts = ["", ...parts];
+    const [name = "", account = "", profile = "", region = "", serviceTok = "", ...labelRest] = parts;
+    const service = resolveServiceToken(serviceTok, services);
+    out.push({
+      name,
+      account,
+      profile,
+      region,
+      service: service == null ? "" : service,
+      label: labelRest.join(" | "),
+    });
+  }
+  return normalizeJumpDests(out);
+};
+
+// Render destinations back into the line format (inverse of
+// parseJumpDestLines): trailing empties dropped, nameless entries emitted in
+// the bare-account shorthand.
+export const formatJumpDestLines = (list, services) =>
+  (Array.isArray(list) ? list : [])
+    .map((d) => {
+      const cells = [
+        d.name || "",
+        d.account,
+        d.profile,
+        d.region || "",
+        serviceTokenForPath(d.service, services),
+        d.label || "",
+      ];
+      while (cells.length && !cells[cells.length - 1]) cells.pop();
+      if (!cells[0]) cells.shift();
+      return cells.join(" | ");
+    })
+    .join("\n");
