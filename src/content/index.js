@@ -245,7 +245,7 @@ import {
   // emptyFilters/cloneFilters build the {group: string[]} shape everywhere it's
   // needed (capture, apply, start-view chips) so the group list lives in one
   // place. cloneFilters(src, true) also drops non-strings (restoring saved data).
-  const FILTER_GROUPS = ["org", "env", "type", "role", "show", "tag"];
+  const FILTER_GROUPS = ["org", "env", "type", "role", "source", "show", "tag"];
   const emptyFilters = () =>
     FILTER_GROUPS.reduce((o, g) => { o[g] = []; return o; }, {});
   const cloneFilters = (src, sanitize) => {
@@ -2086,12 +2086,27 @@ import {
   // (Toggled via a class, not .hide(): the row's display:flex is !important,
   // which a plain inline display:none from .hide() would not override.)
   const updateFilterRowVisibility = (group) => {
-    const groups = group ? [group] : ["org", "env", "type", "role", "tag"];
+    const groups = group ? [group] : ["org", "env", "type", "role", "source", "tag"];
     for (const g of groups) {
       const $group = $(`.tm_button_group[data-filter-group="${g}"]`);
       if (!$group.length) continue;
       const $row = $group.closest(".tm_frow");
       if (!$row.length) continue;
+      // The Source row always holds its two fixed chips; what makes it worth
+      // showing is whether any saved ⤳ jump destination exists at all.
+      if (g === "source") {
+        const hasJumps = !!document.querySelector('#tm_role_list .saml-role[data-jump="1"]');
+        if (hasJumps) {
+          $row.removeClass("tm_frow_hidden");
+        } else {
+          $row.addClass("tm_frow_hidden");
+          if (activeFilters.source && activeFilters.source.length) {
+            activeFilters.source = [];
+            $group.find(".tm_filter_button").removeClass("active");
+          }
+        }
+        continue;
+      }
       // Derived classifiers (org/env/type/role) need 2+ options to be a useful
       // filter — with one value every row matches. Tags are explicit user
       // intent, so a single tag is already a meaningful filter: show it from 1.
@@ -2108,7 +2123,7 @@ import {
     }
     // With no filter rows visible above it, the Shortcuts row's top divider
     // separates nothing — drop it so it doesn't float as a stray rule.
-    const anyVisible = ["org", "env", "type", "role", "tag"].some((g) => {
+    const anyVisible = ["org", "env", "type", "role", "source", "tag"].some((g) => {
       const bg = document.querySelector(`.tm_button_group[data-filter-group="${g}"]`);
       const row = bg && bg.closest(".tm_frow");
       return row && !row.classList.contains("tm_frow_hidden");
@@ -2161,18 +2176,28 @@ import {
     $(".saml-role").each(function () {
       const $role = $(this);
       const envId = getEnvironmentType($role);
+      // ⤳ jump rows keep a stripe in every state — dashed, to say "reached by
+      // chaining": env-coloured when the account classifies, neutral grey
+      // otherwise, so a jump row never reads as a plain direct role.
+      const isJump = $role.attr("data-jump") === "1";
       if (envId === "default") {
         $role.removeAttr("data-env-id");
-        this.style.removeProperty("border-left-color");
-        this.style.removeProperty("border-left-width");
-        this.style.removeProperty("border-left-style");
+        if (isJump) {
+          this.style.setProperty("border-left-color", "#c7ccd1", "important");
+          this.style.setProperty("border-left-width", "4px", "important");
+          this.style.setProperty("border-left-style", "dashed", "important");
+        } else {
+          this.style.removeProperty("border-left-color");
+          this.style.removeProperty("border-left-width");
+          this.style.removeProperty("border-left-style");
+        }
         return;
       }
       const color = EnvironmentsManager.colorFor(envId);
       $role.attr("data-env-id", envId);
       this.style.setProperty("border-left-color", color, "important");
       this.style.setProperty("border-left-width", "4px", "important");
-      this.style.setProperty("border-left-style", "solid", "important");
+      this.style.setProperty("border-left-style", isJump ? "dashed" : "solid", "important");
     });
   };
 
@@ -2182,6 +2207,7 @@ import {
   const KNOWN_QUERY_FIELDS = new Set([
     "tag", "tags", "role", "name", "account", "acct", "id",
     "env", "environment", "type", "org", "organization", "organisation",
+    "is", "source",
   ]);
   // Parse the query once per applyFilters pass (all rows share searchTerm), and
   // note which fields it references so rows only resolve the classifiers used.
@@ -2223,6 +2249,7 @@ import {
     const tags = AccountTagsManager.tagsFor(accountId).join(" ").toLowerCase();
     const fullText = `${accountName} ${accountId} ${roleName} ${tags}`;
     const roleArn = $role.find(".tm_signin_button").data("role-arn");
+    const isJumpRow = $role.attr("data-jump") === "1";
 
     // Scoped search: bare words hit everything; `field:value` scopes to a field;
     // space = AND, comma = OR within a field, `-` excludes, "..." = exact.
@@ -2246,6 +2273,9 @@ import {
       const qf = {
         _all: fullText, tag: tags, tags: tags, role: roleName,
         name: accountName, id: accountId, account: acctBoth, acct: acctBoth,
+        // `is:jump` / `source:direct` — the row's origin as searchable text.
+        is: isJumpRow ? "jump jumps chained" : "direct signin sign-in",
+        source: isJumpRow ? "jump jumps chained" : "direct signin sign-in",
       };
       if (used.has("env") || used.has("environment")) {
         const detected = EnvironmentsManager.classify(accountName, accountId);
@@ -2304,6 +2334,11 @@ import {
         RolesManager.matches(id, roleName)
       );
       if (!roleMatch) return false;
+    }
+
+    // Source filter — direct SAML roles vs saved ⤳ jump destinations.
+    if (activeFilters.source.length > 0) {
+      if (!activeFilters.source.includes(isJumpRow ? "jump" : "direct")) return false;
     }
 
     // Account-tag filters — the row's account must carry at least one active tag.
@@ -2728,6 +2763,13 @@ import {
                         <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="role"></div></div>
                     </div>
                     <div class="tm_frow">
+                        <span class="tm_frow_label">Source</span>
+                        <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="source">
+                            <a href="#" class="tm_filter_button" data-group="source" data-filter="direct" title="Roles granted directly by today's sign-in">Direct roles</a>
+                            <a href="#" class="tm_filter_button" data-group="source" data-filter="jump" title="Saved destinations reached by chaining through a hub">⤳ Jumps</a>
+                        </div></div>
+                    </div>
+                    <div class="tm_frow">
                         <span class="tm_frow_label">Tags</span>
                         <div class="tm_frow_body"><div class="tm_button_group" data-filter-group="tag"></div></div>
                     </div>
@@ -2802,6 +2844,10 @@ import {
                                 " />
                                 <button type="button" id="tm_jump_label_clear" class="tm_field_clear" aria-label="Clear label" title="Clear" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"></path></svg></button>
                             </div>
+                            <label id="tm_jump_save_wrap" title="Also save this destination — it becomes a ⤳ row in the listing, managed via Jump Destinations in the side menu" style="
+                                display: flex !important; gap: 6px !important; align-items: center !important;
+                                margin-bottom: 8px !important; font-size: 12px !important; color: #545b64 !important; cursor: pointer !important;
+                            "><input type="checkbox" id="tm_jump_save_dest" style="margin: 0 !important;" />Save as a named destination</label>
                             <button type="button" id="tm_jump_go" style="
                                 width: 100% !important; padding: 7px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
                                 color: white !important; border-radius: 4px !important; cursor: pointer !important; font-size: 12px !important;
@@ -3973,6 +4019,42 @@ import {
             margin-bottom: 0 !important;
         }
 
+        /* ⤳ jump rows: standard row anatomy, reached by chaining. The name
+           cell grows a second "via <profile> hub" line, so it needs a column
+           wrapper that takes over .tm_account_name's flex slot. */
+        .tm_jump_namewrap {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 1px !important;
+            flex: 0 1 auto !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
+        }
+        .tm_jump_namewrap .tm_account_name { flex: none !important; }
+        .tm_jump_via {
+            font-size: 10.5px !important;
+            color: #8a9099 !important;
+            font-weight: 400 !important;
+            line-height: 1.3 !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        body.tm_theme_dark .tm_jump_via { color: #8f98a3 !important; }
+        /* Hub role missing from today's assertion: visible but inert. */
+        .saml-role.tm_jump_unavailable { opacity: 0.55 !important; }
+        .saml-role.tm_jump_unavailable .tm_signin_button {
+            background: #fff !important;
+            border: 1px solid #ccc !important;
+            color: #8a9199 !important;
+            cursor: not-allowed !important;
+        }
+        body.tm_theme_dark .saml-role.tm_jump_unavailable .tm_signin_button {
+            background: #2a2f36 !important;
+            border-color: #3a4148 !important;
+        }
+        body.tm_theme_dark #tm_jump_save_wrap { color: #adb5bd !important; }
+
         /* Env color is painted as a left-stripe inline (via applyEnvironmentStyling)
            so the colour comes from the user's Environments config, not
            hardcoded CSS. */
@@ -4637,6 +4719,32 @@ import {
     const $button = $(this);
     const roleArn = $button.data("role-arn");
     const $role = $button.closest(".saml-role");
+    // ⤳ jump rows share the button slot but run the chained-jump engine,
+    // honouring the row's Service/Region picks. Same-tab by design — the jump
+    // navigates through the hub sign-in, so a new tab has nothing to keep.
+    if ($button.attr("data-jump") === "1") {
+      if ($role.hasClass("tm_jump_unavailable")) {
+        showToast(
+          "This jump's hub role isn't in today's role list, so there is nothing to chain from.",
+          "error",
+          CONFIG.TOAST_DURATION_LONG
+        );
+        return;
+      }
+      const destAccount = $role.attr("data-dest-account") || "";
+      const destProfile = $role.attr("data-dest-profile") || "";
+      const dest = JumpDestinationsManager.find(destAccount, destProfile);
+      const rowRegion = String($role.find(".tm_region_dropdown").val() || "");
+      const rowService = String($role.find(".tm_service_dropdown").val() || "");
+      if (rowRegion) await RegionsManager.saveLastRegion(roleArn, rowRegion);
+      if (rowService) await ServicesManager.saveLastService(roleArn, rowService);
+      jumpToAccount(destProfile, destAccount, (dest && dest.label) || "", {
+        region: rowRegion,
+        service: rowService,
+        fromRow: true,
+      });
+      return;
+    }
     const servicePath = $role.find(".tm_service_dropdown").val();
     const region = $role.find(".tm_region_dropdown").val();
     const roleName = $role.find(".tm_role_name").text().trim();
@@ -5574,7 +5682,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // signInToRole submits the SAML form — that submit navigates this page away,
   // and an unfinished storage write dies with it, leaving the decorator with no
   // pending entry (no region pin, no tab decoration).
-  const jumpToAccount = async (profileName, accountRaw, labelRaw) => {
+  const jumpToAccount = async (profileName, accountRaw, labelRaw, opts = {}) => {
     const profile = AssumeProfilesManager.byName(profileName);
     if (!profile) {
       showToast("Pick an org first.", "error", CONFIG.TOAST_DURATION);
@@ -5605,17 +5713,47 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const displayName = label || `${profile.name} · ${dest}`;
     const { envColor, envLetter } = computeDestEnv(dest);
 
+    // The same guardrail as a direct sign-in, keyed by the DESTINATION: a jump
+    // into a management account with an admin role should ask first, exactly
+    // like signing into it directly would.
+    const destName = AccountNamesManager.nameFor(dest) || "";
+    const reasons = sensitiveSignInReasons(profile.role, destName, dest);
+    if (reasons.length > 0) {
+      const ok = await confirmSensitiveSignIn(destName || dest, dest, profile.role, reasons);
+      if (!ok) return;
+    }
+
     // Region to land in after the switch-role. AWS otherwise drops a freshly
     // switched role into that identity's own default region — the "random"
     // region users complain about — so we carry the chosen one through to the
     // decorator (see console-decorator.js). The <select> is populated from the
     // validated region list, but re-validate anyway before it reaches a URL.
-    const pickedRegion = String($("#tm_jump_region").val() || "").trim().toLowerCase();
+    const optRegion = String((opts && opts.region) || "").trim().toLowerCase();
+    const pickedRegion =
+      optRegion || String($("#tm_jump_region").val() || "").trim().toLowerCase();
     const region = isValidRegionCode(pickedRegion)
       ? pickedRegion
       : GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
-    // Remember it as the Jump default for next time (own memory, not a role's).
-    RegionsManager.saveLastRegion(JUMP_REGION_KEY, region);
+    // Remember it as the Jump default for next time (own memory, not a
+    // role's) — popover jumps only: a ⤳ row jump keeps its own per-row memory
+    // and must not retarget what the popover opens on.
+    if (!optRegion) RegionsManager.saveLastRegion(JUMP_REGION_KEY, region);
+
+    // Landing service (⤳ rows): rides the pending hand-off and is applied by
+    // the decorator after the switch-role settles. Gated here AND there — the
+    // value ends up as a path on a live console origin.
+    const svcRaw = String((opts && opts.service) || "");
+    const svc = isSafeServicePath(svcRaw) ? svcRaw : "";
+
+    // Popover "save as a named destination": mint or refresh the saved entry
+    // so it shows up as a ⤳ row in the listing from the next load on. Row
+    // jumps skip this — their destination already exists.
+    if (!(opts && opts.fromRow) && $("#tm_jump_save_dest").prop("checked")) {
+      await JumpDestinationsManager.upsert(dest, profile.name, {
+        region: isValidRegionCode(pickedRegion) ? pickedRegion : "",
+        label,
+      });
+    }
 
     // Hand-off for the console side: the jumped-into tab lands on a different
     // subdomain, so sessionStorage can't carry the label/colour across. Stash
@@ -5630,7 +5768,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       for (const k of Object.keys(cur)) {
         if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
       }
-      cur[dest] = { label: displayName, envColor, envLetter, region, ts: now };
+      cur[dest] = { label: displayName, envColor, envLetter, region, service: svc, ts: now };
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
 
@@ -5690,6 +5828,90 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     );
     if (prev && profiles.some((p) => p.name === prev)) $sel.val(prev);
   };
+
+  // === SAVED JUMP DESTINATIONS AS LISTING ROWS ===
+  // A destination renders as a standard listing row — same ☆ / tags / search /
+  // Service / Region controls, keyed by its jump:: pseudo-ARN — with a Jump
+  // button where a direct role has Sign In and a dashed env stripe. The rows
+  // are views of the Jump Destinations list (side menu); nothing is edited
+  // here beyond what any row offers.
+  const jumpRowAvailability = (dest) => {
+    const profile = AssumeProfilesManager.byName(dest.profile);
+    if (!profile) return { ok: false, why: `profile "${dest.profile}" is not configured` };
+    if (!findRoleArnForAccount(profile.hub, profile.hubRole)) {
+      return { ok: false, why: "hub role not in today's list" };
+    }
+    return { ok: true, why: "" };
+  };
+
+  const jumpDestDisplayName = (dest) =>
+    dest.name || AccountNamesManager.nameFor(dest.account) || dest.account;
+
+  const renderJumpDestinationRows = () => {
+    const $list = $("#" + RoleOrderManager.LIST_ID);
+    if (!$list.length) return;
+    $list.find('.saml-role[data-jump="1"]').remove();
+    for (const dest of JumpDestinationsManager.all()) {
+      const key = jumpDestKey(dest.account, dest.profile);
+      const profile = AssumeProfilesManager.byName(dest.profile);
+      const roleName = (profile && profile.role) || "";
+      const avail = jumpRowAvailability(dest);
+      const via = avail.ok ? `via ${dest.profile} hub · max 1 h` : avail.why;
+      const safeKey = escapeHtml(key);
+      const safeAccountId = escapeHtml(dest.account);
+      // Region precedence: per-row memory (when remembering) → the
+      // destination's own region → the profile's landing region → default.
+      const memRegion = GeneralSettingsManager.rememberRegion()
+        ? RegionsManager.getLastRegionSync(key)
+        : "";
+      const regionSelected =
+        memRegion || dest.region || (profile && profile.region) ||
+        GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
+      // Service precedence mirrors it: per-row memory → the destination's own.
+      const svcSelected = ServicesManager.getLastServiceSync(key) || dest.service || "";
+      const svcOptions = servicesCache.map((s) => {
+        const path = s && typeof s.path === "string" ? s.path : "";
+        const name = s && typeof s.name === "string" ? s.name : "";
+        return `<option value="${escapeHtml(path)}"${path === svcSelected ? " selected" : ""}>${escapeHtml(name)}</option>`;
+      }).join("");
+      const rowHTML = `
+        <div class="saml-role tm_jump_row${avail.ok ? "" : " tm_jump_unavailable"}" data-jump="1"
+             data-dest-account="${safeAccountId}" data-dest-profile="${escapeHtml(dest.profile)}">
+            <div class="tm_role_info">
+                <button type="button" class="tm_favorite_button" data-role-arn="${safeKey}" title="Add to favorites">☆</button>
+                <div class="tm_jump_namewrap">
+                    <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="">⤳ ${escapeHtml(jumpDestDisplayName(dest))}</div>
+                    <div class="tm_jump_via">${escapeHtml(via)}</div>
+                </div>
+                <div class="tm_tag_cell">${tagChipHTML(dest.account)}</div>
+                <div class="tm_role_name">${escapeHtml(roleName)}</div>
+            </div>
+            <div class="tm_role_buttons">
+                <button type="button" class="tm_account_id" data-account-id="${safeAccountId}" title="Click to copy account ID">${safeAccountId}</button>
+                <select class="tm_service_dropdown" data-role-arn="${safeKey}" data-account-id="${safeAccountId}">
+                  <option value=""${svcSelected ? "" : " selected"}>Console only</option>
+                  ${svcOptions}
+                </select>
+                <select class="tm_region_dropdown" data-role-arn="${safeKey}" title="AWS region to land in after the jump">
+                  ${RegionsManager.regionOptionsHTML(regionSelected)}
+                </select>
+                <button type="button" class="tm_role_button primary tm_signin_button" data-role-arn="${safeKey}" data-jump="1" title="${avail.ok ? "Jump — sign into the hub, then switch into this account (chained sessions last 1 h by AWS)" : escapeHtml(avail.why)}">Jump</button>
+            </div>
+            <div class="tm_tag_editor" data-account-id="${safeAccountId}">${tagEditorHTML(dest.account)}</div>
+        </div>
+      `;
+      $list.append(rowHTML);
+    }
+    // New rows joined the pool: drop stale element memos, re-apply the saved
+    // manual order (jump rows sort by their pseudo-ARN like any row), repaint
+    // stars and stripes, and let the Source filter row show itself.
+    refreshCachedElements();
+    RoleOrderManager.applySavedOrder();
+    FavoritesManager.updateButtons();
+    updateFilterRowVisibility("source");
+    FilterManager.applyFilters(true);
+  };
+  renderJumpDestinationRows();
 
   // === ACTIVE CONSOLE SESSIONS ===
   // AWS allows 5 concurrent console sessions per browser profile and only says
@@ -8366,7 +8588,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // as elsewhere. ---
   // "id" is deliberately absent — it's an alias of "account" and only doubled up
   // the chips. Typing it by hand still parses (see KNOWN_QUERY_FIELDS).
-  const SEARCH_FIELD_SUGGESTIONS = ["tag", "role", "name", "account", "env", "type", "org"];
+  const SEARCH_FIELD_SUGGESTIONS = ["tag", "role", "name", "account", "env", "type", "org", "is"];
   const searchFieldValues = (field) => {
     switch (field) {
       case "tag": case "tags": return AccountTagsManager.allTags();

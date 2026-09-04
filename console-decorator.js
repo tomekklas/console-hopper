@@ -242,6 +242,44 @@
     }
   }
 
+  // Landing pin for a jump: ONE navigation that fixes the region (host swap,
+  // via regionPinUrl) and/or deep-links into the destination's landing
+  // service. Shares regionPinUrl's once-only guard (the pending entry's
+  // regionPinTried flag), so a refused region or a bouncing service can never
+  // loop. The service path originates in the picker's validated Services
+  // config, but is charset-gated again here — it becomes a path on a live
+  // console origin and this is a standalone script with no imports.
+  const SERVICE_PATH_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+]{0,199}$/;
+  function landingPinUrl(region, servicePath) {
+    try {
+      const svcRaw = String(servicePath || "");
+      const svc = svcRaw && SERVICE_PATH_RE.test(svcRaw) && !svcRaw.includes("..") ? svcRaw : "";
+      const regionUrl = regionPinUrl(region);
+      if (!svc) return regionUrl;
+      // Base = the region-corrected URL when one is needed, else where we are.
+      const base = new URL(regionUrl || window.location.href);
+      // Region for {region} placeholders: the (possibly corrected) host's own
+      // segment on a regional host, else the requested one, else nothing.
+      const parts = base.hostname.split(".");
+      const hostRegion =
+        parts.length >= 6 && parts[2] === "console" && REGION_CODE_RE.test(parts[1])
+          ? parts[1]
+          : "";
+      const effRegion =
+        hostRegion || (REGION_CODE_RE.test(String(region || "")) ? String(region) : "");
+      const path = "/" + svc.replace(/\{region\}/g, effRegion);
+      const target = base.protocol + "//" + base.hostname + path;
+      const current =
+        window.location.protocol + "//" + window.location.hostname +
+        window.location.pathname + window.location.search;
+      // Already on the service (and the right host): fall back to whatever the
+      // region alone would have done — possibly nothing.
+      return target === current ? regionUrl : target;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // A #hop payload arrives in the URL fragment, which anyone can craft — so a
   // link from any site could otherwise paint a real production console as
   // "DEV/green", relabel its tab, or send you into a pre-filled switch-role.
@@ -301,14 +339,15 @@
         chrome.storage.local.set({ hop_pending_jumps: pending });
         return;
       }
-      // Pin the region first — but only once. The attempt is recorded in the
-      // entry (which lives in chrome.storage.local, so it survives the
-      // cross-origin region redirect) and the entry is left in place, so the
-      // post-redirect load still consumes it and decorates. If AWS refuses the
-      // region and bounces us back, regionPinTried is already set → we stop and
-      // decorate in whatever region we ended up in, rather than looping.
+      // Pin the landing (region host and/or service path) first — but only
+      // once. The attempt is recorded in the entry (which lives in
+      // chrome.storage.local, so it survives the cross-origin redirect) and
+      // the entry is left in place, so the post-redirect load still consumes
+      // it and decorates. If AWS refuses the region or the service bounces,
+      // regionPinTried is already set → we stop and decorate wherever we
+      // ended up, rather than looping.
       if (!hit.regionPinTried) {
-        const url = regionPinUrl(hit.region);
+        const url = landingPinUrl(hit.region, hit.service);
         if (url) {
           hit.regionPinTried = true;
           chrome.storage.local.set({ hop_pending_jumps: pending }, () => {
