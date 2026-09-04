@@ -40,14 +40,19 @@ gives every row a star, a service deep-link, and a one-click sign-in,
 and gives every open console tab a colour-coded favicon plus an account
 name in the title.
 
-NEW IN 1.4.0
+NEW IN 1.5.0
 
-• Active AWS sessions — see how many console sessions you have open, and
-  sign one out without closing the others.
-• Region control for jumps — choose the region a jump lands in, or set a
-  default per jump profile.
-• Fewer clicks mid-jump — when AWS asks which session to switch from,
-  Console Hopper answers for you.
+• Saved jump destinations in the role list — accounts you chain into
+  appear as ⤳ rows next to your normal roles: searchable, taggable,
+  favouritable, with their own landing service and region and a Jump
+  button. A Source filter (direct roles vs jumps) and is:jump in search
+  keep them one keystroke away, and a new "Jump Destinations" side-menu
+  panel manages them, with bulk import.
+• Jumps can land on a service — pick the service console a jump opens
+  in, in the region you chose.
+• "Sign out all sessions" in the sessions panel — and the panel no
+  longer vanishes under your pointer after the last sign-out, so a
+  stray click can't hit a Sign In button underneath it.
 
 WHAT YOU GET
 
@@ -92,7 +97,11 @@ WHAT YOU GET
   open it selects the right one for you instead of leaving you to guess.
   The new tab is titled with your session label, and recent jumps are one
   click away — pin the ones you use most (they stay at the top and can be
-  dragged to reorder) or remove any you don't need.
+  dragged to reorder) or remove any you don't need. Save the destinations
+  you use often — via "Jump Destinations" in the side menu, or the "Save
+  as a named destination" tick when you jump — and they appear as ⤳ rows
+  in the main list itself, with a dashed environment stripe, the hub they
+  go through, and their own service and region picks.
 
 • Favorites and Recent
   Star roles you use often. Recently signed-in roles are tracked
