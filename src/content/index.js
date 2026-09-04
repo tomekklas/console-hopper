@@ -2912,6 +2912,7 @@ import {
                 <a href="#" class="tm_action_button" id="tm_manage_account_names">Account Names</a>
                 <a href="#" class="tm_action_button" id="tm_manage_account_tags">Account Tags</a>
                 <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Jump Profiles</a>
+                <a href="#" class="tm_action_button" id="tm_manage_jump_dests">Jump Destinations</a>
                 <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
                 <div class="tm_menu_header">Data</div>
                 <a href="#" class="tm_action_button" id="tm_export_settings">Export Settings</a>
@@ -4055,6 +4056,50 @@ import {
         }
         body.tm_theme_dark #tm_jump_save_wrap { color: #adb5bd !important; }
 
+        /* Jump Destinations dialog */
+        .tm_jd_row {
+            display: flex !important; align-items: center !important; gap: 10px !important;
+            padding: 9px 6px !important; border-top: 1px solid #eee !important;
+        }
+        .tm_jd_row:first-child { border-top: 0 !important; }
+        .tm_jd_editing { background: #f7fafd !important; border-radius: 6px !important; }
+        .tm_jd_main { flex: 1 1 auto !important; min-width: 0 !important; display: flex !important; flex-direction: column !important; gap: 2px !important; }
+        .tm_jd_name { font-size: 13.5px !important; font-weight: 600 !important; color: #16191f !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+        .tm_jd_meta { font-size: 11.5px !important; color: #8a9099 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+        .tm_jd_acct { font-family: monospace !important; font-size: 12px !important; color: #6c757d !important; flex: none !important; }
+        .tm_jd_service, .tm_jd_region {
+            flex: none !important; padding: 5px 6px !important;
+            border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12px !important;
+            background: #fff !important; color: #16191f !important;
+        }
+        .tm_jd_service { width: 132px !important; }
+        .tm_jd_region { width: 158px !important; }
+        .tm_jd_actions { flex: none !important; display: flex !important; gap: 4px !important; }
+        .tm_jd_edit, .tm_jd_del {
+            width: 24px !important; height: 24px !important; border: none !important; background: transparent !important;
+            border-radius: 4px !important; cursor: pointer !important; font-size: 13px !important; line-height: 1 !important;
+            color: #8a9199 !important; padding: 0 !important;
+        }
+        .tm_jd_edit:hover { background: #eef5fc !important; color: #0073bb !important; }
+        .tm_jd_del:hover { background: #fbeae8 !important; color: #c0392b !important; }
+        .tm_jd_del.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
+        .tm_jd_editgrid { flex: 1 1 auto !important; min-width: 0 !important; display: flex !important; gap: 8px !important; align-items: flex-end !important; }
+        .tm_jd_editgrid label { display: flex !important; flex-direction: column !important; gap: 3px !important; font-size: 11px !important; color: #6c757d !important; text-transform: uppercase !important; flex: 1 !important; min-width: 0 !important; }
+        .tm_jd_editgrid input { padding: 5px 8px !important; border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12.5px !important; width: 100% !important; box-sizing: border-box !important; text-transform: none !important; }
+        .tm_jd_editbtns { display: flex !important; gap: 6px !important; flex: none !important; }
+        .tm_jd_editbtns button { padding: 6px 12px !important; border-radius: 4px !important; font-size: 12px !important; cursor: pointer !important; }
+        .tm_jd_cancel { border: 1px solid #ccc !important; background: #fff !important; color: #16191f !important; }
+        .tm_jd_save { border: 1px solid #0073bb !important; background: #0073bb !important; color: #fff !important; }
+        .tm_jd_empty { padding: 14px 4px !important; font-size: 13px !important; color: #8a9199 !important; }
+        #tm_jd_add { margin-top: 12px !important; padding-top: 12px !important; border-top: 1px solid #ededed !important; }
+        .tm_jd_add_title { font-size: 12px !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 8px !important; }
+        .tm_jd_addgrid { display: flex !important; gap: 8px !important; align-items: flex-end !important; flex-wrap: wrap !important; }
+        .tm_jd_addgrid label { display: flex !important; flex-direction: column !important; gap: 3px !important; font-size: 11px !important; color: #6c757d !important; text-transform: uppercase !important; flex: 1 1 140px !important; min-width: 120px !important; }
+        .tm_jd_addgrid input, .tm_jd_addgrid select { padding: 6px 8px !important; border: 1px solid #ccc !important; border-radius: 4px !important; font-size: 12.5px !important; width: 100% !important; box-sizing: border-box !important; text-transform: none !important; }
+        .tm_jd_opt { text-transform: none !important; color: #8a9199 !important; }
+        #tm_jd_add_btn { flex: none !important; padding: 7px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important; color: #fff !important; border-radius: 4px !important; font-size: 12.5px !important; cursor: pointer !important; }
+        #tm_jd_add_err { color: #c0392b !important; font-size: 12px !important; margin-top: 6px !important; min-height: 14px !important; }
+
         /* Env color is painted as a left-stripe inline (via applyEnvironmentStyling)
            so the colour comes from the user's Environments config, not
            hardcoded CSS. */
@@ -4964,6 +5009,11 @@ import {
   $("body").on("click", "#tm_manage_account_tags", function (e) {
     e.preventDefault();
     showAccountTagsModal();
+  });
+
+  $("body").on("click", "#tm_manage_jump_dests", function (e) {
+    e.preventDefault();
+    showJumpDestsModal();
   });
 
   $("body").on("click", "#tm_manage_assume_profiles", function (e) {
@@ -6270,6 +6320,271 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
   };
 
+  // === JUMP DESTINATIONS DIALOG ===
+  // The one place a saved ⤳ destination is added, edited or deleted. The
+  // listing rows are read-only views of this list; ☆ favourites, tags and
+  // manual order live on those rows, not here. Service/region selects save on
+  // change; name and session label edit behind ✎; ✕ uses the shared two-step
+  // confirm; Import… takes the pipe-delimited line format for bulk paste.
+  const showJumpDestsModal = () => {
+    let editingKey = ""; // "account profile-lowercased" of the row being edited
+
+    const rowKey = (d) => `${d.account} ${d.profile.toLowerCase()}`;
+
+    const svcOptionsHTML = (selected) =>
+      `<option value=""${selected ? "" : " selected"}>Console only</option>` +
+      servicesCache
+        .map((s) => {
+          const path = s && typeof s.path === "string" ? s.path : "";
+          const name = s && typeof s.name === "string" ? s.name : "";
+          return `<option value="${escapeHtml(path)}"${path === selected ? " selected" : ""}>${escapeHtml(name)}</option>`;
+        })
+        .join("");
+
+    const regionOptionsWithDefault = (selected) =>
+      `<option value=""${selected ? "" : " selected"}>Default region</option>` +
+      (selected ? RegionsManager.regionOptionsHTML(selected) : RegionsManager.list()
+        .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.label)}</option>`)
+        .join(""));
+
+    const rowHTML = (d) => {
+      const key = rowKey(d);
+      const profile = AssumeProfilesManager.byName(d.profile);
+      const role = (profile && profile.role) || "";
+      const meta = [d.profile, role, d.label ? `label "${d.label}"` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      const editing = editingKey === key;
+      const main = editing
+        ? `
+          <div class="tm_jd_editgrid">
+            <label>Name<input type="text" class="tm_jd_name_input" maxlength="64" value="${escapeHtml(d.name || "")}" placeholder="${escapeHtml(AccountNamesManager.nameFor(d.account) || d.account)}"></label>
+            <label>Session label<input type="text" class="tm_jd_label_input" maxlength="120" value="${escapeHtml(d.label || "")}" placeholder="optional"></label>
+            <span class="tm_jd_editbtns">
+              <button type="button" class="tm_jd_cancel">Cancel</button>
+              <button type="button" class="tm_jd_save">Save</button>
+            </span>
+          </div>`
+        : `
+          <div class="tm_jd_main">
+            <div class="tm_jd_name">${escapeHtml(jumpDestDisplayName(d))}</div>
+            <div class="tm_jd_meta">${escapeHtml(meta)}</div>
+          </div>`;
+      return `
+        <div class="tm_jd_row${editing ? " tm_jd_editing" : ""}" data-account="${escapeHtml(d.account)}" data-profile="${escapeHtml(d.profile)}">
+          ${main}
+          <span class="tm_jd_acct" title="Destination account">${escapeHtml(d.account)}</span>
+          <select class="tm_jd_service" title="Land on service">${svcOptionsHTML(d.service || "")}</select>
+          <select class="tm_jd_region" title="Land in region — Default follows the profile's region, then General Settings">${regionOptionsWithDefault(d.region || "")}</select>
+          <span class="tm_jd_actions">
+            <button type="button" class="tm_jd_edit" title="Rename / relabel">&#9998;</button>
+            <button type="button" class="tm_jd_del" title="Remove this destination">&#10005;</button>
+          </span>
+        </div>`;
+    };
+
+    const listHTML = () => {
+      const all = JumpDestinationsManager.all();
+      if (!all.length) {
+        return `<div class="tm_jd_empty">No saved destinations yet. Add one below, tick
+          "Save as a named destination" when you jump, or paste a list via Import.</div>`;
+      }
+      return all.map(rowHTML).join("");
+    };
+
+    const profileOptionsHTML = () =>
+      AssumeProfilesManager.all()
+        .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
+        .join("");
+
+    const repaint = () => {
+      $("#tm_jd_list").html(listHTML());
+    };
+
+    // Persist a field change and refresh both this dialog and the listing rows
+    // behind it, so the edit is visibly live.
+    const commit = async (account, profile, patch) => {
+      await JumpDestinationsManager.upsert(account, profile, patch);
+      renderJumpDestinationRows();
+      repaint();
+    };
+
+    const modalHTML = `
+      <div id="tm_jump_dests_modal" style="
+          position: fixed !important; top: 0 !important; left: 0 !important;
+          right: 0 !important; bottom: 0 !important;
+          background: rgba(0,0,0,0.5) !important; z-index: 10000 !important;
+          display: flex !important; align-items: center !important; justify-content: center !important;
+      ">
+        <div style="
+            background: white !important; border-radius: 8px !important; padding: 20px !important;
+            max-width: 860px !important; width: 94% !important; max-height: 84vh !important; overflow-y: auto !important;
+        ">
+          <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Jump Destinations</h3>
+          <p style="margin: 0 0 12px 0 !important; color: #6c757d !important; font-size: 13.5px !important; line-height: 1.45 !important;">
+            Saved chained-jump targets. Each one shows as a <strong>⤳ row in the role
+            listing</strong> — searchable, taggable, favouritable like any row — and jumps
+            through its profile's hub. Name and session label edit behind ✎; the
+            service and region a jump lands on save as you change them. Removing a
+            destination only forgets this entry — it never touches AWS.
+          </p>
+          <div id="tm_jd_list">${listHTML()}</div>
+          <div id="tm_jd_add">
+            <div class="tm_jd_add_title">Add a destination</div>
+            <div class="tm_jd_addgrid">
+              <label>Name <span class="tm_jd_opt">(optional)</span><input type="text" id="tm_jd_add_name" maxlength="64" placeholder="Payments sandbox"></label>
+              <label>Account<input type="text" id="tm_jd_add_account" maxlength="12" inputmode="numeric" placeholder="12-digit id"></label>
+              <label>Profile<select id="tm_jd_add_profile">${profileOptionsHTML()}</select></label>
+              <label>Session label <span class="tm_jd_opt">(optional)</span><input type="text" id="tm_jd_add_label" maxlength="120" placeholder="INC-4711"></label>
+              <button type="button" id="tm_jd_add_btn">Add</button>
+            </div>
+            <div id="tm_jd_add_err"></div>
+          </div>
+          <div style="margin-top: 14px !important; display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 10px !important;">
+            <button type="button" id="tm_jd_import" style="
+                padding: 8px 14px !important; border: 1px solid #ccc !important;
+                background: white !important; border-radius: 4px !important; cursor: pointer !important;
+            " title="Paste destinations as lines: Name | account | profile | region | service | label">Import…</button>
+            <button type="button" id="tm_jd_close" style="
+                padding: 8px 16px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                color: white !important; border-radius: 4px !important; cursor: pointer !important;
+            ">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $("body").append(modalHTML);
+    const $modal = $("#tm_jump_dests_modal");
+
+    $modal.on("click", function (e) {
+      if (e.target === this) $modal.remove();
+    });
+    $modal.on("click", "#tm_jd_close", function () {
+      $modal.remove();
+    });
+
+    const rowCtx = (el) => {
+      const $row = $(el).closest(".tm_jd_row");
+      return { account: $row.attr("data-account") || "", profile: $row.attr("data-profile") || "" };
+    };
+
+    $modal.on("change", ".tm_jd_service", function () {
+      const { account, profile } = rowCtx(this);
+      commit(account, profile, { service: String(this.value || "") });
+    });
+    $modal.on("change", ".tm_jd_region", function () {
+      const { account, profile } = rowCtx(this);
+      commit(account, profile, { region: String(this.value || "") });
+    });
+    $modal.on("click", ".tm_jd_edit", function () {
+      const { account, profile } = rowCtx(this);
+      editingKey = `${account} ${profile.toLowerCase()}`;
+      repaint();
+    });
+    $modal.on("click", ".tm_jd_cancel", function () {
+      editingKey = "";
+      repaint();
+    });
+    $modal.on("click", ".tm_jd_save", function () {
+      const { account, profile } = rowCtx(this);
+      const $row = $(this).closest(".tm_jd_row");
+      const name = String($row.find(".tm_jd_name_input").val() || "").trim();
+      const label = String($row.find(".tm_jd_label_input").val() || "").trim();
+      editingKey = "";
+      commit(account, profile, { name, label });
+    });
+    $modal.on("click", ".tm_jd_del", function (e) {
+      e.preventDefault();
+      const btn = this;
+      const { account, profile } = rowCtx(btn);
+      twoStepDelete($(btn), btn, async () => {
+        await JumpDestinationsManager.remove(account, profile);
+        renderJumpDestinationRows();
+        repaint();
+      });
+    });
+    $modal.on("click", "#tm_jd_add_btn", async function () {
+      const name = String($("#tm_jd_add_name").val() || "").trim();
+      const account = String($("#tm_jd_add_account").val() || "").trim();
+      const profile = String($("#tm_jd_add_profile").val() || "");
+      const label = String($("#tm_jd_add_label").val() || "").trim();
+      const $err = $("#tm_jd_add_err");
+      if (!/^\d{12}$/.test(account)) {
+        $err.text("The account must be a 12-digit id.");
+        return;
+      }
+      if (!profile) {
+        $err.text("Configure a Jump Profile first — destinations jump through a profile's hub.");
+        return;
+      }
+      $err.text("");
+      await JumpDestinationsManager.upsert(account, profile, { name, label });
+      $("#tm_jd_add_name").val("");
+      $("#tm_jd_add_account").val("");
+      $("#tm_jd_add_label").val("");
+      renderJumpDestinationRows();
+      repaint();
+    });
+    $modal.on("click", "#tm_jd_import", function () {
+      const current = formatJumpDestLines(JumpDestinationsManager.all(), servicesCache);
+      const importHTML = `
+        <div id="tm_jd_import_modal" style="
+            position: fixed !important; top: 0 !important; left: 0 !important;
+            right: 0 !important; bottom: 0 !important;
+            background: rgba(0,0,0,0.5) !important; z-index: 10001 !important;
+            display: flex !important; align-items: center !important; justify-content: center !important;
+        ">
+          <div style="
+              background: white !important; border-radius: 8px !important; padding: 20px !important;
+              max-width: 640px !important; width: 92% !important;
+          ">
+            <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">Import destinations</h3>
+            <p style="margin: 0 0 12px 0 !important; color: #6c757d !important; font-size: 13px !important; line-height: 1.45 !important;">
+              One per line: <code>Name | account | profile | region | service | label</code>.
+              Only account + profile are required; start a line with the bare 12-digit id
+              to skip the name. The service takes a Services entry's name (e.g. CloudWatch).
+              Imported lines replace the whole list — it's pre-filled with the current one.
+            </p>
+            <textarea id="tm_jd_import_text" style="
+                width: 100% !important; height: 180px !important; border: 1px solid #ccc !important;
+                border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
+                font-size: 12.5px !important; resize: vertical !important; box-sizing: border-box !important;
+            " placeholder="Payments prod | 484848484848 | Org A | eu-west-1 | RDS | db failover">${escapeHtml(current)}</textarea>
+            <div style="margin-top: 12px !important; text-align: right !important;">
+              <button type="button" id="tm_jd_import_cancel" style="
+                  padding: 8px 14px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
+                  background: white !important; border-radius: 4px !important; cursor: pointer !important;
+              ">Cancel</button>
+              <button type="button" id="tm_jd_import_go" style="
+                  padding: 8px 14px !important; border: 1px solid #0073bb !important; background: #0073bb !important;
+                  color: white !important; border-radius: 4px !important; cursor: pointer !important;
+              ">Import</button>
+            </div>
+          </div>
+        </div>
+      `;
+      $("body").append(importHTML);
+      const $imp = $("#tm_jd_import_modal");
+      $imp.on("click", function (e) {
+        if (e.target === this) $imp.remove();
+      });
+      $imp.on("click", "#tm_jd_import_cancel", function () {
+        $imp.remove();
+      });
+      $imp.on("click", "#tm_jd_import_go", async function () {
+        const parsed = parseJumpDestLines(String($("#tm_jd_import_text").val() || ""), servicesCache);
+        const ok = await JumpDestinationsManager.save(parsed);
+        if (ok) {
+          $imp.remove();
+          renderJumpDestinationRows();
+          repaint();
+          showToast(`Imported ${parsed.length} destination${parsed.length === 1 ? "" : "s"}.`, "success", CONFIG.TOAST_DURATION);
+        }
+      });
+    });
+  };
+
   const showRegionsModal = () => {
     const current = formatRegionLines(regionListCache);
     const modalHTML = `
@@ -7245,7 +7560,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Pick a region per sign-in",
             `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Prefer every row to always open on the same region? Untick <strong>Remember the region I pick per role</strong> in <em>General Settings</em> — rows and the Jump bar then always start on your default region, and you can still override any single sign-in from its dropdown. Edit which regions appear — and their order — via <em>Regions</em>.`)}
           ${sectionHTML("Jump to account (role chaining)",
-            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS.`)}
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS. Save the places you jump to often as <strong>Jump Destinations</strong> (side menu, or the <em>Save as a named destination</em> tick in the popover) — each becomes a <strong>⤳ row in the listing</strong>, searchable, taggable and favouritable like any row, with its own landing Service and Region picks; a <em>Source</em> filter row and <code>is:jump</code> in search show only them, and a row greys out when its hub role isn't in today's list.`)}
           ${sectionHTML("Active AWS sessions",
             `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open. <strong>✕</strong> signs an individual session out (click twice to confirm) so you can free a slot without leaving the picker — the session you signed in with is marked <em>you</em> and can't be closed from here. <em>Clear AWS sessions</em> in the side menu still signs them all out at once. Console Hopper only reads session metadata — never cookie contents.`)}
           ${sectionHTML("Rename accounts",
