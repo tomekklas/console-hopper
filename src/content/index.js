@@ -1415,6 +1415,21 @@ import {
     getLastServiceSync(roleArn) {
       return lastServicesCache[roleArn] || "";
     },
+    // "" in the map is a real value — an explicit "Console only" pick — so
+    // callers that need default-vs-explicit ask for existence first.
+    hasLastServiceSync(roleArn) {
+      return Object.prototype.hasOwnProperty.call(lastServicesCache, roleArn);
+    },
+    async clearLastService(roleArn) {
+      if (!this.hasLastServiceSync(roleArn)) return;
+      delete lastServicesCache[roleArn];
+      await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAST_SERVICE);
+        const updated = result[CONFIG.STORAGE_KEYS.LAST_SERVICE] ?? {};
+        delete updated[roleArn];
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.LAST_SERVICE]: updated });
+      });
+    },
 
     getServicesSync() {
       return servicesCache;
@@ -1483,6 +1498,16 @@ import {
     },
     getLastRegionSync(roleArn) {
       return lastRegionsCache[roleArn] || "";
+    },
+    async clearLastRegion(roleArn) {
+      if (!Object.prototype.hasOwnProperty.call(lastRegionsCache, roleArn)) return;
+      delete lastRegionsCache[roleArn];
+      await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAST_REGION);
+        const updated = result[CONFIG.STORAGE_KEYS.LAST_REGION] ?? {};
+        delete updated[roleArn];
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.LAST_REGION]: updated });
+      });
     },
     list() {
       return regionListCache;
@@ -1572,7 +1597,16 @@ import {
       jumpDestsCache = await StorageManager.getJumpDests();
       debug("Jump destinations cache loaded:", jumpDestsCache.length, "entries");
     },
-    async save(list) {
+    // Every write runs through one chain: the dialog fires saves from blur
+    // and change events without awaiting each other, and a read-modify-write
+    // from a stale cache would silently drop the earlier of two quick edits.
+    _chain: Promise.resolve(),
+    _enqueue(fn) {
+      const run = this._chain.then(fn, fn);
+      this._chain = run.then(() => {}, () => {});
+      return run;
+    },
+    async _saveNow(list) {
       const clean = normalizeJumpDests(list);
       const saved = await StorageManager.saveJumpDests(clean);
       if (saved !== false) {
@@ -1581,6 +1615,9 @@ import {
       }
       showToast("Failed to save jump destinations", "error");
       return false;
+    },
+    async save(list) {
+      return this._enqueue(() => this._saveNow(list));
     },
     all() {
       return jumpDestsCache;
@@ -1594,17 +1631,25 @@ import {
       );
     },
     // Insert or update the entry for account+profile. Only the fields present
-    // in `patch` change, so a popover save can't wipe a name set in the dialog.
+    // in `patch` change, so a popover save can't wipe values set in the
+    // dialog — and an update stays IN PLACE: a field edit must not reorder
+    // the list (or the ⤳ rows behind it). New entries append.
     async upsert(account, profile, patch = {}) {
-      const existing = this.find(account, profile);
-      const merged = { ...(existing || { account, profile }), ...patch, account, profile };
-      const rest = jumpDestsCache.filter((d) => d !== existing);
-      return await this.save(existing ? [merged, ...rest] : [...rest, merged]);
+      return this._enqueue(() => {
+        const existing = this.find(account, profile);
+        const merged = { ...(existing || { account, profile }), ...patch, account, profile };
+        const next = existing
+          ? jumpDestsCache.map((d) => (d === existing ? merged : d))
+          : [...jumpDestsCache, merged];
+        return this._saveNow(next);
+      });
     },
     async remove(account, profile) {
-      const hit = this.find(account, profile);
-      if (!hit) return true;
-      return await this.save(jumpDestsCache.filter((d) => d !== hit));
+      return this._enqueue(() => {
+        const hit = this.find(account, profile);
+        if (!hit) return true;
+        return this._saveNow(jumpDestsCache.filter((d) => d !== hit));
+      });
     },
   };
 
@@ -3911,34 +3956,6 @@ import {
         .tm_jump_recent:hover .tm_jump_action {
             opacity: 1 !important;
         }
-        .tm_jump_pin { color: #c7ccd1 !important; }
-        .tm_jump_pin:hover { color: #e0a800 !important; background-color: #fbf3d6 !important; }
-        /* A pinned row always shows its filled gold star, and drags to reorder. */
-        .tm_jump_recent[data-pinned="1"] .tm_jump_pin {
-            color: #e0a800 !important;
-            opacity: 1 !important;
-        }
-        /* Pinned rows reorder with the same FLIP pointer-drag as the main list:
-           a transform transition so siblings glide as the dragged row passes. */
-        .tm_jump_recent[data-pinned="1"] {
-            cursor: grab !important;
-            touch-action: none !important;
-            will-change: transform !important;
-            transition: transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.12s ease !important;
-        }
-        .tm_jump_recent.tm_dragging {
-            cursor: grabbing !important;
-            opacity: 0.98 !important;
-            background: #ffffff !important;
-            border-top-color: transparent !important;
-            border-radius: 6px !important;
-            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22), 0 0 0 2px rgba(0, 115, 187, 0.55) !important;
-            position: relative !important;
-            z-index: 30 !important;
-        }
-        body.tm_jump_dragging_active #tm_jump_recents .tm_jump_recent[data-pinned="1"]:not(.tm_dragging) {
-            opacity: 0.85 !important;
-        }
         .tm_jump_del { color: #8a9199 !important; }
         .tm_jump_del:hover { color: #c0392b !important; background-color: #fbeae8 !important; }
         /* Armed (first ✕ click): red-filled "click again to remove". opacity:1
@@ -4788,8 +4805,8 @@ import {
       const dest = JumpDestinationsManager.find(destAccount, destProfile);
       const rowRegion = String($role.find(".tm_region_dropdown").val() || "");
       const rowService = String($role.find(".tm_service_dropdown").val() || "");
-      if (rowRegion) await RegionsManager.saveLastRegion(roleArn, rowRegion);
-      if (rowService) await ServicesManager.saveLastService(roleArn, rowService);
+      // Per-row memory is written inside jumpToAccount, AFTER the sensitive
+      // confirm — a cancelled jump must leave no trace.
       jumpToAccount(destProfile, destAccount, (dest && dest.label) || "", {
         region: rowRegion,
         service: rowService,
@@ -5173,24 +5190,15 @@ import {
   });
 
   $("body").on("click", ".tm_jump_recent", function (e) {
-    // The ★/✕ actions sit inside the row; leave those clicks to their handlers.
+    // The ✕ action sits inside the row; leave its clicks to its handler.
     if (e.target.closest && e.target.closest(".tm_jump_action")) return;
     e.preventDefault();
     jumpToAccount(
       $(this).attr("data-org"),
       $(this).attr("data-account"),
-      $(this).attr("data-label")
+      $(this).attr("data-label"),
+      { fromRecent: true }
     );
-  });
-
-  // ★ toggles pin/unpin on a jump row.
-  $("body").on("click", ".tm_jump_pin", function (e) {
-    e.preventDefault();
-    const $row = $(this).closest(".tm_jump_recent");
-    const org = $row.attr("data-org");
-    const account = $row.attr("data-account");
-    if ($row.attr("data-pinned") === "1") unpinJump(org, account);
-    else pinJump(org, account);
   });
 
   // --- Two-step confirm delete, shared by saved-view chips and jump rows.
@@ -5515,10 +5523,15 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // AWS name as data-* attributes, so we can both apply and clear renames.
   const refreshAccountNames = () => {
     $(".tm_account_name").each(function () {
+      // ⤳ jump rows own their name cell (dest.name → Account Names → label →
+      // id, plus the arrow) — rewriting it here would blank or de-arrow them;
+      // renderJumpDestinationRows below re-derives them properly.
+      if (this.closest('.saml-role[data-jump="1"]')) return;
       const id = this.getAttribute("data-account-id") || "";
       const awsName = this.getAttribute("data-aws-name") || "";
       this.textContent = AccountNamesManager.nameFor(id) || awsName;
     });
+    renderJumpDestinationRows();
     // Re-filter (this also re-runs environment styling) so a rename that
     // changes which env / org / type a row matches is reflected at once.
     FilterManager.applyFilters();
@@ -5682,59 +5695,17 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   const recordJump = async (org, account, label, role) => {
     const entry = { org, account, label: (label || "").trim(), role: role || "", ts: Date.now() };
-    // If the destination is pinned, refresh that pinned entry (keep it pinned)
-    // instead of also spawning a recent for it.
-    const pi = jumpPinnedCache.findIndex((r) => r.org === org && r.account === account);
-    if (pi !== -1) {
-      jumpPinnedCache[pi] = { ...jumpPinnedCache[pi], label: entry.label, role: entry.role, ts: entry.ts };
-      await StorageManager.saveJumpPinned(jumpPinnedCache);
-      return;
-    }
     const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
     jumpRecentsCache = [entry, ...rest].slice(0, 6);
     await StorageManager.saveJumpRecents(jumpRecentsCache);
   };
 
-  // Star a recent → move it into the pinned list (survives the 6-recents cap).
-  const pinJump = async (org, account) => {
-    const idx = jumpRecentsCache.findIndex((r) => r.org === org && r.account === account);
-    if (idx === -1) return;
-    const entry = jumpRecentsCache[idx];
-    jumpRecentsCache = jumpRecentsCache.filter((_, i) => i !== idx);
-    const rest = jumpPinnedCache.filter((r) => !(r.org === org && r.account === account));
-    jumpPinnedCache = [entry, ...rest].slice(0, 12);
-    await StorageManager.saveJumpRecents(jumpRecentsCache);
-    await StorageManager.saveJumpPinned(jumpPinnedCache);
-    refreshJumpRecents();
-  };
-
-  // Unpin → move it back to the top of recents so it doesn't just disappear.
-  const unpinJump = async (org, account) => {
-    const idx = jumpPinnedCache.findIndex((r) => r.org === org && r.account === account);
-    if (idx === -1) return;
-    const entry = jumpPinnedCache[idx];
-    jumpPinnedCache = jumpPinnedCache.filter((_, i) => i !== idx);
-    const rest = jumpRecentsCache.filter((r) => !(r.org === org && r.account === account));
-    jumpRecentsCache = [entry, ...rest].slice(0, 6);
-    await StorageManager.saveJumpPinned(jumpPinnedCache);
-    await StorageManager.saveJumpRecents(jumpRecentsCache);
-    refreshJumpRecents();
-  };
-
-  // Delete → drop the jump from whichever list holds it.
+  // Delete → forget the recent. Saved destinations live elsewhere.
   const deleteJump = async (org, account) => {
     const match = (r) => r.org === org && r.account === account;
-    const inR = jumpRecentsCache.some(match);
-    const inP = jumpPinnedCache.some(match);
-    if (!inR && !inP) return;
-    if (inR) {
-      jumpRecentsCache = jumpRecentsCache.filter((r) => !match(r));
-      await StorageManager.saveJumpRecents(jumpRecentsCache);
-    }
-    if (inP) {
-      jumpPinnedCache = jumpPinnedCache.filter((r) => !match(r));
-      await StorageManager.saveJumpPinned(jumpPinnedCache);
-    }
+    if (!jumpRecentsCache.some(match)) return;
+    jumpRecentsCache = jumpRecentsCache.filter((r) => !match(r));
+    await StorageManager.saveJumpRecents(jumpRecentsCache);
     refreshJumpRecents();
   };
 
@@ -5776,7 +5747,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     // The same guardrail as a direct sign-in, keyed by the DESTINATION: a jump
     // into a management account with an admin role should ask first, exactly
     // like signing into it directly would.
-    const destName = AccountNamesManager.nameFor(dest) || "";
+    const savedDest = JumpDestinationsManager.find(dest, profile.name);
+    const destName =
+      (savedDest && savedDest.name) || AccountNamesManager.nameFor(dest) || "";
     const reasons = sensitiveSignInReasons(profile.role, destName, dest);
     if (reasons.length > 0) {
       const ok = await confirmSensitiveSignIn(destName || dest, dest, profile.role, reasons);
@@ -5806,13 +5779,25 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const svc = isSafeServicePath(svcRaw) ? svcRaw : "";
 
     // Popover "save as a named destination": mint or refresh the saved entry
-    // so it shows up as a ⤳ row in the listing from the next load on. Row
-    // jumps skip this — their destination already exists.
-    if (!(opts && opts.fromRow) && $("#tm_jump_save_dest").prop("checked")) {
-      await JumpDestinationsManager.upsert(dest, profile.name, {
-        region: isValidRegionCode(pickedRegion) ? pickedRegion : "",
-        label,
-      });
+    // so it shows up as a ⤳ row in the listing from the next load on. Only
+    // for jumps typed into the popover form — row and recents clicks aren't
+    // form submissions, and must not act on a leftover tick. Patch only what
+    // the form actually holds: an empty label or unpicked region must not
+    // wipe values curated in the dialog.
+    if (!(opts && (opts.fromRow || opts.fromRecent)) && $("#tm_jump_save_dest").prop("checked")) {
+      const patch = {};
+      if (label) patch.label = label;
+      if (isValidRegionCode(pickedRegion)) patch.region = pickedRegion;
+      await JumpDestinationsManager.upsert(dest, profile.name, patch);
+    }
+
+    // A ⤳ row's dropdown picks become that row's memory — but only now, past
+    // the confirmation: a cancelled jump leaves no trace. "" service is a real
+    // value here (explicit Console only).
+    if (opts && opts.fromRow) {
+      const rowKey = jumpDestKey(dest, profile.name);
+      await RegionsManager.saveLastRegion(rowKey, region);
+      await ServicesManager.saveLastService(rowKey, svc);
     }
 
     // Hand-off for the console side: the jumped-into tab lands on a different
@@ -5935,8 +5920,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const regionSelected =
         memRegion || dest.region || (profile && profile.region) ||
         GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
-      // Service precedence mirrors it: per-row memory → the destination's own.
-      const svcSelected = ServicesManager.getLastServiceSync(key) || dest.service || "";
+      // Service precedence mirrors it: per-row memory → the destination's
+      // own. Memory wins by EXISTENCE, not truthiness — "" in the map is an
+      // explicit "Console only" pick and must not resurrect dest.service.
+      const svcSelected = ServicesManager.hasLastServiceSync(key)
+        ? ServicesManager.getLastServiceSync(key)
+        : dest.service || "";
       const svcOptions = servicesCache.map((s) => {
         const path = s && typeof s.path === "string" ? s.path : "";
         const name = s && typeof s.name === "string" ? s.name : "";
@@ -5979,6 +5968,28 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     updateFilterRowVisibility("source");
     FilterManager.applyFilters(true);
   };
+  // One-time graduation: popover ★ pins predate Jump Destinations and were
+  // the same idea in embryo — fold them in (label kept, name left for the
+  // dialog), then clear the old store. Recents stay pure history.
+  const migrateJumpPinsToDests = async () => {
+    if (!jumpPinnedCache.length) return;
+    const list = [...JumpDestinationsManager.all()];
+    for (const p of jumpPinnedCache) {
+      if (!p || !p.org || !/^\d{12}$/.test(p.account || "")) continue;
+      const dup = list.some(
+        (d) => d.account === p.account && d.profile.toLowerCase() === p.org.toLowerCase()
+      );
+      if (!dup) {
+        list.push({ name: "", account: p.account, profile: p.org, region: "", service: "", label: p.label || "" });
+      }
+    }
+    const ok = await JumpDestinationsManager.save(list);
+    if (ok) {
+      jumpPinnedCache = [];
+      await StorageManager.saveJumpPinned([]);
+    }
+  };
+  await migrateJumpPinsToDests();
   renderJumpDestinationRows();
 
   // === ACTIVE CONSOLE SESSIONS ===
@@ -6013,7 +6024,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // honest source is our own jump history — pinned first, then recents.
   const jumpLabelFor = (account, role) => {
     if (!account) return "";
-    const hit = [...jumpPinnedCache, ...jumpRecentsCache].find(
+    // Saved destinations are the durable source; recents cover jumps that
+    // were never saved.
+    const dest = jumpDestsCache.find((d) => d.account === account);
+    if (dest && dest.label) return dest.label;
+    const hit = jumpRecentsCache.find(
       (r) => r && r.account === account && (!role || !r.role || r.role === role)
     );
     return (hit && hit.label) || "";
@@ -6186,42 +6201,22 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $sel.html(RegionsManager.regionOptionsHTML(selected));
   };
 
-  // Rebuild jumpPinnedCache from the current DOM order of the pinned rows —
-  // the shared pointer-drag engine calls this (via dragState.onReorder) once a
-  // pinned-row reorder settles, mirroring RoleOrderManager.saveCurrentOrder().
-  const saveJumpPinnedFromDom = async () => {
-    const rows = Array.from(
-      document.querySelectorAll('#tm_jump_recents .tm_jump_recent[data-pinned="1"]')
-    );
-    const keyed = rows
-      .map((el) =>
-        jumpPinnedCache.find(
-          (r) => r.org === el.getAttribute("data-org") && r.account === el.getAttribute("data-account")
-        )
-      )
-      .filter(Boolean);
-    for (const e of jumpPinnedCache) if (!keyed.includes(e)) keyed.push(e);
-    jumpPinnedCache = keyed;
-    await StorageManager.saveJumpPinned(jumpPinnedCache);
-  };
-
   const refreshJumpRecents = () => {
     const $r = $("#tm_jump_recents");
     if (!$r.length) return;
-    if (!jumpPinnedCache.length && !jumpRecentsCache.length) {
+    if (!jumpRecentsCache.length) {
       $r.html("");
       return;
     }
-    // One row, styled like the main role list: ★ toggle first, then the
-    // click-to-rejump body (label + account, then org · role), then ✕ delete.
-    const renderRow = (r, pinned) => {
+    // Plain history, nothing more: the popover is the quick-and-dirty way in.
+    // Anything worth keeping graduates to Jump Destinations (the save tick or
+    // the side menu); a recent is click-to-rejump with ✕ to forget it.
+    const renderRow = (r) => {
       const primary = escapeHtml(r.label || AccountNamesManager.nameFor(r.account) || r.account);
       const acct = escapeHtml(r.account);
       const meta = [r.org, r.role].filter(Boolean).map(escapeHtml).join(" · ");
-      const pinLabel = pinned ? "Unpin" : "Pin";
       return (
-        `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" data-pinned="${pinned ? "1" : "0"}" title="${pinned ? "Drag to reorder · click to jump" : "Jump again"}">` +
-          `<span class="tm_jump_action tm_jump_pin" role="button" tabindex="-1" title="${pinLabel}" aria-label="${pinLabel}">${pinned ? "★" : "☆"}</span>` +
+        `<div class="tm_jump_recent" data-org="${escapeHtml(r.org)}" data-account="${acct}" data-label="${escapeHtml(r.label || "")}" title="Jump again">` +
           `<div class="tm_jump_recent_body">` +
             `<div class="tm_jump_recent_l1"><span class="tm_jump_recent_lbl">${primary}</span><span class="tm_jump_recent_acct">${acct}</span></div>` +
             (meta ? `<div class="tm_jump_recent_meta">${meta}</div>` : "") +
@@ -6230,12 +6225,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         `</div>`
       );
     };
-    // Pinned first (they always sort to the top — the gold star says it, no
-    // header needed), then recents. One flat list like the main role listing.
-    $r.html(
-      jumpPinnedCache.map((r) => renderRow(r, true)).join("") +
-      jumpRecentsCache.map((r) => renderRow(r, false)).join("")
-    );
+    $r.html(jumpRecentsCache.map(renderRow).join(""));
   };
 
   const openJumpPopover = () => {
@@ -6243,6 +6233,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     refreshJumpOrgs();
     refreshJumpRegion();
     refreshJumpRecents();
+    // The save tick is per-jump intent, never a sticky mode — an armed tick
+    // left over from last time would silently write destinations.
+    const tick = document.getElementById("tm_jump_save_dest");
+    if (tick) tick.checked = false;
     $("#tm_jump_popover").css("display", "block");
     jumpPopoverOpen = true;
     const acc = document.getElementById("tm_jump_account");
@@ -6333,6 +6327,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (saved) {
         $("#tm_assume_profiles_modal").remove();
         refreshJumpBar();
+        // ⤳ rows freeze their availability (grey state, via-line, click
+        // guard) at render time — re-derive them now, or a renamed/deleted
+        // profile leaves rows that fail at click time instead of greying.
+        renderJumpDestinationRows();
         showToast("Jump profiles saved.", "success", CONFIG.TOAST_DURATION);
       }
     });
@@ -6483,10 +6481,14 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
     $modal.on("change", ".tm_jd_service", function () {
       const { account, profile } = rowCtx(this);
+      // The dialog sets the destination's default; a per-row override from
+      // the listing would silently shadow it, so editing here resets that.
+      ServicesManager.clearLastService(jumpDestKey(account, profile));
       commit(account, profile, { service: String(this.value || "") });
     });
     $modal.on("change", ".tm_jd_region", function () {
       const { account, profile } = rowCtx(this);
+      RegionsManager.clearLastRegion(jumpDestKey(account, profile));
       commit(account, profile, { region: String(this.value || "") });
     });
     // Flat cells save on blur — and only when the value actually changed, so
@@ -7109,28 +7111,6 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       rowClass: "saml-role",
       activeClass: "tm_role_dragging_active",
       onReorder: () => RoleOrderManager.saveCurrentOrder(),
-    };
-  });
-
-  // The same pointer-drag engine reorders pinned jumps: only the pinned rows
-  // participate (the recents below stay put), and it saves the pinned order.
-  $("body").on("pointerdown", '#tm_jump_recents .tm_jump_recent[data-pinned="1"]', function (e) {
-    if (dragState) return;
-    if (e.button !== 0) return;
-    // The ★/✕ actions take their click rather than starting a drag.
-    if (e.target.closest && e.target.closest(".tm_jump_action")) return;
-    dragState = {
-      row: this,
-      pointerId: e.pointerId,
-      startY: e.clientY,
-      startX: e.clientX,
-      activated: false,
-      filtersBlocked: false,
-      listId: "tm_jump_recents",
-      rowClass: "tm_jump_recent",
-      rowFilter: (el) => el.getAttribute("data-pinned") === "1",
-      activeClass: "tm_jump_dragging_active",
-      onReorder: () => saveJumpPinnedFromDom(),
     };
   });
 
@@ -8936,6 +8916,10 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       case "type": return AccountTypesManager.entries().map((e) => e.label).filter(Boolean);
       case "org": case "organization": case "organisation":
         return OrganizationsManager.entries().map((e) => e.label).filter(Boolean);
+      // The row's origin has exactly two values — offer them, or the
+      // suggested `is:` chip dead-ends on "no matching values".
+      case "is": case "source":
+        return ["jump", "direct"];
       case "role": {
         const set = new Set();
         document.querySelectorAll("#tm_role_list .tm_role_name").forEach((el) => {

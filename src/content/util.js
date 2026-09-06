@@ -383,9 +383,14 @@ export const matchesQuery = (terms, fields) => {
 //             a host, or a traversal into the console URL it lands in
 //   label   — optional default session label (max 120)
 
-// Path fragment only: no leading slash, no "..", no ":" (kills scheme
-// smuggling like https://), no whitespace. {region} placeholders are allowed.
-export const JUMP_DEST_SERVICE_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+]{0,199}$/;
+// Path fragment only: no leading slash or "//" (the first character class
+// has no "/"), no "..", no whitespace. "#" and ":" ARE allowed — real console
+// deep links carry both (ec2/home?region={region}#Instances:) and the value
+// is only ever appended after "https://{host}/", so neither can smuggle a
+// scheme or host. Cap matches the Services config's 256.
+// Mirrored inline in console-decorator.js as SERVICE_PATH_RE (a standalone
+// classic script that can't import) — keep the two in sync.
+export const JUMP_DEST_SERVICE_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+#:]{0,255}$/;
 
 export const isSafeServicePath = (p) => {
   const s = String(p == null ? "" : p);
@@ -407,8 +412,13 @@ export const normalizeJumpDests = (raw, cap = 100) => {
     const key = `${account} ${profile.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const name = typeof d.name === "string" ? d.name.trim().slice(0, 64) : "";
-    const label = typeof d.label === "string" ? d.label.trim().slice(0, 120) : "";
+    // "|" is the Import line format's delimiter — a name or label carrying it
+    // would corrupt (or delete) the entry on the next Import round-trip, so
+    // swap it for the lookalike broken bar on the way into storage.
+    const name = typeof d.name === "string"
+      ? d.name.replace(/\|/g, "¦").trim().slice(0, 64) : "";
+    const label = typeof d.label === "string"
+      ? d.label.replace(/\|/g, "¦").trim().slice(0, 120) : "";
     const region = typeof d.region === "string" ? d.region.trim().toLowerCase() : "";
     const service = typeof d.service === "string" ? d.service.trim() : "";
     out.push({
@@ -488,7 +498,12 @@ export const parseJumpDestLines = (text, services) => {
     const line = rawLine.trim();
     if (!line) continue;
     let parts = line.split("|").map((p) => p.trim());
-    if (/^\d{12}$/.test(parts[0] || "")) parts = ["", ...parts];
+    // Bare-account shorthand — but only when the SECOND cell isn't also a
+    // 12-digit id, which would mean the first cell is a name that merely
+    // looks like an account ("111111111111 | 222222222222 | Org A").
+    if (/^\d{12}$/.test(parts[0] || "") && !/^\d{12}$/.test(parts[1] || "")) {
+      parts = ["", ...parts];
+    }
     const [name = "", account = "", profile = "", region = "", serviceTok = "", ...labelRest] = parts;
     const service = resolveServiceToken(serviceTok, services);
     out.push({

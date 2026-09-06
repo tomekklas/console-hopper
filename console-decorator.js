@@ -248,8 +248,10 @@
   // regionPinTried flag), so a refused region or a bouncing service can never
   // loop. The service path originates in the picker's validated Services
   // config, but is charset-gated again here — it becomes a path on a live
-  // console origin and this is a standalone script with no imports.
-  const SERVICE_PATH_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+]{0,199}$/;
+  // console origin. Mirrors JUMP_DEST_SERVICE_RE in src/content/util.js;
+  // kept inline because this is a standalone classic script with no imports
+  // (same arrangement as REGION_CODE_RE above) — keep the two in sync.
+  const SERVICE_PATH_RE = /^[A-Za-z0-9_\-?=&{}.%+][A-Za-z0-9/_\-?=&{}.%+#:]{0,255}$/;
   function landingPinUrl(region, servicePath) {
     try {
       const svcRaw = String(servicePath || "");

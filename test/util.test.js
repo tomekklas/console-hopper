@@ -546,12 +546,27 @@ describe("normalizeJumpDests", () => {
   });
   it("drops malformed regions and unsafe service paths, keeps the entry", () => {
     const out = normalizeJumpDests([
-      { account: "484848484848", profile: "Org A", region: "EVIL.COM/", service: "https://evil" },
+      { account: "484848484848", profile: "Org A", region: "EVIL.COM/", service: "/absolute/path" },
       { account: "111111111111", profile: "Org A", service: "a/../../etc" },
     ]);
     expect(out[0].region).toBe("");
     expect(out[0].service).toBe("");
     expect(out[1].service).toBe("");
+  });
+  it("keeps real console deep links: # and : are legal in service paths", () => {
+    const out = normalizeJumpDests([
+      { account: "484848484848", profile: "Org A", service: "ec2/home?region={region}#Instances:" },
+      { account: "111111111111", profile: "Org A", service: "cloudformation/home?region={region}#/stacks" },
+    ]);
+    expect(out[0].service).toBe("ec2/home?region={region}#Instances:");
+    expect(out[1].service).toBe("cloudformation/home?region={region}#/stacks");
+  });
+  it("swaps the Import delimiter '|' out of names and labels", () => {
+    const out = normalizeJumpDests([
+      { account: "484848484848", profile: "Org A", name: "Payments | EU", label: "a | b" },
+    ]);
+    expect(out[0].name).toBe("Payments ¦ EU");
+    expect(out[0].label).toBe("a ¦ b");
   });
   it("caps names/labels and the list length", () => {
     const long = "x".repeat(200);
@@ -616,13 +631,21 @@ describe("parseJumpDestLines / formatJumpDestLines", () => {
     expect(out[0]).toMatchObject({ name: "", account: "606060606060", profile: "Org B" });
     expect(out[1]).toMatchObject({ name: "Cost", region: "", service: "cloudwatch/home?region={region}" });
   });
-  it("keeps pipes inside the label and drops unknown service tokens", () => {
+  it("keeps pipe-split label tails (sanitized) and drops unknown service tokens", () => {
     const out = parseJumpDestLines(
       "X | 484848484848 | Org A | eu-west-1 | wat | a | b",
       SVC
     );
     expect(out[0].service).toBe("");
-    expect(out[0].label).toBe("a | b");
+    expect(out[0].label).toBe("a ¦ b");
+  });
+  it("does not shift when a name merely looks like an account id", () => {
+    const out = parseJumpDestLines("111111111111 | 222222222222 | Org A", SVC);
+    expect(out[0]).toMatchObject({
+      name: "111111111111",
+      account: "222222222222",
+      profile: "Org A",
+    });
   });
   it("skips blank and invalid lines", () => {
     expect(parseJumpDestLines("\n\nnot enough\n123 | Org A\n", SVC)).toEqual([]);
