@@ -267,11 +267,13 @@ Console Hopper enhances the AWS Identity Federation sign-in page
 account tags, favorites, deep-link service shortcuts, environment
 colour-coding, keyboard navigation and tab grouping, so users who have access to
 many AWS accounts via SAML SSO can find and sign into the right
-role faster. It also decorates AWS console tabs with a coloured
+role faster. Saved "jump destinations" — accounts reached by
+role-chaining through a hub — appear as rows in the same list and
+sign in the same way. It also decorates AWS console tabs with a coloured
 favicon and account-name title prefix so multiple open consoles
 stay visually distinguishable. A panel shows how many of AWS's five
-concurrent console sessions are in use, with each session's account,
-role, region and expiry, and lets the user sign a single session out to
+concurrent console sessions are in use, with each session's detail,
+and lets the user sign one session — or all of them — out to
 free a slot. A one-click "Clear AWS Sessions" button signs the user out
 of all AWS consoles by deleting AWS authentication cookies (cookies
 only — never read or transmitted).
@@ -327,7 +329,8 @@ group. Tab URLs or content are not transmitted.
 ```
 Creates and updates Chrome tab groups so AWS console tabs cluster
 visually by account + role (or by organisation, or by a user-supplied
-ticket tag), emulating a Firefox-containers-style visual experience.
+ticket tag): each account + role gets its own colour, so many open
+console tabs stay visually grouped and tellable apart.
 ```
 
 ### `cookies`
@@ -353,8 +356,10 @@ sites are touched.
    with the user's existing AWS cookies, exactly as the AWS console
    itself does: signin.aws.amazon.com/sessions/v1/list to read how many
    of AWS's five concurrent console sessions are in use (the "Active AWS
-   sessions" panel), and .../sessions/{id}/v1/logout to sign one session
-   out when the user clicks the ✕ next to it. The list response contains
+   sessions" panel), and .../sessions/{id}/v1/logout to sign a session
+   out when the user clicks the ✕ next to it (or each session in turn,
+   when the user clicks "Sign out all sessions" and confirms). The list
+   response contains
    only session metadata — account id, role name, start and expiry time
    — which is displayed to the user and never stored or transmitted
    anywhere else. The extension makes no other network requests, and

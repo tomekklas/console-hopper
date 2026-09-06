@@ -46,7 +46,7 @@ Reads the calling tab's id and window in the service worker so a newly opened AW
 
 --- Permission justification: tabGroups -------------------------------
 
-Creates and updates Chrome tab groups so AWS console tabs cluster visually by account + role (or by organisation, or by a user-supplied ticket tag), emulating a Firefox-containers-style visual experience.
+Creates and updates Chrome tab groups so AWS console tabs cluster visually by account + role (or by organisation, or by a user-supplied ticket tag): each account+role gets its own colour, so many open console tabs stay visually grouped and tellable apart.
 
 
 --- Permission justification: cookies ---------------------------------
