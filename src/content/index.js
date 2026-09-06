@@ -244,6 +244,10 @@ import {
   // needed (capture, apply, start-view chips) so the group list lives in one
   // place. cloneFilters(src, true) also drops non-strings (restoring saved data).
   const FILTER_GROUPS = ["org", "env", "type", "role", "source", "show", "tag"];
+  // The groups that own a visible toolbar row (everything but the Shortcuts
+  // pseudo-group "show") — derived, so a new group can't be added to one list
+  // and silently missed in the other.
+  const VISIBLE_FILTER_GROUPS = FILTER_GROUPS.filter((g) => g !== "show");
   const emptyFilters = () =>
     FILTER_GROUPS.reduce((o, g) => { o[g] = []; return o; }, {});
   const cloneFilters = (src, sanitize) => {
@@ -1443,19 +1447,24 @@ import {
       const lastService = this.getLastServiceSync(roleArn);
       const safeRoleArn   = escapeHtml(roleArn);
       const safeAccountId = escapeHtml(accountId);
-      const optionsHTML = servicesCache.map(s => {
-        const path = s && typeof s.path === "string" ? s.path : "";
-        const name = s && typeof s.name === "string" ? s.name : "";
-        const selected = path === lastService ? "selected" : "";
-        return `<option value="${escapeHtml(path)}" ${selected}>${escapeHtml(name)}</option>`;
-      }).join("");
-
       return `
         <select class="tm_service_dropdown" data-role-arn="${safeRoleArn}" data-account-id="${safeAccountId}">
-          <option value="">Console only</option>
-          ${optionsHTML}
+          ${this.serviceOptionsHTML(lastService)}
         </select>
       `;
+    },
+
+    // The full <option> set for a service <select>: "Console only" ("")
+    // first, then the configured services, with `selected` pre-chosen. The
+    // ONE builder for direct rows, ⤳ jump rows and the Jump Destinations
+    // dialog, so option rendering can't drift between them.
+    serviceOptionsHTML(selected) {
+      const options = servicesCache.map((s) => {
+        const path = s && typeof s.path === "string" ? s.path : "";
+        const name = s && typeof s.name === "string" ? s.name : "";
+        return `<option value="${escapeHtml(path)}"${path === selected ? " selected" : ""}>${escapeHtml(name)}</option>`;
+      }).join("");
+      return `<option value=""${selected ? "" : " selected"}>Console only</option>${options}`;
     },
   };
 
@@ -1518,7 +1527,9 @@ import {
     // even when it isn't in the list, so a sign-in never targets a missing one.
     regionOptionsHTML(selected) {
       const list = regionListCache.slice();
-      if (!list.some((r) => r.id === selected)) {
+      // Force-include only a REAL selected region that's missing from the
+      // configured list — an empty selection must not mint a blank option.
+      if (selected && !list.some((r) => r.id === selected)) {
         list.unshift({ id: selected, label: selected });
       }
       return list
@@ -1586,6 +1597,13 @@ import {
     },
     byName(name) {
       return assumeProfilesCache.find((p) => p.name === name) || null;
+    },
+    // One builder for every profile <select> (the Jump popover and the Jump
+    // Destinations add row), so their option lists can't drift.
+    optionsHTML() {
+      return assumeProfilesCache
+        .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
+        .join("");
     },
   };
 
@@ -2129,7 +2147,7 @@ import {
   // (Toggled via a class, not .hide(): the row's display:flex is !important,
   // which a plain inline display:none from .hide() would not override.)
   const updateFilterRowVisibility = (group) => {
-    const groups = group ? [group] : ["org", "env", "type", "role", "source", "tag"];
+    const groups = group ? [group] : VISIBLE_FILTER_GROUPS;
     for (const g of groups) {
       const $group = $(`.tm_button_group[data-filter-group="${g}"]`);
       if (!$group.length) continue;
@@ -2166,7 +2184,7 @@ import {
     }
     // With no filter rows visible above it, the Shortcuts row's top divider
     // separates nothing — drop it so it doesn't float as a stray rule.
-    const anyVisible = ["org", "env", "type", "role", "source", "tag"].some((g) => {
+    const anyVisible = VISIBLE_FILTER_GROUPS.some((g) => {
       const bg = document.querySelector(`.tm_button_group[data-filter-group="${g}"]`);
       const row = bg && bg.closest(".tm_frow");
       return row && !row.classList.contains("tm_frow_hidden");
@@ -5257,14 +5275,9 @@ import {
     closeJumpPopover();
   });
 
-  // Same for the sessions popover — clicking away closes it, like every other
-  // pop-out in the picker.
-  $(document).on("click", function (e) {
-    if (!sessionsPopoverOpen) return;
-    const t = e.target;
-    if (t && t.closest && (t.closest("#tm_sessions_popover") || t.closest("#tm_sessions_pill"))) return;
-    closeSessionsPopover();
-  });
+  // (No document-level click-away for the sessions popover: while it is open
+  // the full-viewport scrim under it takes every outside click and closes it —
+  // a second handler here would be dead code with a second opinion.)
 
   $("body").on("click", "#tm_start_view", function (e) {
     e.preventDefault();
@@ -5866,11 +5879,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (!$sel.length) return;
     const profiles = AssumeProfilesManager.all();
     const prev = $sel.val();
-    $sel.html(
-      profiles
-        .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
-        .join("")
-    );
+    $sel.html(AssumeProfilesManager.optionsHTML());
     if (prev && profiles.some((p) => p.name === prev)) $sel.val(prev);
   };
 
@@ -5900,8 +5909,18 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   const renderJumpDestinationRows = () => {
     const $list = $("#" + RoleOrderManager.LIST_ID);
     if (!$list.length) return;
-    $list.find('.saml-role[data-jump="1"]').remove();
-    for (const dest of JumpDestinationsManager.all()) {
+    const dests = JumpDestinationsManager.all();
+    const $stale = $list.find('.saml-role[data-jump="1"]');
+    const hadRows = $stale.length > 0;
+    $stale.remove();
+    // Nothing to draw and nothing removed — the common case for users with no
+    // saved destinations: skip the full-list repaint passes below, each of
+    // which walks every row on the page.
+    if (!dests.length && !hadRows) {
+      updateFilterRowVisibility("source");
+      return;
+    }
+    for (const dest of dests) {
       const key = jumpDestKey(dest.account, dest.profile);
       const profile = AssumeProfilesManager.byName(dest.profile);
       const roleName = (profile && profile.role) || "";
@@ -5926,13 +5945,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const svcSelected = ServicesManager.hasLastServiceSync(key)
         ? ServicesManager.getLastServiceSync(key)
         : dest.service || "";
-      const svcOptions = servicesCache.map((s) => {
-        const path = s && typeof s.path === "string" ? s.path : "";
-        const name = s && typeof s.name === "string" ? s.name : "";
-        return `<option value="${escapeHtml(path)}"${path === svcSelected ? " selected" : ""}>${escapeHtml(name)}</option>`;
-      }).join("");
       const rowHTML = `
-        <div class="saml-role tm_jump_row${avail.ok ? "" : " tm_jump_unavailable"}" data-jump="1"
+        <div class="saml-role${avail.ok ? "" : " tm_jump_unavailable"}" data-jump="1"
              data-dest-account="${safeAccountId}" data-dest-profile="${escapeHtml(dest.profile)}">
             <div class="tm_role_info">
                 <button type="button" class="tm_favorite_button" data-role-arn="${safeKey}" title="Add to favorites">☆</button>
@@ -5946,8 +5960,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             <div class="tm_role_buttons">
                 <button type="button" class="tm_account_id" data-account-id="${safeAccountId}" title="Click to copy account ID">${safeAccountId}</button>
                 <select class="tm_service_dropdown" data-role-arn="${safeKey}" data-account-id="${safeAccountId}">
-                  <option value=""${svcSelected ? "" : " selected"}>Console only</option>
-                  ${svcOptions}
+                  ${ServicesManager.serviceOptionsHTML(svcSelected)}
                 </select>
                 <select class="tm_region_dropdown" data-role-arn="${safeKey}" title="AWS region to land in after the jump">
                   ${RegionsManager.regionOptionsHTML(regionSelected)}
@@ -5966,7 +5979,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     RoleOrderManager.applySavedOrder();
     FavoritesManager.updateButtons();
     updateFilterRowVisibility("source");
-    FilterManager.applyFilters(true);
+    // Fresh rows need their stripes painted; the full filter pass is only
+    // worth its walk over every row when something is actually narrowing the
+    // list (the initial Start View application runs its own pass later).
+    applyEnvironmentStyling();
+    if (document.body.classList.contains("tm_filters_active")) {
+      FilterManager.applyFilters(true);
+    }
   };
   // One-time graduation: popover ★ pins predate Jump Destinations and were
   // the same idea in embryo — fold them in (label kept, name left for the
@@ -6135,22 +6154,15 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           }
           sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
           sessionsLimit = res.limit || 5;
-          if (!sessionsCache.length) {
-            // With the panel open, vanishing here is the mis-click trap: the
-            // ✕ the user is hovering sits directly over a Sign In button, so
-            // the queued next click would log into another account. Keep the
-            // panel up with an explicit empty state; the section hides when
-            // the user closes it (see closeSessionsPopover).
-            if (sessionsPopoverOpen) {
-              $("#tm_sessions_pill_text").text(`0 of ${sessionsLimit} sessions`);
-              $("#tm_sessions_pill").removeClass("tm_sessions_warn tm_sessions_full");
-              $("#tm_sessions_title").text(`Active AWS sessions — 0 of ${sessionsLimit}`);
-              renderSessionsRows();
-            } else {
-              $section.hide();
-            }
+          if (!sessionsCache.length && !sessionsPopoverOpen) {
+            $section.hide();
             return;
           }
+          // Zero sessions with the panel OPEN deliberately falls through to
+          // the one common paint below ("0 of N", no warn/full, empty-state
+          // rows): vanishing here is the mis-click trap — the ✕ under the
+          // pointer sits over a Sign In button — so the panel stays up until
+          // the user closes it (see closeSessionsPopover).
           const n = sessionsCache.length;
           const full = n >= sessionsLimit;
           const warn = n === sessionsLimit - 1;
@@ -6344,21 +6356,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // save on change, the last line is the add row, and ✕ keeps the shared
   // two-step confirm. Import… takes the pipe-delimited format for bulk paste.
   const showJumpDestsModal = () => {
-    const svcOptionsHTML = (selected) =>
-      `<option value=""${selected ? "" : " selected"}>Console only</option>` +
-      servicesCache
-        .map((s) => {
-          const path = s && typeof s.path === "string" ? s.path : "";
-          const name = s && typeof s.name === "string" ? s.name : "";
-          return `<option value="${escapeHtml(path)}"${path === selected ? " selected" : ""}>${escapeHtml(name)}</option>`;
-        })
-        .join("");
+    const svcOptionsHTML = (selected) => ServicesManager.serviceOptionsHTML(selected);
 
     const regionOptionsWithDefault = (selected) =>
       `<option value=""${selected ? "" : " selected"}>Default region</option>` +
-      (selected ? RegionsManager.regionOptionsHTML(selected) : RegionsManager.list()
-        .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.label)}</option>`)
-        .join(""));
+      RegionsManager.regionOptionsHTML(selected || "");
 
     const profileTitleFor = (d) => {
       const p = AssumeProfilesManager.byName(d.profile);
@@ -6388,10 +6390,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         <span class="tm_jdg_actions"><button type="button" class="tm_jd_del" title="Remove this destination">&#10005;</button></span>
       </div>`;
 
-    const profileOptionsHTML = () =>
-      AssumeProfilesManager.all()
-        .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`)
-        .join("");
+    const profileOptionsHTML = () => AssumeProfilesManager.optionsHTML();
 
     const addRowHTML = () => `
       <div class="tm_jdg_row tm_jdg_add">
@@ -7564,7 +7563,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Pick a region per sign-in",
             `Next to the service dropdown, each row has a region dropdown that sets which AWS region the sign-in lands in. It defaults to your region (set in <em>General Settings</em>) and remembers your last pick per role. Prefer every row to always open on the same region? Untick <strong>Remember the region I pick per role</strong> in <em>General Settings</em> — rows and the Jump bar then always start on your default region, and you can still override any single sign-in from its dropdown. Edit which regions appear — and their order — via <em>Regions</em>.`)}
           ${sectionHTML("Jump to account (role chaining)",
-            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover — <strong>hover a jump to ★ pin</strong> the ones you use most (pinned entries stay at the top, past the recents limit, and can be <strong>dragged to reorder</strong>) or <strong>✕</strong> to remove one. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS. Save the places you jump to often as <strong>Jump Destinations</strong> (side menu, or the <em>Save as a named destination</em> tick in the popover) — each becomes a <strong>⤳ row in the listing</strong>, searchable, taggable and favouritable like any row, with its own landing Service and Region picks; a <em>Source</em> filter row and <code>is:jump</code> in search show only them, and a row greys out when its hub role isn't in today's list.`)}
+            `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover (<strong>✕</strong> forgets one). The popover stays deliberately small — a quick way in, with <em>Save as a named destination</em> to keep a place; saved destinations live as <strong>⤳ rows in the listing</strong> and are curated under <em>Jump Destinations</em>. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS. Save the places you jump to often as <strong>Jump Destinations</strong> (side menu, or the <em>Save as a named destination</em> tick in the popover) — each becomes a <strong>⤳ row in the listing</strong>, searchable, taggable and favouritable like any row, with its own landing Service and Region picks; a <em>Source</em> filter row and <code>is:jump</code> in search show only them, and a row greys out when its hub role isn't in today's list.`)}
           ${sectionHTML("Active AWS sessions",
             `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open. <strong>✕</strong> signs an individual session out (click twice to confirm) so you can free a slot without leaving the picker — the session you signed in with is marked <em>you</em> and can't be closed from here. <em>Clear AWS sessions</em> in the side menu still signs them all out at once. Console Hopper only reads session metadata — never cookie contents.`)}
           ${sectionHTML("Rename accounts",

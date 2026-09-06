@@ -25,7 +25,6 @@ import {
   matchesQuery,
   normalizeJumpDests,
   jumpDestKey,
-  parseJumpDestKey,
   resolveServiceToken,
   serviceTokenForPath,
   parseJumpDestLines,
@@ -580,17 +579,13 @@ describe("normalizeJumpDests", () => {
   });
 });
 
-describe("jumpDestKey / parseJumpDestKey", () => {
-  it("round-trips awkward profile names", () => {
-    for (const profile of ["Org A", "a::b", "100% legit", "ü:ber"]) {
-      const key = jumpDestKey("484848484848", profile);
-      expect(parseJumpDestKey(key)).toEqual({ account: "484848484848", profile });
-    }
-  });
-  it("never looks like a role ARN and rejects non-keys", () => {
-    expect(jumpDestKey("484848484848", "Org A").startsWith("jump::")).toBe(true);
-    expect(parseJumpDestKey("arn:aws:iam::484848484848:role/x")).toBe(null);
-    expect(parseJumpDestKey("jump::12345::x")).toBe(null);
+describe("jumpDestKey", () => {
+  it("is stable, ARN-unlike, and unambiguous for awkward profiles", () => {
+    expect(jumpDestKey("484848484848", "Org A")).toBe("jump::484848484848::Org%20A");
+    // encodeURIComponent leaves no ":" in the profile part, so the "::"
+    // separators can't be forged by a profile name.
+    expect(jumpDestKey("484848484848", "a::b").split("::").length).toBe(3);
+    expect(jumpDestKey("484848484848", "x").startsWith("jump::")).toBe(true);
   });
 });
 

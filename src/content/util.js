@@ -442,16 +442,6 @@ export const normalizeJumpDests = (raw, cap = 100) => {
 export const jumpDestKey = (account, profile) =>
   `jump::${account}::${encodeURIComponent(String(profile || ""))}`;
 
-export const parseJumpDestKey = (key) => {
-  const m = /^jump::(\d{12})::(.*)$/.exec(String(key || ""));
-  if (!m) return null;
-  try {
-    return { account: m[1], profile: decodeURIComponent(m[2]) };
-  } catch (e) {
-    return null;
-  }
-};
-
 // Resolve a human service token — a Services entry's id, display name, or
 // literal path — to that entry's PATH. "", "console" and "console only" mean
 // the console home (""). Unknown tokens return null so callers can decide

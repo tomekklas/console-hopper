@@ -96,8 +96,7 @@ WHAT YOU GET
   one AWS picks for that account, and when several console sessions are
   open it selects the right one for you instead of leaving you to guess.
   The new tab is titled with your session label, and recent jumps are one
-  click away — pin the ones you use most (they stay at the top and can be
-  dragged to reorder) or remove any you don't need. Save the destinations
+  click away in the popover. Save the destinations
   you use often — via "Jump Destinations" in the side menu, or the "Save
   as a named destination" tick when you jump — and they appear as ⤳ rows
   in the main list itself, with a dashed environment stripe, the hub they

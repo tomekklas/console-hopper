@@ -287,15 +287,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // NOT the cookie-clearing "Clear AWS Sessions".
 async function signOutAllAwsSessions(region) {
   const sessions = await listAwsSessions(region);
-  let done = 0;
-  for (const s of sessions) {
-    try {
-      await signOutAwsSession(region, s.differentiator);
-      done++;
-    } catch (err) {
-      console.warn("[hop] sign-out-all: one session failed:", err);
+  // Independent logouts, fired together — one failure doesn't stop the rest,
+  // and five sequential round-trips would make the button feel stuck.
+  const results = await Promise.allSettled(
+    sessions.map((s) => signOutAwsSession(region, s.differentiator))
+  );
+  for (const r of results) {
+    if (r.status === "rejected") {
+      console.warn("[hop] sign-out-all: one session failed:", r.reason);
     }
   }
+  const done = results.filter((r) => r.status === "fulfilled").length;
   return { done, total: sessions.length };
 }
 

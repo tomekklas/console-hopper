@@ -47,6 +47,15 @@ All notable changes to Console Hopper are listed here. Dates are in
   *Clear AWS Sessions* — console settings and the multi-session opt-in are
   untouched.)
 
+### Changed
+
+- **The ⤳ Jump popover slimmed down to quick-and-dirty.** It keeps the form,
+  the *Save as a named destination* tick and a plain recent-jumps list (click
+  to re-jump, ✕ to forget). The ★ pin-and-reorder list it used to carry has
+  graduated: existing pinned jumps are migrated into **Jump Destinations**
+  automatically on first load, where they pick up names, a landing
+  service/region, and a ⤳ row in the listing.
+
 ### Fixed
 
 - **The sessions panel could hand your click to a Sign In button.** The
