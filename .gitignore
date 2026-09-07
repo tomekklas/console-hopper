@@ -12,3 +12,6 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# screenshot pipeline scratch output
+store-assets/shots/raw.png
