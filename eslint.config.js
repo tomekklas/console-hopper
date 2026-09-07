@@ -42,6 +42,19 @@ export default [
     },
   },
   {
+    // Store-screenshot staging: a browser-context script, but executed against
+    // a live page via AppleScript rather than bundled into the extension.
+    files: ["store-assets/shots/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "script",
+      globals: { ...globals.browser },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { caughtErrors: "none" }],
+    },
+  },
+  {
     // Unit tests run under vitest in a jsdom environment (browser + node).
     files: ["test/**/*.{js,mjs}"],
     languageOptions: {
