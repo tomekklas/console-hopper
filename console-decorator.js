@@ -311,6 +311,39 @@
     }
   }
 
+  // === REGION LOCK ===
+  // Global consoles (IAM, Billing, Organizations, …) are served without a
+  // region, so a tab that visits one loses its region context and the next
+  // regional console it opens is placed by AWS in the identity's own default
+  // Region — a Frankfurt tab comes back from IAM in Stockholm. The service
+  // worker holds what region this tab was working in (it has to: correcting a
+  // region changes the console origin, which would wipe any per-tab state kept
+  // here) and answers with the URL this tab should be on instead.
+  //
+  // Fire-and-forget at document_start: if a correction comes back the page is
+  // replaced before it has finished loading, and if the service worker is
+  // asleep, unreachable or says nothing, the page simply stays where it is.
+  function askRegionLock() {
+    try {
+      if (!(chrome && chrome.runtime && chrome.runtime.sendMessage)) return;
+      chrome.runtime.sendMessage(
+        { type: "hop_region_check", href: window.location.href },
+        (res) => {
+          // Reading lastError is what marks it handled; without this Chrome
+          // logs "Unchecked runtime.lastError" on every dropped response.
+          if (chrome.runtime.lastError) return;
+          const url = res && typeof res.redirect === "string" ? res.redirect : "";
+          // replace(), not assign(): the wrong-region page should not become a
+          // Back-button stop between where the user was and where they meant
+          // to be.
+          if (url && url !== window.location.href) window.location.replace(url);
+        }
+      );
+    } catch (e) { /* extension context may be unavailable; the page stays put */ }
+  }
+
+  askRegionLock();
+
   const rawFragment = readFragmentPayload();
 
 
@@ -340,6 +373,15 @@
         delete pending[acct];
         chrome.storage.local.set({ hop_pending_jumps: pending });
         return;
+      }
+      // Tell the region lock which region this jump asked for, before any
+      // landing correction navigates. The lock stands down while a jump is in
+      // flight, so without this the destination console would be measured
+      // against whatever region the *previous* tab state held.
+      if (REGION_CODE_RE.test(String(hit.region || ""))) {
+        try {
+          chrome.runtime.sendMessage({ type: "hop_region_pin", region: hit.region });
+        } catch (e) { /* best-effort */ }
       }
       // Pin the landing (region host and/or service path) first — but only
       // once. The attempt is recorded in the entry (which lives in

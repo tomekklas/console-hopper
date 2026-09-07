@@ -72,6 +72,15 @@ features.
   recents you can pin.
 - **Lands where you chose** — AWS puts a switched role in whatever region
   it likes; Console Hopper corrects it to the one you picked.
+- **Console tabs stay in their region** — AWS serves its global consoles
+  (IAM, Billing, Organizations, Route 53, CloudFront, …) without a region,
+  which drops the region from the console host: open IAM from a Frankfurt
+  tab, go back to EC2, and AWS puts you wherever your identity's own
+  default Region points — often somewhere you've never worked. Console
+  Hopper remembers what region each console tab is in and sends the tab
+  back. Changing region from AWS's own region picker still works: the tab
+  follows you and holds the new region. Untick **Keep console tabs in their
+  region** in `General Settings` to turn it off.
 - **Skips AWS's session picker** — with several console sessions open, AWS
   interrupts a jump to ask which to switch from, and doesn't reliably
   pre-select the right one. Console Hopper picks the hub session and
@@ -133,14 +142,16 @@ console-hopper/
 │   ├── index.js            #   main script injected into the SAML page
 │   ├── dom.js              #   minimal jQuery-subset DOM shim
 │   └── util.js             #   pure helpers (escaping, matchers, parsing)
+├── src/shared/             # Modules shared with the service worker
+│   └── region-lock.js      #   pure region-lock decisions (unit-tested)
 ├── console-decorator.js    # Sets favicon + title on AWS console pages
-├── background.js           # Service worker (tab grouping)
+├── background.js           # Service worker, ES module (tab grouping, region lock)
 ├── icons/                  # icon16/32/48/128.png
 ├── samples/                # Importable starter configs (e.g. AWS LZ)
 ├── store-assets/           # Screenshots + promo tiles (not in submission zip)
 ├── package.json            # Dev tooling (esbuild build, ESLint, vitest)
 ├── scripts/build.mjs       # Build the Chrome Web Store submission zip
-├── test/                   # vitest unit tests (util + dom shim)
+├── test/                   # vitest unit tests (util, dom shim, region lock)
 ├── PRIVACY.md              # Privacy policy
 ├── STORE_LISTING.md        # Chrome Web Store form values + checklist
 └── README.md

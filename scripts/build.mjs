@@ -27,9 +27,9 @@ const dist = join(root, "dist");
 // Browsers that ship Manifest V3; keeps esbuild from down-levelling modern JS.
 const TARGET = ["chrome110"];
 
-// content.js is bundled from src/content/ ES modules (see below). These
+// content.js and background.js are bundled from ES modules (see below). These
 // standalone classic scripts have no imports — minify them in place.
-const CLASSIC_SCRIPTS = ["background.js", "console-decorator.js", "session-selector.js"];
+const CLASSIC_SCRIPTS = ["console-decorator.js", "session-selector.js"];
 
 // Static files copied verbatim into the package.
 const STATIC = ["manifest.json", "icons"];
@@ -71,6 +71,20 @@ async function main() {
     legalComments: "none",
     pure: ["console.log"],
     outfile: join(dist, "content.js"),
+  });
+
+  // The service worker imports src/shared/region-lock.js, so it is bundled
+  // rather than minified in place. ESM output keeps "type": "module" in the
+  // manifest valid for both the dist package and the unpacked repo root.
+  await esbuild.build({
+    entryPoints: [join(root, "background.js")],
+    bundle: true,
+    format: "esm",
+    target: TARGET,
+    minify: true,
+    legalComments: "none",
+    pure: ["console.log"],
+    outfile: join(dist, "background.js"),
   });
 
   // Minify the standalone classic scripts.

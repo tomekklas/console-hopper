@@ -1,8 +1,8 @@
 // ESLint flat config (ESLint 9+).
 //
-// The extension scripts (content.js, background.js, console-decorator.js,
-// session-selector.js) are
-// classic scripts loaded directly by the manifest — they run with browser +
+// The extension scripts (content.js, console-decorator.js, session-selector.js)
+// are classic scripts loaded directly by the manifest (background.js is an ES
+// module service worker — it imports src/shared/ and is bundled by the build) — they run with browser +
 // webextension globals, and content.js additionally relies on the bundled
 // jQuery `$`/`jQuery` globals (removed in Stage 3 of ROADMAP.md). Tooling and
 // tests are ES modules running under Node.
@@ -17,7 +17,7 @@ export default [
   js.configs.recommended,
   {
     // Standalone classic content scripts loaded directly by the manifest.
-    files: ["background.js", "console-decorator.js", "session-selector.js"],
+    files: ["console-decorator.js", "session-selector.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "script",
@@ -30,7 +30,7 @@ export default [
   },
   {
     // Content-script ES modules (bundled by esbuild into dist/content.js).
-    files: ["src/**/*.js"],
+    files: ["src/**/*.js", "background.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",

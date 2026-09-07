@@ -3,6 +3,34 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.6.0 — 2026-09-07
+
+### Added
+
+- **Console tabs stay in their region.** AWS serves its global consoles (IAM,
+  Billing, Organizations, Route 53, CloudFront, Health, Trusted Advisor,
+  Artifact, Cost Management, Support) *without* a region — visiting one drops
+  the region from the console host, so the next regional service you open is
+  placed by AWS in your identity's own default Region rather than the one you
+  were working in. Open IAM from a Frankfurt tab, come back to EC2, and you
+  land in Stockholm. Console Hopper now remembers what region each console tab
+  is working in and sends the tab back when that happens. Changing region from
+  AWS's own region picker still works exactly as before: the tab follows you
+  and holds the new region. New **Keep console tabs in their region** tick in
+  General Settings, on by default.
+
+### Fixed
+
+- **"Remember the region I pick per role" now survives a reload.** The toggle
+  updated the running page but was never written to storage, so it silently
+  returned to *on* every time the role picker loaded.
+
+### Changed
+
+- The service worker is now an ES module and is bundled by `npm run build`
+  (it shares `src/shared/region-lock.js` with the unit tests) instead of being
+  minified in place.
+
 ## 1.5.0 — 2026-09-04
 
 ### Added

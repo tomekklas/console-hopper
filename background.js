@@ -1,10 +1,21 @@
-// Console Hopper — service worker for tab grouping.
+// Console Hopper — service worker for tab grouping and the region lock.
 //
 // Listens for messages from the console-decorator content script and groups
 // the sending tab by `account · role`, emulating Firefox containers via
 // Chrome tab groups. Each unique pair gets a deterministic color from
 // Chrome's palette so the same role always shows up the same color in your
 // tab strip.
+//
+// It also holds the region each console tab is working in, so a tab that
+// bounces through a global console (IAM, Billing, …) comes back to the region
+// it was in rather than wherever AWS's per-identity default drops it. The
+// decision itself is in src/shared/region-lock.js; this file supplies the
+// per-tab memory the decision needs. Tab state lives in chrome.storage.session
+// — the service worker is free to be evicted between two navigations, and the
+// region is part of the console hostname, so a corrected tab changes origin
+// and can't carry sessionStorage across the hop.
+
+import { nextTabState, parseConsolePage, planRegionLock } from "./src/shared/region-lock.js";
 
 const GROUP_COLORS = [
   "grey", "blue", "red", "yellow",
@@ -332,6 +343,139 @@ function notifyPickersSessionsChanged() {
     }
   }, 800);
 }
+
+// === REGION LOCK ===
+
+const TAB_REGIONS_KEY = "hop_tab_regions";
+const REGION_LOCK_SETTING = "aws_region_lock";
+const DEFAULT_REGION_SETTING = "aws_region";
+// A tab's region memory is worthless once the tab is gone; entries are dropped
+// on close, and this bounds the map if a close event is ever missed.
+const TAB_REGIONS_MAX = 200;
+
+async function readTabRegions() {
+  try {
+    const res = await chrome.storage.session.get(TAB_REGIONS_KEY);
+    const all = (res && res[TAB_REGIONS_KEY]) || {};
+    return typeof all === "object" && all !== null ? all : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+async function writeTabRegions(all) {
+  const keys = Object.keys(all);
+  if (keys.length > TAB_REGIONS_MAX) {
+    // Oldest-seen first; `seen` is stamped on every write below.
+    keys
+      .sort((a, b) => (all[a].seen || 0) - (all[b].seen || 0))
+      .slice(0, keys.length - TAB_REGIONS_MAX)
+      .forEach((k) => delete all[k]);
+  }
+  try {
+    await chrome.storage.session.set({ [TAB_REGIONS_KEY]: all });
+  } catch (err) { /* session storage is best-effort; the lock degrades, nothing breaks */ }
+}
+
+// The user's General Settings region, and whether the lock is on at all.
+// Absent means "not configured yet": the lock defaults to on, because a tab
+// silently changing region is the bug it exists to fix.
+async function readRegionLockSettings() {
+  try {
+    const res = await chrome.storage.local.get([REGION_LOCK_SETTING, DEFAULT_REGION_SETTING]);
+    return {
+      enabled: res[REGION_LOCK_SETTING] ?? true,
+      fallback: typeof res[DEFAULT_REGION_SETTING] === "string" ? res[DEFAULT_REGION_SETTING] : "",
+    };
+  } catch (err) {
+    return { enabled: true, fallback: "" };
+  }
+}
+
+// A jump owns its own landing: the picker stashes the region it asked for and
+// console-decorator.js re-navigates if AWS ignored it. While that hand-off is
+// live for this account, the lock stays out of the way — otherwise it would
+// race the jump and send the tab back to the region it came *from*.
+async function jumpInFlight(href) {
+  const m = /^https:\/\/(\d{12})-/.exec(String(href || ""));
+  if (!m) return false;
+  try {
+    const res = await chrome.storage.local.get("hop_pending_jumps");
+    const hit = ((res && res.hop_pending_jumps) || {})[m[1]];
+    return !!hit && !!hit.ts && Date.now() - hit.ts <= 5 * 60 * 1000;
+  } catch (err) {
+    return false;
+  }
+}
+
+// One console page load in one tab: update what we know about the tab, and
+// answer with the URL the tab should go to instead, or null to stay put.
+async function checkTabRegion(tabId, href) {
+  const { enabled, fallback } = await readRegionLockSettings();
+  if (!enabled) return null;
+
+  const page = parseConsolePage(href);
+  if (!page) return null;
+  if (await jumpInFlight(href)) return null;
+
+  const all = await readTabRegions();
+  const state = all[tabId] || {};
+  const plan = planRegionLock({
+    page,
+    pinned: state.pinned,
+    prev: state.prev,
+    fallback,
+    tried: state.tried,
+  });
+
+  all[tabId] = nextTabState({ state, page, plan });
+  await writeTabRegions(all);
+
+  return plan.action === "correct" ? plan.url : null;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_region_check") return;
+  const tabId = sender && sender.tab && sender.tab.id;
+  if (!tabId) {
+    sendResponse({ redirect: null });
+    return true;
+  }
+  checkTabRegion(tabId, String(message.href || ""))
+    .then((redirect) => sendResponse({ redirect }))
+    .catch((err) => {
+      console.warn("[hop] region check failed:", err);
+      sendResponse({ redirect: null });
+    });
+  return true;
+});
+
+// A jump that had to correct its own landing region tells us which region it
+// is steering to, so the corrected load doesn't look like a region change and
+// get pinned as one.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (!message || message.type !== "hop_region_pin") return;
+  const tabId = sender && sender.tab && sender.tab.id;
+  const region = String(message.region || "");
+  if (!tabId || !region) return;
+  readTabRegions()
+    .then((all) => {
+      const state = all[tabId] || {};
+      all[tabId] = { ...state, pinned: region, tried: null, seen: Date.now() };
+      return writeTabRegions(all);
+    })
+    .catch(() => {});
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  readTabRegions()
+    .then((all) => {
+      if (!(tabId in all)) return null;
+      delete all[tabId];
+      return writeTabRegions(all);
+    })
+    .catch(() => {});
+});
 
 const isConsoleUrl = (url) => /^https:\/\/[^/]*console\.aws\.amazon\.com\//.test(url || "");
 

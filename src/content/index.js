@@ -71,6 +71,7 @@ import {
       TAB_GROUP_MODE: "aws_tab_group_mode",
       AWS_REGION: "aws_region",
       REMEMBER_REGION: "aws_remember_region",
+      REGION_LOCK: "aws_region_lock",
       REGION_LIST: "aws_region_list",
       ACCOUNT_NAMES: "aws_account_names",
       ACCOUNT_TAGS: "aws_account_tags",
@@ -304,6 +305,7 @@ import {
   // last picked for that role; when false, every row falls back to
   // awsRegionCache — "always start me in my default region".
   let rememberRegionCache = true;
+  let regionLockCache = true;
   let homepageUrlCache = "";
   let signinConfirmRoleKeywordsCache = ["admin"];
   let signinConfirmTypeIdsCache = [];
@@ -605,6 +607,21 @@ import {
     async saveRememberRegion(remember) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.REMEMBER_REGION]: !!remember });
+        return true;
+      }, false);
+    },
+
+    async getRegionLock() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.REGION_LOCK);
+        // Absent means "not configured yet". On by default: a tab quietly
+        // changing region behind your back is the thing this prevents.
+        return result[CONFIG.STORAGE_KEYS.REGION_LOCK] ?? true;
+      }, true);
+    },
+    async saveRegionLock(lock) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.REGION_LOCK]: !!lock });
         return true;
       }, false);
     },
@@ -1989,12 +2006,14 @@ import {
     async loadCache() {
       awsRegionCache = await StorageManager.getAwsRegion();
       rememberRegionCache = await StorageManager.getRememberRegion();
+      regionLockCache = await StorageManager.getRegionLock();
       homepageUrlCache = await StorageManager.getHomepageUrl();
       signinConfirmRoleKeywordsCache = await StorageManager.getSigninConfirmRoleKeywords();
       signinConfirmTypeIdsCache = await StorageManager.getSigninConfirmTypeIds();
       debug("General settings cache loaded:", {
         region: awsRegionCache,
         rememberRegion: rememberRegionCache,
+        regionLock: regionLockCache,
         homepage: homepageUrlCache,
         signinRoleKeywords: signinConfirmRoleKeywordsCache,
         signinTypeIds: signinConfirmTypeIdsCache,
@@ -2002,13 +2021,15 @@ import {
     },
     region()              { return awsRegionCache; },
     rememberRegion()      { return rememberRegionCache; },
+    regionLock()          { return regionLockCache; },
     homepage()            { return homepageUrlCache; },
     signinRoleKeywords()  { return signinConfirmRoleKeywordsCache; },
     signinTypeIds()       { return signinConfirmTypeIdsCache; },
-    async save({ region, rememberRegion, homepage, signinRoleKeywords, signinTypeIds }) {
+    async save({ region, rememberRegion, regionLock, homepage, signinRoleKeywords, signinTypeIds }) {
       const r = (region || "").trim();
       awsRegionCache = r || CONFIG.DEFAULT_AWS_REGION;
       rememberRegionCache = !!rememberRegion;
+      regionLockCache = !!regionLock;
       const home = (homepage || "").trim();
       homepageUrlCache = !home || isSafeHttpUrl(home) ? home : "";
       signinConfirmRoleKeywordsCache = Array.isArray(signinRoleKeywords)
@@ -2019,6 +2040,8 @@ import {
         : [];
       await Promise.all([
         StorageManager.saveAwsRegion(awsRegionCache),
+        StorageManager.saveRememberRegion(rememberRegionCache),
+        StorageManager.saveRegionLock(regionLockCache),
         StorageManager.saveHomepageUrl(homepageUrlCache),
         StorageManager.saveSigninConfirmRoleKeywords(signinConfirmRoleKeywordsCache),
         StorageManager.saveSigninConfirmTypeIds(signinConfirmTypeIdsCache),
@@ -8379,6 +8402,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                               typeof s.search === "string" && s.search.length <= 256),
         [SK.COMPACT_MODE]: (v) => typeof v === "boolean",
         [SK.REMEMBER_REGION]: (v) => typeof v === "boolean",
+        [SK.REGION_LOCK]: (v) => typeof v === "boolean",
         [SK.SIGNIN_NEW_TAB]: (v) => typeof v === "boolean",
         [SK.SERVICES]:     isServiceList,
         [SK.LAST_SERVICE]: isPlainStringMap,
@@ -8730,6 +8754,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             </span>
           </label>
 
+          <label style="display: flex !important; align-items: flex-start !important; gap: 8px !important; margin-bottom: 14px !important; cursor: pointer !important;">
+            <input type="checkbox" id="tm_gs_region_lock" ${regionLockCache ? "checked" : ""} style="margin-top: 2px !important;" />
+            <span>
+              <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; font-size: 13px !important;">Keep console tabs in their region</span>
+              <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 2px !important;">
+                AWS serves global consoles (IAM, Billing, Organizations, …) without a
+                region, so leaving one drops you into whatever region your AWS profile
+                defaults to — not the one you were working in. This sends the tab back.
+                Changing region from AWS's own region picker still works: the tab follows
+                you and stays there.
+              </span>
+            </span>
+          </label>
+
           <label style="display: block !important; margin-bottom: 14px !important;">
             <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 4px !important; font-size: 13px !important;">Homepage URL (footer link)</span>
             <input type="text" id="tm_gs_homepage" value="${sanitizeInput(homepageUrlCache)}" placeholder="https://your.docs/url (leave blank to hide)" style="
@@ -8789,6 +8827,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $m.find('[data-action="save"]').on("click", async function () {
       const region = ($("#tm_gs_region").val() || "").trim();
       const rememberRegion = !!$m.find("#tm_gs_remember_region").prop("checked");
+      const regionLock = !!$m.find("#tm_gs_region_lock").prop("checked");
       const homepage = ($("#tm_gs_homepage").val() || "").trim();
       const keywordsRaw = ($("#tm_gs_signin_keywords").val() || "").trim();
       const signinRoleKeywords = keywordsRaw
@@ -8799,7 +8838,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
       const prevRegion = awsRegionCache;
       const prevRemember = rememberRegionCache;
-      await GeneralSettingsManager.save({ region, rememberRegion, homepage, signinRoleKeywords, signinTypeIds });
+      await GeneralSettingsManager.save({ region, rememberRegion, regionLock, homepage, signinRoleKeywords, signinTypeIds });
       updateHomepageFooter();
       close();
       // This changes what every row's region dropdown opens on, so the list has
