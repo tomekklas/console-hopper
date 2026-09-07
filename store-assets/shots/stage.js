@@ -14,6 +14,11 @@
                 CHPowerUser: "PowerUser", CHOrgAdmin: "OrgAdmin",
                 CHAdmin: "Admin", CHNetwork: "NetworkAdmin" };
   var TAGS = ["pci", "prod-network", "sandbox", "security-core"];
+  var VIA = "via Acme hub · max 1 h";
+  // ...plus the extension's own labels on the jump rows, which are UI
+  // strings rather than anything drawn from the org's data.
+  var ROLE_POOL = Object.keys(ROLES).map(function (k) { return ROLES[k]; })
+    .concat(["Jump", "Hub"]);
 
   // Stable account map, ordered by first appearance in the DOM.
   var idMap = {}, nameMap = {}, n = 0;
@@ -64,11 +69,11 @@
   document.querySelectorAll("*").forEach(function (el) {
     if (el.children.length !== 0) return;
     var s = el.textContent;
-    if (/^\s*via\s+.+hub/.test(s)) el.textContent = "via Acme hub · max 1 h";
+    if (/^\s*via\s+.+hub/.test(s)) el.textContent = VIA;
   });
 
-  // Filter-bar chips for the tag group carry the org's real tag names —
-  // "palo-alto" (a real vendor) was flagged on an earlier submission.
+  // Filter-bar chips for the tag group carry the org's real tag names; a real
+  // vendor's name among them was flagged on an earlier submission.
   var f = 0;
   document.querySelectorAll('.tm_filter_button[data-group="tag"]').forEach(function (el) {
     el.textContent = TAGS[f++ % TAGS.length];
@@ -155,8 +160,27 @@
   // Refuse the shot if anything real is still legible.
   var txt = document.body.innerText;
   var leaks = realIds.filter(function (id) { return txt.indexOf(id) !== -1; });
-  if (/\bCH[A-Z]/.test(txt)) leaks.push("CH* role name");
-  if (/Cloud\s*Scale/i.test(txt)) leaks.push("Cloud Scale profile");
+  // Allow-list, not a blocklist: every visible identifier must be one of the
+  // demo values above. That is literal-free (this file lives in a public repo
+  // and must not name the org's real roles, profiles or tags), it survives a
+  // re-run on an already-staged page, and it catches anything the rewrite
+  // missed rather than only what we thought to look for.
+  function allowed(sel, pool, what) {
+    document.querySelectorAll(sel).forEach(function (el) {
+      if (el.children.length !== 0) return;
+      var v = el.textContent.trim();
+      if (v && pool.indexOf(v) === -1) leaks.push(what + " not in the demo set: " + v);
+    });
+  }
+  allowed(".tm_role_name, .saml-role-description", ROLE_POOL, "role");
+  allowed(".tm_account_name", NAMES, "account name");
+  allowed(".tm_account_id", IDS, "account id");
+  document.querySelectorAll("*").forEach(function (el) {
+    if (el.children.length !== 0) return;
+    if (/^\s*via\s/.test(el.textContent) && el.textContent.trim() !== VIA) {
+      leaks.push("jump profile still visible: " + el.textContent.trim());
+    }
+  });
   document.querySelectorAll('.tm_filter_button[data-group="tag"], .tm_tag_chip')
     .forEach(function (el) {
       var v = el.textContent.trim().replace(/^\+?tag$/, "");
