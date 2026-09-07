@@ -19,12 +19,14 @@ Console Hopper
 *(max 132 characters, single line, no rich text)*
 
 ```
-Hop between AWS consoles fast: role-picker search + tags, jump to any account, env-coloured tabs, live AWS session count.
+Hop between AWS consoles fast: role-picker search + tags, jump to any account, env-coloured tabs, consoles that keep their region.
 ```
 
-*(121 chars. The previous 1.3.0 summary is still valid if you'd rather not
+*(130 chars. Either earlier summary is still valid if you'd rather not
 change it — Chrome re-reviews the listing either way:
-"Hop between AWS consoles fast: role-picker search + account tags,
+1.5.0: "Hop between AWS consoles fast: role-picker search + tags, jump to
+any account, env-coloured tabs, live AWS session count."
+1.3.0: "Hop between AWS consoles fast: role-picker search + account tags,
 deep-link services, env-coloured tabs, configurable tab groups.")*
 
 ### Detailed description
@@ -39,6 +41,22 @@ SSO, the default role list is a long, unsorted scroll. Console Hopper
 gives every row a star, a service deep-link, and a one-click sign-in,
 and gives every open console tab a colour-coded favicon plus an account
 name in the title.
+
+NEW IN 1.6.0
+
+• Console tabs stay in their region — AWS serves its global consoles
+  (IAM, Billing, Organizations, Route 53, CloudFront, …) without a
+  region, which drops the region from the console address. Come back
+  to EC2 afterwards and AWS puts you wherever your AWS profile's
+  default Region points — often a region you have never worked in.
+  Console Hopper now remembers which region each console tab is
+  working in and sends the tab back. Changing region from AWS's own
+  region menu still works exactly as before: the tab follows you and
+  holds the new region. No new permissions, and no AWS credentials
+  are involved. Untick "Keep console tabs in their region" in General
+  Settings to switch it off.
+• Fixed: "Remember the region I pick per role" now survives a reload —
+  it used to quietly return to on every time the picker loaded.
 
 NEW IN 1.5.0
 
@@ -119,6 +137,15 @@ WHAT YOU GET
   pick per role; turn off "Remember the region I pick per role" in
   General Settings and every row always opens on your default instead.
   Edit the offered regions via "Regions".
+
+• Console tabs stay in their region
+  AWS's global consoles (IAM, Billing, Organizations, Route 53, …) are
+  served without a region, so visiting one drops the region from the
+  console address — and the next regional console you open lands
+  wherever your AWS profile's default Region points rather than where
+  you were working. Console Hopper remembers what region each console
+  tab is in and sends the tab back, while leaving alone any region you
+  picked yourself from AWS's own region menu.
 
 • Copy account ID
   Click the account-id button on any row to copy the 12-digit id.
@@ -263,20 +290,20 @@ listing now shows the shipping build.
 
 ```
 Console Hopper enhances the AWS Identity Federation sign-in page
-(https://signin.aws.amazon.com/saml) by adding filters, search,
-account tags, favorites, deep-link service shortcuts, environment
-colour-coding, keyboard navigation and tab grouping, so users who have access to
-many AWS accounts via SAML SSO can find and sign into the right
-role faster. Saved "jump destinations" — accounts reached by
-role-chaining through a hub — appear as rows in the same list and
-sign in the same way. It also decorates AWS console tabs with a coloured
-favicon and account-name title prefix so multiple open consoles
-stay visually distinguishable. A panel shows how many of AWS's five
-concurrent console sessions are in use, with each session's detail,
-and lets the user sign one session — or all of them — out to
-free a slot. A one-click "Clear AWS Sessions" button signs the user out
-of all AWS consoles by deleting AWS authentication cookies (cookies
-only — never read or transmitted).
+(https://signin.aws.amazon.com/saml) with filters, search, account
+tags, favorites, deep-link service shortcuts, environment
+colour-coding, keyboard navigation and tab grouping, so users with
+many AWS accounts via SAML SSO reach the right role faster. Saved
+"jump destinations" — accounts reached by role-chaining through a hub
+— appear as rows in the same list and sign in the same way. It
+decorates AWS console tabs with a coloured favicon and account-name
+title prefix so many open consoles stay tellable apart, and keeps each
+console tab in the AWS Region it was working in when a region-less
+global console (IAM, Billing, …) drops it from the address. A panel
+shows how many of AWS's five concurrent console sessions are in use
+and lets the user sign one — or all — out to free a slot. "Clear AWS
+Sessions" signs the user out of all AWS consoles by deleting AWS
+authentication cookies (cookies only — never read or transmitted).
 ```
 
 ### Data usage disclosure
@@ -315,7 +342,10 @@ https://github.com/tomekklas/console-hopper/blob/main/PRIVACY.md
 Persists user-configured org / environment / account-type / role-name
 filter definitions, favorites, recent sign-ins, service deep-link
 list, theme and keyboard preferences in chrome.storage.local so they
-survive across browser sessions.
+survive across browser sessions. A small per-tab note of which AWS
+Region each console tab is working in is held in chrome.storage.session
+(in memory, discarded when the browser closes) so a tab returning from
+a region-less global console can be sent back to the Region it was in.
 ```
 
 ### `tabs`
@@ -375,9 +405,15 @@ display its filters, favorites, search or service dropdowns.
 
 ### Host permission: `https://console.aws.amazon.com/*`, `https://*.console.aws.amazon.com/*`
 ```
-Required to set the per-tab favicon and tab-title prefix on AWS
-console pages so the user can tell their many open AWS console
-tabs apart at a glance.
+Two uses, both confined to AWS console pages. First, to set the per-tab
+favicon and tab-title prefix so the user can tell their many open AWS
+console tabs apart at a glance. Second, to keep a console tab in the
+AWS Region it was working in: AWS's global consoles (IAM, Billing, …)
+are served without a Region, so returning to a regional console lands
+in whatever Region that AWS profile defaults to. The extension compares
+the loaded console address's Region against the one the tab was using
+and, when they differ, sends the tab to the same console address in its
+own Region. Page content is neither read nor transmitted.
 ```
 
 ---
@@ -420,8 +456,20 @@ tabs apart at a glance.
       tags, pop-out search + scoped queries, shortcuts, Start View, per-row
       region + service, sign-in, tab groups, jump with region, sessions panel
       + sign-out, side menu, dark theme; footer reads v1.4.0).
-- [x] Five 1280×800 screenshots in `store-assets/`, refreshed for 1.4.0
-      (picker, search, sessions, jump, dark) — real UI, demo account data.
+- [x] Region lock verified against a live AWS console (1.6.0): a global
+      console (IAM) moves the tab to the region-less host and is left
+      untouched; a region picked from AWS's own menu is kept; and two tabs
+      pinned to different Regions each returned to their own after an IAM
+      bounce — which AWS's single per-identity default cannot produce.
+- [ ] Re-run the 1.5.0 end-to-end pass on the 1.6.0 build before submitting
+      (jump rows, Source filter, Jump Destinations, sessions Sign out all;
+      footer reads v1.6.0).
+- [x] Five 1280×800 screenshots in `store-assets/`, refreshed for 1.5.0
+      (jump rows + Source filter, is: search, Jump Destinations grid,
+      sessions Sign-out-all, dark) — real UI, demo account data.
+- [ ] Decide whether 1.6.0 needs a screenshot reshoot. The only visible
+      change is the new "Keep console tabs in their region" tick in General
+      Settings; the 1.5.0 set is otherwise still accurate.
 - [x] Promo tiles (440×280 and 1400×560) regenerated for 1.4.0.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is
       upscaled from a 64×64 source — a sharper 128×128 original is

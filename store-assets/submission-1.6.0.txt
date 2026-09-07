@@ -1,0 +1,154 @@
+CONSOLE HOPPER 1.6.0 — CHROME WEB STORE SUBMISSION
+Paste-ready plain text. One block per dashboard field, de-wrapped, no
+markdown. The Detailed description field is the separate, already
+paste-ready file in this folder: detailed-description.txt
+
+
+--- Name -------------------------------------------------------------
+
+Console Hopper
+
+
+--- Summary / short description (max 132 chars; this is 130) ----------
+
+Hop between AWS consoles fast: role-picker search + tags, jump to any account, env-coloured tabs, consoles that keep their region.
+
+
+--- Detailed description ---------------------------------------------
+
+See detailed-description.txt in this folder — paste it whole.
+
+
+--- Category ---------------------------------------------------------
+
+Productivity
+
+
+--- Language ---------------------------------------------------------
+
+English (United States)
+
+
+--- Single purpose description (max 1000 chars) ----------------------
+
+Console Hopper enhances the AWS Identity Federation sign-in page (https://signin.aws.amazon.com/saml) with filters, search, account tags, favorites, deep-link service shortcuts, environment colour-coding, keyboard navigation and tab grouping, so users with many AWS accounts via SAML SSO reach the right role faster. Saved "jump destinations" — accounts reached by role-chaining through a hub — appear as rows in the same list and sign in the same way. It decorates AWS console tabs with a coloured favicon and account-name title prefix so many open consoles stay tellable apart, and keeps each console tab in the AWS Region it was working in when a region-less global console (IAM, Billing, …) drops it from the address. A panel shows how many of AWS's five concurrent console sessions are in use and lets the user sign one — or all — out to free a slot. "Clear AWS Sessions" signs the user out of all AWS consoles by deleting AWS authentication cookies (cookies only — never read or transmitted).
+
+
+--- Permission justification: storage ---------------------------------
+
+Persists user-configured org / environment / account-type / role-name filter definitions, favorites, recent sign-ins, saved jump destinations, service deep-link list, theme and keyboard preferences in chrome.storage.local so they survive across browser sessions. A small per-tab note of which AWS Region each console tab is working in is held in chrome.storage.session (in memory, discarded when the browser closes) so a tab returning from a region-less global console can be sent back to the Region it was in.
+
+
+--- Permission justification: tabs ------------------------------------
+
+Reads the calling tab's id and window in the service worker so a newly opened AWS console tab can be placed into the right Chrome tab group. Tab URLs or content are not transmitted.
+
+
+--- Permission justification: tabGroups -------------------------------
+
+Creates and updates Chrome tab groups so AWS console tabs cluster visually by account + role (or by organisation, or by a user-supplied ticket tag): each account+role gets its own colour, so many open console tabs stay visually grouped and tellable apart.
+
+
+--- Permission justification: cookies ---------------------------------
+
+Used solely by the extension's "Clear AWS Sessions" feature, which lets the user sign out of all open AWS console sessions in one click. Only when the user clicks "Clear AWS Sessions" and confirms, the service worker enumerates cookies on aws.amazon.com and its sign-in / console subdomains (chrome.cookies.getAll) and deletes them (chrome.cookies.remove). It uses only each cookie's name and domain to target it for deletion; it does not use, store, log, or transmit any cookie value or content. No cookies are read for any other purpose.
+
+
+--- Host permission justification (COMBINED — the dashboard has one field)
+
+Paste this whole block into the single "Host permission justification"
+textarea. The field caps at 1000 characters; this is 995, so it fits.
+The per-pattern versions further down are reference only — the form has
+no field per pattern, do not paste those.
+
+If it ever needs to be shorter, cut the console.aws.amazon.com and
+signin.aws.amazon.com/saml lines first: those patterns are unchanged since
+1.0. The sessions/switchrole paragraph and the named endpoints must stay —
+they are the only claims a reviewer can challenge.
+
+All patterns are aws.amazon.com subdomains; no other site is touched.
+
+signin.aws.amazon.com/saml — injects the enhanced role-picker UI.
+
+signin.aws.amazon.com/sessions/* and /switchrole* — during a role-chaining jump AWS asks which console session to switch from and often pre-selects wrongly; the extension picks the right one and submits the form, only during that jump and only for the account entered.
+
+console.aws.amazon.com/* — sets the tab favicon colour and account-name title, and returns a tab to its Region after a region-less global console (IAM, Billing) drops it.
+
+aws.amazon.com/* — the cookies API deletes AWS auth cookies for "Clear AWS Sessions" (names and domains only, never contents). The service worker calls sessions/v1/list to show how many of AWS's five sessions are in use, and sessions/{id}/v1/logout to sign one (or all) out — to AWS only, with the user's existing cookies. The list is metadata only (account id, role, start, expiry), never stored or sent elsewhere.
+
+
+--- Are you using remote code? --------------------------------------
+
+No, I am not using remote code.
+
+All code is contained in the package. There is no eval, no new Function,
+no remotely hosted script, and no external <script> tag.
+
+
+--- Host permission: https://aws.amazon.com/*, https://*.aws.amazon.com/*
+
+Two uses, both limited to aws.amazon.com and its subdomains — no other sites are touched. First, it grants the cookies API the access it needs to delete AWS authentication cookies for the "Clear AWS Sessions" feature. Second, it lets the service worker call two AWS endpoints on the user's behalf, with the user's existing AWS cookies, exactly as the AWS console itself does: signin.aws.amazon.com/sessions/v1/list to read how many of AWS's five concurrent console sessions are in use (the "Active AWS sessions" panel), and .../sessions/{id}/v1/logout to sign a session out when the user clicks the button next to it (or each of them, when the user clicks "Sign out all sessions" and confirms). The list response contains only session metadata — account id, role name, start and expiry time — which is displayed to the user and never stored or transmitted anywhere else. The extension makes no other network requests, and none at all to servers controlled by its authors.
+
+
+--- Host permission: https://signin.aws.amazon.com/saml, https://*.signin.aws.amazon.com/saml
+
+Required to inject the enhanced role-picker UI into the AWS SAML sign-in page. Without this host permission the extension cannot display its filters, favorites, search or service dropdowns.
+
+
+--- Host permission: https://console.aws.amazon.com/*, https://*.console.aws.amazon.com/*
+
+Two uses, both confined to AWS console pages. First, to set the per-tab favicon and tab-title prefix so the user can tell their many open AWS console tabs apart at a glance. Second, to keep a console tab in the AWS Region it was working in: AWS's global consoles (IAM, Billing, …) are served without a Region, so returning to a regional console lands in whatever Region that AWS profile defaults to. The extension compares the loaded console address's Region against the one the tab was using and, when they differ, sends the tab to the same console address in its own Region. Page content is neither read nor transmitted.
+
+
+--- Privacy policy URL -----------------------------------------------
+
+https://github.com/tomekklas/console-hopper/blob/main/PRIVACY.md
+
+
+--- Official / Homepage URL ------------------------------------------
+
+https://github.com/tomekklas/console-hopper
+
+
+--- Support URL ------------------------------------------------------
+
+https://github.com/tomekklas/console-hopper/issues
+
+
+--- Data usage disclosure (Yes/No answers) ---------------------------
+
+Personally identifiable information .... No
+Health information ..................... No
+Financial and payment information ...... No
+Authentication information ............. No
+Personal communications ................ No
+Location ............................... No
+Web history ............................ No
+User activity .......................... No
+Website content ........................ No
+
+Tick all three certifications:
+- I do not sell or transfer user data to third parties, outside of the approved use cases.
+- I do not use or transfer user data for purposes that are unrelated to my item's single purpose.
+- I do not use or transfer user data to determine creditworthiness or for lending purposes.
+
+
+--- Screenshots (1280x800, in this folder) ---------------------------
+
+The 1.5.0 set is current and still accurate — 1.6.0's only visible change
+is the new "Keep console tabs in their region" tick in General Settings,
+which none of the five shots frames. Reshoot only if you want it shown.
+
+screenshot-1-main.png ...... Role picker — filter rows incl. Source, ⤳ jump rows among direct roles
+screenshot-2-search.png .... Pop-out search — scoped query, suggestions incl. is:, live match count
+screenshot-3-sessions.png .. Active AWS sessions — per-session sign-out + Sign out all
+screenshot-4-jump.png ...... Jump Destinations dialog + the ⤳ Jump popover with the save tick
+screenshot-5-dark.png ...... Dark theme
+
+
+--- Distribution -----------------------------------------------------
+
+Visibility ....... Public
+Pricing .......... Free
+Regions .......... All regions
+Mature content ... No
