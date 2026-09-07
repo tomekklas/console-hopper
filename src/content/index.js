@@ -8759,9 +8759,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             <span>
               <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; font-size: 13px !important;">Keep console tabs in their region</span>
               <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 2px !important;">
-                AWS serves global consoles (IAM, Billing, Organizations, …) without a
-                region, so leaving one drops you into whatever region your AWS profile
-                defaults to — not the one you were working in. This sends the tab back.
+                Some AWS consoles are account-wide and have no region of their own, so
+                leaving one drops you into whatever region your AWS profile defaults to —
+                not the one you were working in. This sends the tab back.
                 Changing region from AWS's own region picker still works: the tab follows
                 you and stays there.
               </span>

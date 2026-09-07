@@ -44,11 +44,11 @@ name in the title.
 
 NEW IN 1.6.0
 
-• Console tabs stay in their region — AWS serves its global consoles
-  (IAM, Billing, Organizations, Route 53, CloudFront, …) without a
-  region, which drops the region from the console address. Come back
-  to EC2 afterwards and AWS puts you wherever your AWS profile's
-  default Region points — often a region you have never worked in.
+• Console tabs stay in their region — some AWS consoles are
+  account-wide and have no region of their own, so opening one drops
+  the region from the console address. Go back to a regional console
+  afterwards and AWS puts you wherever your AWS profile's default
+  Region points — often a region you have never worked in.
   Console Hopper now remembers which region each console tab is
   working in and sends the tab back. Changing region from AWS's own
   region menu still works exactly as before: the tab follows you and
@@ -139,9 +139,9 @@ WHAT YOU GET
   Edit the offered regions via "Regions".
 
 • Console tabs stay in their region
-  AWS's global consoles (IAM, Billing, Organizations, Route 53, …) are
-  served without a region, so visiting one drops the region from the
-  console address — and the next regional console you open lands
+  Some AWS consoles are account-wide and carry no region of their own,
+  so visiting one drops the region from the console address — and the
+  next regional console you open lands
   wherever your AWS profile's default Region points rather than where
   you were working. Console Hopper remembers what region each console
   tab is in and sends the tab back, while leaving alone any region you
@@ -298,8 +298,8 @@ many AWS accounts via SAML SSO reach the right role faster. Saved
 — appear as rows in the same list and sign in the same way. It
 decorates AWS console tabs with a coloured favicon and account-name
 title prefix so many open consoles stay tellable apart, and keeps each
-console tab in the AWS Region it was working in when a region-less
-global console (IAM, Billing, …) drops it from the address. A panel
+console tab in the AWS Region it was working in when an
+account-wide console drops it from the address. A panel
 shows how many of AWS's five concurrent console sessions are in use
 and lets the user sign one — or all — out to free a slot. "Clear AWS
 Sessions" signs the user out of all AWS consoles by deleting AWS
@@ -408,7 +408,7 @@ display its filters, favorites, search or service dropdowns.
 Two uses, both confined to AWS console pages. First, to set the per-tab
 favicon and tab-title prefix so the user can tell their many open AWS
 console tabs apart at a glance. Second, to keep a console tab in the
-AWS Region it was working in: AWS's global consoles (IAM, Billing, …)
+AWS Region it was working in: some AWS consoles are account-wide and
 are served without a Region, so returning to a regional console lands
 in whatever Region that AWS profile defaults to. The extension compares
 the loaded console address's Region against the one the tab was using
@@ -464,12 +464,13 @@ own Region. Page content is neither read nor transmitted.
 - [ ] Re-run the 1.5.0 end-to-end pass on the 1.6.0 build before submitting
       (jump rows, Source filter, Jump Destinations, sessions Sign out all;
       footer reads v1.6.0).
-- [x] Five 1280×800 screenshots in `store-assets/`, refreshed for 1.5.0
-      (jump rows + Source filter, is: search, Jump Destinations grid,
-      sessions Sign-out-all, dark) — real UI, demo account data.
-- [ ] Decide whether 1.6.0 needs a screenshot reshoot. The only visible
-      change is the new "Keep console tabs in their region" tick in General
-      Settings; the 1.5.0 set is otherwise still accurate.
+- [x] Five 1280×800 screenshots in `store-assets/`. Shots 1–4 are the 1.5.0
+      set (jump rows + Source filter, is: search, Jump Destinations grid,
+      sessions Sign-out-all); shot 5 was reshot for 1.6.0 as General Settings
+      open over the dark role picker, so it still carries the dark theme and
+      now shows the "Keep console tabs in their region" tick. Real UI,
+      placeholder account data (AWS-doc-style ids, acme/globex/initech names,
+      generic tags — no real vendor names).
 - [x] Promo tiles (440×280 and 1400×560) regenerated for 1.4.0.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is
       upscaled from a 64×64 source — a sharper 128×128 original is

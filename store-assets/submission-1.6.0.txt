@@ -31,7 +31,7 @@ English (United States)
 
 --- Single purpose description (max 1000 chars) ----------------------
 
-Console Hopper enhances the AWS Identity Federation sign-in page (https://signin.aws.amazon.com/saml) with filters, search, account tags, favorites, deep-link service shortcuts, environment colour-coding, keyboard navigation and tab grouping, so users with many AWS accounts via SAML SSO reach the right role faster. Saved "jump destinations" — accounts reached by role-chaining through a hub — appear as rows in the same list and sign in the same way. It decorates AWS console tabs with a coloured favicon and account-name title prefix so many open consoles stay tellable apart, and keeps each console tab in the AWS Region it was working in when a region-less global console (IAM, Billing, …) drops it from the address. A panel shows how many of AWS's five concurrent console sessions are in use and lets the user sign one — or all — out to free a slot. "Clear AWS Sessions" signs the user out of all AWS consoles by deleting AWS authentication cookies (cookies only — never read or transmitted).
+Console Hopper enhances the AWS Identity Federation sign-in page (https://signin.aws.amazon.com/saml) with filters, search, account tags, favorites, deep-link service shortcuts, environment colour-coding, keyboard navigation and tab grouping, so users with many AWS accounts via SAML SSO reach the right role faster. Saved "jump destinations" — accounts reached by role-chaining through a hub — appear as rows in the same list and sign in the same way. It decorates AWS console tabs with a coloured favicon and account-name title prefix so many open consoles stay tellable apart, and keeps each console tab in the AWS Region it was working in when an account-wide console drops it from the address. A panel shows how many of AWS's five concurrent console sessions are in use and lets the user sign one — or all — out to free a slot. "Clear AWS Sessions" signs the user out of all AWS consoles by deleting AWS authentication cookies (cookies only — never read or transmitted).
 
 
 --- Permission justification: storage ---------------------------------
@@ -57,7 +57,7 @@ Used solely by the extension's "Clear AWS Sessions" feature, which lets the user
 --- Host permission justification (COMBINED — the dashboard has one field)
 
 Paste this whole block into the single "Host permission justification"
-textarea. The field caps at 1000 characters; this is 995, so it fits.
+textarea. The field caps at 1000 characters; this is 975, so it fits.
 The per-pattern versions further down are reference only — the form has
 no field per pattern, do not paste those.
 
@@ -72,7 +72,7 @@ signin.aws.amazon.com/saml — injects the enhanced role-picker UI.
 
 signin.aws.amazon.com/sessions/* and /switchrole* — during a role-chaining jump AWS asks which console session to switch from and often pre-selects wrongly; the extension picks the right one and submits the form, only during that jump and only for the account entered.
 
-console.aws.amazon.com/* — sets the tab favicon colour and account-name title, and returns a tab to its Region after a region-less global console (IAM, Billing) drops it.
+console.aws.amazon.com/* — sets the tab favicon colour and account-name title, and returns a tab to its Region after an account-wide console drops it.
 
 aws.amazon.com/* — the cookies API deletes AWS auth cookies for "Clear AWS Sessions" (names and domains only, never contents). The service worker calls sessions/v1/list to show how many of AWS's five sessions are in use, and sessions/{id}/v1/logout to sign one (or all) out — to AWS only, with the user's existing cookies. The list is metadata only (account id, role, start, expiry), never stored or sent elsewhere.
 
@@ -97,7 +97,7 @@ Required to inject the enhanced role-picker UI into the AWS SAML sign-in page. W
 
 --- Host permission: https://console.aws.amazon.com/*, https://*.console.aws.amazon.com/*
 
-Two uses, both confined to AWS console pages. First, to set the per-tab favicon and tab-title prefix so the user can tell their many open AWS console tabs apart at a glance. Second, to keep a console tab in the AWS Region it was working in: AWS's global consoles (IAM, Billing, …) are served without a Region, so returning to a regional console lands in whatever Region that AWS profile defaults to. The extension compares the loaded console address's Region against the one the tab was using and, when they differ, sends the tab to the same console address in its own Region. Page content is neither read nor transmitted.
+Two uses, both confined to AWS console pages. First, to set the per-tab favicon and tab-title prefix so the user can tell their many open AWS console tabs apart at a glance. Second, to keep a console tab in the AWS Region it was working in: some AWS consoles are account-wide and are served without a Region, so returning to a regional console lands in whatever Region that AWS profile defaults to. The extension compares the loaded console address's Region against the one the tab was using and, when they differ, sends the tab to the same console address in its own Region. Page content is neither read nor transmitted.
 
 
 --- Privacy policy URL -----------------------------------------------
@@ -135,15 +135,16 @@ Tick all three certifications:
 
 --- Screenshots (1280x800, in this folder) ---------------------------
 
-The 1.5.0 set is current and still accurate — 1.6.0's only visible change
-is the new "Keep console tabs in their region" tick in General Settings,
-which none of the five shots frames. Reshoot only if you want it shown.
+Shots 1-4 are the 1.5.0 set; shot 5 was reshot for 1.6.0 — General
+Settings open over the dark role picker, keeping the dark theme and adding
+the new "Keep console tabs in their region" tick.
 
 screenshot-1-main.png ...... Role picker — filter rows incl. Source, ⤳ jump rows among direct roles
 screenshot-2-search.png .... Pop-out search — scoped query, suggestions incl. is:, live match count
 screenshot-3-sessions.png .. Active AWS sessions — per-session sign-out + Sign out all
 screenshot-4-jump.png ...... Jump Destinations dialog + the ⤳ Jump popover with the save tick
-screenshot-5-dark.png ...... Dark theme
+screenshot-5-dark.png ...... Dark theme + General Settings, incl. the new
+                              "Keep console tabs in their region" setting
 
 
 --- Distribution -----------------------------------------------------
