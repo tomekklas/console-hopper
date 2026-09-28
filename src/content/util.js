@@ -527,3 +527,54 @@ export const formatJumpDestLines = (list, services) =>
       return cells.join(" | ");
     })
     .join("\n");
+
+// === LAUNCH SETS ===
+// A launch set is a named list of console tabs to open together:
+//   { id, name, group, tabs: [{ roleArn, service, region }], lastUsed }
+// `group` is the Chrome tab-group name the tabs gather in ("" = no group);
+// `service` is a console path in the Services format ("" = console home), and
+// `region` a region code ("" = the row's default). One role may appear in
+// several tabs. Everything is re-validated on load and import: service paths
+// and regions end up in a sign-in URL.
+export const LAUNCH_SET_MAX_TABS = 20;
+export const LAUNCH_SETS_MAX = 50;
+const LAUNCH_SET_ID_RE = /^[a-z0-9]{1,24}$/;
+const ROLE_ARN_RE = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]{1,512}$/;
+
+export const isRoleArn = (arn) => ROLE_ARN_RE.test(String(arn || ""));
+
+export const normalizeLaunchSetTabs = (raw) =>
+  (Array.isArray(raw) ? raw : [])
+    .filter((t) => t && typeof t === "object" && isRoleArn(t.roleArn))
+    .slice(0, LAUNCH_SET_MAX_TABS)
+    .map((t) => ({
+      roleArn: t.roleArn,
+      service: typeof t.service === "string" && isSafeServicePath(t.service) ? t.service : "",
+      region: isValidRegionCode(t.region) ? t.region : "",
+    }));
+
+export const normalizeLaunchSets = (raw) => {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const ids = new Set();
+  for (const s of raw) {
+    if (!s || typeof s !== "object") continue;
+    const id = typeof s.id === "string" && LAUNCH_SET_ID_RE.test(s.id) ? s.id : "";
+    if (!id || ids.has(id)) continue;
+    const name = typeof s.name === "string" ? s.name.trim().slice(0, 64) : "";
+    if (!name) continue;
+    const group = typeof s.group === "string" ? s.group.trim().slice(0, 64) : name;
+    const tabs = normalizeLaunchSetTabs(s.tabs);
+    if (!tabs.length) continue;
+    const lastUsed = Number.isFinite(s.lastUsed) && s.lastUsed > 0 ? s.lastUsed : 0;
+    out.push({ id, name, group, tabs, lastUsed });
+    ids.add(id);
+    if (out.length >= LAUNCH_SETS_MAX) break;
+  }
+  return out;
+};
+
+// How many distinct roles a set signs into — what it costs in AWS's
+// five-session budget, since tabs of one role share a session.
+export const launchSetRoleCount = (set) =>
+  new Set(((set && set.tabs) || []).map((t) => t.roleArn)).size;
