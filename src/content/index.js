@@ -2695,7 +2695,9 @@ import {
   // redirected to "{account}-{alias}.{region}.console…", a different origin —
   // so both the fragment and any sessionStorage written on the first hop are
   // gone by the time the tab the user actually sees loads.
-  const stashPendingLabel = async (account, label, envColor, envLetter, region) => {
+  // `tabs` is how many tabs are about to land on this account at once (a Launch
+  // Set can open several); the decorator counts it down, one per tab.
+  const stashPendingLabel = async (account, label, envColor, envLetter, region, tabs = 1) => {
     if (!/^\d{12}$/.test(String(account || ""))) return;
     await safeStorageOperation(async () => {
       const cur =
@@ -2705,6 +2707,7 @@ import {
         if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
       }
       cur[account] = { label, envColor, envLetter, region: region || "", ts: now };
+      if (tabs > 1) cur[account].remaining = tabs;
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
   };
@@ -2813,6 +2816,134 @@ import {
         else $form.removeAttr("target");
       }, 0);
     }
+  };
+
+  // The label a sign-in hands to its console tab: account/role for the title,
+  // env colour + letter for the favicon, and the tab-group hints the service
+  // worker groups by. `tag` defaults to the toolbar's custom tab-group tag; a
+  // Launch Set passes its own tab-group name instead.
+  const buildSigninLabel = ({ accountName, accountId, roleName, env, tag = tabGroupTagCache }) => {
+    const labelPayload = {
+      account: accountName,
+      role: roleName,
+      env,
+      // Pass the env color + letter so console-decorator.js doesn't need
+      // hardcoded knowledge of which env ids exist or how they look.
+      envColor: env !== "default" ? EnvironmentsManager.colorFor(env) : "",
+      envLetter: env !== "default" ? EnvironmentsManager.letterFor(env) : "",
+    };
+    // Tab-group hints passed through to the service worker via the URL
+    // fragment payload:
+    //   - tag (toolbar override) wins if non-empty
+    //   - otherwise SW honours `groupMode`: "role" / "org" / "off"
+    //   - for "org" mode we send the classified org id as well
+    if (tag) labelPayload.tag = tag;
+    labelPayload.groupMode = tabGroupModeCache;
+    if (tabGroupModeCache === "org") {
+      const orgId = OrganizationsManager.classify(accountName, accountId);
+      if (orgId) {
+        // Send the user's display label (e.g. "ACME Corp") rather than the
+        // slug id (e.g. "acme-corp") so the Chrome tab group title matches
+        // what the user typed in Organizations.
+        const entry = OrganizationsManager.findEntry(orgId);
+        labelPayload.org = (entry && entry.label) ? entry.label : orgId;
+      }
+    }
+    return labelPayload;
+  };
+
+  // A direct (non-jump) role row by its role ARN, with what a sign-in needs to
+  // know about it. Null when today's role list doesn't include the role.
+  const directRoleInfo = (roleArn) => {
+    const radio = [...document.querySelectorAll('input[type="radio"][name="roleIndex"]')]
+      .find((r) => r.value === roleArn);
+    if (!radio) return null;
+    const $role = $(radio).closest(".saml-role");
+    if (!$role.length || $role.attr("data-jump") === "1") return null;
+    return {
+      $role,
+      roleArn,
+      roleName: $role.find(".tm_role_name").text().trim(),
+      accountName: $role.find(".tm_account_name").text().trim(),
+      accountId: $role.find(".tm_account_id").text().trim(),
+      env: getEnvironmentType($role),
+    };
+  };
+
+  // The fields the role picker's own form would post for one role: every
+  // hidden field AWS put in the form (the SAML response among them), the
+  // chosen role, and a RelayState that deep-links into the console.
+  const samlFormFields = (form, roleArn, relayState) => {
+    const fields = [];
+    form.querySelectorAll('input[type="hidden"]').forEach((input) => {
+      if (!input.name || input.name === "RelayState" || input.name === "roleIndex") return;
+      fields.push([input.name, input.value]);
+    });
+    fields.push(["RelayState", relayState]);
+    fields.push(["roleIndex", roleArn]);
+    // signInToRole adds the Sign In button's name/value as a hidden field;
+    // mirror it so both paths post the same thing.
+    const btn = document.getElementById("signin_button");
+    if (btn) {
+      const name = btn.getAttribute("name") || "signin";
+      if (!fields.some(([n]) => n === name)) fields.push([name, btn.value || "Sign In"]);
+    }
+    return fields;
+  };
+
+  // Open several console tabs at once — the engine behind Launch Sets. Each
+  // entry is { roleArn, service, region }; every role must be a direct role in
+  // today's list (callers skip the rest first). The service worker opens one
+  // tab per entry, each of which posts its own sign-in, so the picker stays
+  // put. `tag` names the Chrome tab group the tabs gather in.
+  const launchSigninTabs = async (tabs, { tag = "" } = {}) => {
+    const form = document.getElementById("saml_form");
+    if (!form) throw new Error("the role picker's sign-in form is missing");
+
+    const perAccount = new Map();
+    const prepared = [];
+    for (const t of tabs) {
+      const info = directRoleInfo(t.roleArn);
+      if (!info) throw new Error(`${t.roleArn} is not in today's role list`);
+      const labelPayload = buildSigninLabel({ ...info, tag: tag || tabGroupTagCache });
+      // Awaited: the token must be in storage before the tab lands, or the
+      // decorator will (correctly) refuse to trust the payload.
+      labelPayload.tok = await mintSigninToken();
+      const relay = buildDestination(t.service || "", labelPayload, t.region || "");
+      prepared.push({ fields: samlFormFields(form, t.roleArn, relay) });
+      const acct = perAccount.get(info.accountId) || { info, tabs: 0 };
+      acct.tabs++;
+      perAccount.set(info.accountId, acct);
+    }
+
+    // One hand-off per account, counted down by each tab that lands on it.
+    for (const [accountId, { info, tabs: n }] of perAccount) {
+      const env = info.env;
+      await stashPendingLabel(
+        accountId,
+        info.accountName,
+        env !== "default" ? EnvironmentsManager.colorFor(env) : "",
+        env !== "default" ? EnvironmentsManager.letterFor(env) : "",
+        "",
+        n
+      );
+    }
+    for (const t of tabs) await RecentRolesManager.recordSignIn(t.roleArn);
+
+    const res = await new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "hop_launch", action: form.action, tabs: prepared },
+          (r) => resolve(chrome.runtime.lastError ? null : r)
+        );
+      } catch (e) {
+        resolve(null);
+      }
+    });
+    if (!res || !res.ok) {
+      throw new Error((res && res.error) || "the extension's background worker didn't answer");
+    }
+    return res.opened;
   };
 
   // --- Clean up original UI ---
@@ -4878,32 +5009,7 @@ import {
       showToast(`Signing in to ${roleName} (console${newTab ? ", new tab" : ""})…`, "info", 2000);
     }
 
-    const labelPayload = {
-      account: accountName,
-      role: roleName,
-      env,
-      // Pass the env color + letter so console-decorator.js doesn't need
-      // hardcoded knowledge of which env ids exist or how they look.
-      envColor: env !== "default" ? EnvironmentsManager.colorFor(env) : "",
-      envLetter: env !== "default" ? EnvironmentsManager.letterFor(env) : "",
-    };
-    // Tab-group hints passed through to the service worker via the URL
-    // fragment payload:
-    //   - tag (toolbar override) wins if non-empty
-    //   - otherwise SW honours `groupMode`: "role" / "org" / "off"
-    //   - for "org" mode we send the classified org id as well
-    if (tabGroupTagCache) labelPayload.tag = tabGroupTagCache;
-    labelPayload.groupMode = tabGroupModeCache;
-    if (tabGroupModeCache === "org") {
-      const orgId = OrganizationsManager.classify(accountName, accountId);
-      if (orgId) {
-        // Send the user's display label (e.g. "ACME Corp") rather than the
-        // slug id (e.g. "acme-corp") so the Chrome tab group title matches
-        // what the user typed in Organizations.
-        const entry = OrganizationsManager.findEntry(orgId);
-        labelPayload.org = (entry && entry.label) ? entry.label : orgId;
-      }
-    }
+    const labelPayload = buildSigninLabel({ accountName, accountId, roleName, env });
     await RecentRolesManager.recordSignIn(roleArn);
     // Awaited: the token must be in storage before the form navigates away,
     // or the decorator will (correctly) refuse to trust the payload.

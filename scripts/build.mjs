@@ -29,10 +29,10 @@ const TARGET = ["chrome110"];
 
 // content.js and background.js are bundled from ES modules (see below). These
 // standalone classic scripts have no imports — minify them in place.
-const CLASSIC_SCRIPTS = ["console-decorator.js", "session-selector.js"];
+const CLASSIC_SCRIPTS = ["console-decorator.js", "session-selector.js", "launch.js"];
 
 // Static files copied verbatim into the package.
-const STATIC = ["manifest.json", "icons"];
+const STATIC = ["manifest.json", "launch.html", "icons"];
 
 function readManifest() {
   const text = readFileSync(join(root, "manifest.json"), "utf8");
