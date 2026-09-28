@@ -3,6 +3,40 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## Unreleased
+
+### Added
+
+- **Launch Sets.** Save the console tabs a ticket needs under a name such as
+  the ticket id, then open them all in one click. Each tab in a set has its
+  own role, service and region, and one role can have several tabs — EC2
+  and IAM side by side. The tabs open next to the role picker, without
+  taking focus, and gather in one Chrome tab group named after the set.
+  - A **Sets** column sits in the filter panel, beside the search column:
+    each set with its tab count and an **Open** button, most recently used
+    first. Clicking a set's name shows only its roles in the listing, each
+    noting what it opens, under a bar with **Edit** and **Open all**.
+  - **↗ save as set** in the search card saves the roles your search shows,
+    each with the service and region its row is set to. **+ New set** offers
+    the same (*Save current view*) and **Save open tabs**, which records
+    your open console tabs — role, region and exact page — so the same
+    layout comes back next time.
+  - **Edit** lists a set's tabs one per line with *Land on service* and
+    *Land in region*, **+ Add tab for this role**, **+ Add a role** and a
+    two-click **Delete set**.
+  - With nothing to flag, **Open** takes one click. A set with sensitive
+    roles, roles missing from today's list, or more sessions than AWS's five
+    gets one confirmation for the whole set; tabs of one role count as one
+    session, and **Manage sessions…** opens the sessions panel.
+  - Sets are included in Export / Import settings.
+
+### Changed
+
+- Tabs opened together now join one tab group instead of each creating its
+  own: grouping runs one tab at a time.
+- Several tabs of the same account landing at once are all decorated; the
+  per-account hand-off used to be consumed by the first one.
+
 ## 1.6.0 — 2026-09-07
 
 ### Added

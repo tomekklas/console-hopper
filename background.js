@@ -406,6 +406,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// === SAVE OPEN TABS AS A LAUNCH SET ===
+// Every open console tab, with what a set needs to reopen it: the role (from
+// the AWS session its multi-session host belongs to), the region (from the
+// host) and the page. Tabs we can't tie to a session — AWS multi-session off,
+// or a session that has since expired — come back without a role, and the
+// picker lists them as not savable.
+function consolePageOf(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  const parts = u.hostname.split(".");
+  const differentiator = /^\d{12}-[a-z0-9-]+$/i.test(parts[0]) ? parts[0] : "";
+  const regionLabel = parts[differentiator ? 1 : 0] || "";
+  const region =
+    /^[a-z]{2}(-[a-z]+)+-\d$/.test(regionLabel) ? regionLabel : "";
+  // Drop our own #hop payload if it is still on the URL; keep the console's
+  // own fragment (EC2 and CloudWatch route with it).
+  const hash = new URLSearchParams(u.hash.replace(/^#/, ""));
+  const ownHash = u.hash && !hash.has("hop") ? u.hash : "";
+  return {
+    differentiator,
+    region,
+    path: u.pathname.replace(/^\//, "") + u.search + ownHash,
+  };
+}
+
+async function listConsoleTabsForSets(region) {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: "https://*.console.aws.amazon.com/*" });
+  } catch {
+    return [];
+  }
+  let sessions = [];
+  try {
+    sessions = await listAwsSessions(region);
+  } catch {
+    /* signed out or endpoint moved: every tab comes back without a role */
+  }
+  const byDifferentiator = new Map(sessions.map((s) => [s.differentiator, s]));
+  const groupTitles = new Map();
+  const out = [];
+  for (const t of tabs.sort((a, b) => a.windowId - b.windowId || a.index - b.index)) {
+    const page = consolePageOf(t.url);
+    if (!page) continue;
+    const session = byDifferentiator.get(page.differentiator);
+    let group = "";
+    if (t.groupId != null && t.groupId !== -1) {
+      if (!groupTitles.has(t.groupId)) {
+        try {
+          const g = await chrome.tabGroups.get(t.groupId);
+          groupTitles.set(t.groupId, (g && g.title) || "");
+        } catch {
+          groupTitles.set(t.groupId, "");
+        }
+      }
+      group = groupTitles.get(t.groupId);
+    }
+    out.push({
+      tabId: t.id,
+      title: t.title || "",
+      account: session ? session.account : page.differentiator.slice(0, 12),
+      role: session ? session.role : "",
+      region: page.region,
+      path: page.path,
+      group,
+      groupId: t.groupId != null ? t.groupId : -1,
+    });
+  }
+  return out;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_list_console_tabs") return;
+  listConsoleTabsForSets(message.region)
+    .then((tabs) => sendResponse({ ok: true, tabs }))
+    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "hop_signout_session") return;
   signOutAwsSession(message.region, message.differentiator)
