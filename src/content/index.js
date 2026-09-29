@@ -19,6 +19,11 @@ import {
   parseAccountTagLines,
   formatAccountTagLines,
   normalizeAccountTags,
+  migrateAccountTags,
+  normalizeChipOrder,
+  orderByIds,
+  isTagKey,
+  tagKeyFor,
   normalizeTagList,
   parseAssumeProfileLines,
   formatAssumeProfileLines,
@@ -80,6 +85,7 @@ import {
       REGION_LIST: "aws_region_list",
       ACCOUNT_NAMES: "aws_account_names",
       ACCOUNT_TAGS: "aws_account_tags",
+      CHIP_ORDER: "aws_filter_chip_order",
       HOMEPAGE_URL: "aws_homepage_url",
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
@@ -245,6 +251,52 @@ import {
   });
 
   debug(`Console Hopper v${CONFIG.SCRIPT_VERSION}`);
+
+  // Only one Console Hopper can drive the picker. With two installed (say the
+  // Web Store copy and an unpacked build) each decorates every role row, so
+  // every row shows twice. A copy that finds another already here stands
+  // down; the one that got here first warns if a second shows up later.
+  const showDuplicateCopyNotice = (steppedAside) => {
+    if (document.getElementById("tm_duplicate_notice")) return;
+    const bar = document.createElement("div");
+    bar.id = "tm_duplicate_notice";
+    bar.setAttribute("role", "alert");
+    bar.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;" +
+      "gap:12px;align-items:center;justify-content:center;padding:8px 16px;" +
+      "background:#fff4ce;color:#3d2e00;border-bottom:1px solid #e0b400;" +
+      "font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+    const msg = document.createElement("span");
+    msg.textContent =
+      "Console Hopper is installed twice and both copies are running here. " +
+      "Turn one off in chrome://extensions, then reload this page. " +
+      `(This copy: v${CONFIG.SCRIPT_VERSION}, id ${chrome.runtime.id}` +
+      (steppedAside ? ", stepped aside.)" : ".)");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Dismiss");
+    close.style.cssText =
+      "border:0;background:none;font-size:18px;line-height:1;cursor:pointer;color:inherit;";
+    close.addEventListener("click", () => bar.remove());
+    bar.append(msg, close);
+    document.body.appendChild(bar);
+  };
+  if (
+    document.documentElement.dataset.consoleHopper ||
+    document.querySelector("#tm_interface_wrapper, .tm_role_info")
+  ) {
+    showDuplicateCopyNotice(true);
+    return;
+  }
+  document.documentElement.dataset.consoleHopper = chrome.runtime.id;
+  for (const delay of [1500, 5000]) {
+    setTimeout(() => {
+      if (document.querySelectorAll("#tm_interface_wrapper").length > 1) {
+        showDuplicateCopyNotice(false);
+      }
+    }, delay);
+  }
 
   // Global filter state. FILTER_GROUPS is the canonical list of filter groups;
   // emptyFilters/cloneFilters build the {group: string[]} shape everywhere it's
@@ -794,6 +846,20 @@ import {
       }, false);
     },
 
+    async getChipOrder() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.CHIP_ORDER);
+        return result[CONFIG.STORAGE_KEYS.CHIP_ORDER] ?? null;
+      }, null);
+      return normalizeChipOrder(raw);
+    },
+    async saveChipOrder(map) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.CHIP_ORDER]: map });
+        return true;
+      }, false);
+    },
+
     async getHomepageUrl() {
       return await safeStorageOperation(async () => {
         const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.HOMEPAGE_URL);
@@ -1276,24 +1342,29 @@ import {
     },
 
     generateHTML() {
-      let shortcutsHTML =
-        '<a href="#" class="tm_filter_button" data-group="show" data-filter="favorites">Favorites</a>' +
-        '<a href="#" class="tm_filter_button" data-group="show" data-filter="recent">Recent</a>';
+      const chips = [
+        { id: "favorites", html: '<a href="#" class="tm_filter_button" data-group="show" data-filter="favorites">Favorites</a>' },
+        { id: "recent", html: '<a href="#" class="tm_filter_button" data-group="show" data-filter="recent">Recent</a>' },
+      ];
 
       customShortcutsCache.forEach((shortcut) => {
         const safeId = sanitizeInput(this.idFor(shortcut));
         const safeSearch = sanitizeInput(shortcut.search || "");
         const safeLabel = sanitizeInput(shortcut.label);
-        shortcutsHTML += `<a href="#" class="tm_filter_button tm_custom_shortcut" data-group="show" data-filter="custom_${safeId}" data-search="${safeSearch}">${safeLabel}<span class="tm_shortcut_del" role="button" tabindex="-1" title="Remove shortcut" aria-label="Remove shortcut">✕</span></a>`;
+        chips.push({
+          id: `custom_${this.idFor(shortcut)}`,
+          html: `<a href="#" class="tm_filter_button tm_custom_shortcut" data-group="show" data-filter="custom_${safeId}" data-search="${safeSearch}">${safeLabel}<span class="tm_shortcut_del" role="button" tabindex="-1" title="Remove shortcut" aria-label="Remove shortcut">✕</span></a>`,
+        });
       });
 
-      return shortcutsHTML;
+      return ChipOrderManager.apply("show", chips, (c) => c.id).map((c) => c.html).join("");
     },
 
     updateSection() {
       getCachedElement(CONFIG.SELECTORS.SHORTCUTS_SECTION).html(
         this.generateHTML()
       );
+      scheduleFitFilterRows();
     },
 
     // A shortcut reads as "active" when the live view equals what it stored.
@@ -1732,9 +1803,10 @@ import {
     },
   };
 
-  // Account tags: free-text labels attached to an account id so it can be found
-  // by concept (e.g. "palo alto"), not just by name. Keyed by account id, so a
-  // tag shows on — and edits from — every role row of that account.
+  // Tags: free-text labels attached to one account + role combination
+  // ("123456789012/Admin") so it can be found by concept (e.g. "palo alto" or a
+  // ticket id), not just by name. A tag shows on — and edits from — only that
+  // role's row(s).
   const AccountTagsManager = {
     async loadCache() {
       accountTagsCache = await StorageManager.getAccountTags();
@@ -1747,7 +1819,7 @@ import {
         accountTagsCache = clean;
         return true;
       }
-      showToast("Failed to save account tags", "error");
+      showToast("Failed to save tags", "error");
       return false;
     },
     all() {
@@ -1756,7 +1828,7 @@ import {
     tagsFor(id) {
       return (id && accountTagsCache[id]) || [];
     },
-    // Unique tag vocabulary across all accounts (canonical casing), sorted —
+    // Unique tag vocabulary across all keys (canonical casing), sorted —
     // powers the filter-row chips and the inline add-autocomplete.
     allTags() {
       const seen = new Map();
@@ -1768,10 +1840,10 @@ import {
       }
       return [...seen.values()].sort((a, b) => a.localeCompare(b));
     },
-    // Persist a whole account's tag list (inline add/remove + bulk). Emptying it
-    // drops the account key so allTags() stays clean.
+    // Persist one key's tag list (inline add/remove). Emptying it drops the key
+    // so allTags() stays clean.
     async setTags(id, tags) {
-      if (!/^\d{12}$/.test(id || "")) return false;
+      if (!isTagKey(id)) return false;
       const clean = normalizeTagList(tags);
       const next = { ...accountTagsCache };
       if (clean.length) next[id] = clean;
@@ -1785,7 +1857,40 @@ import {
       const low = String(tag || "").toLowerCase();
       return this.setTags(id, this.tagsFor(id).filter((t) => t.toLowerCase() !== low));
     },
+    // Copy older account-wide tags onto every listed role of their account.
+    async migrate(roles) {
+      const { map, changed } = migrateAccountTags(accountTagsCache, roles);
+      return changed ? this.save(map) : false;
+    },
   };
+
+  // Filter-row chip order, set by dragging in a row's "show all" list. Kept
+  // apart from the Organizations/Environments/... config lists so reordering
+  // chips never rewrites them.
+  let chipOrderCache = {};
+  const ChipOrderManager = {
+    async loadCache() {
+      chipOrderCache = await StorageManager.getChipOrder();
+    },
+    idsFor(group) {
+      return chipOrderCache[group] || [];
+    },
+    async setOrder(group, ids) {
+      const next = normalizeChipOrder({ ...chipOrderCache, [group]: ids });
+      if ((await StorageManager.saveChipOrder(next)) === false) {
+        showToast("Couldn't save the chip order.", "error", CONFIG.TOAST_DURATION_LONG);
+        return false;
+      }
+      chipOrderCache = next;
+      return true;
+    },
+    apply(group, entries, idOf) {
+      return orderByIds(entries, this.idsFor(group), idOf, { newFirst: group === "tag" });
+    },
+  };
+  // Set once the row-fitting code below is defined; anything that changes a
+  // filter row calls it to re-fold the row onto one line.
+  let scheduleFitFilterRows = () => {};
 
   // ---- Account-tag row UI (on-demand chip + inline editor) ----
   const TAG_SVG =
@@ -1803,48 +1908,53 @@ import {
   // Chip in the account-name cell: tag glyph + count when tagged, a dashed
   // "+ tag" prompt otherwise (always shown, per the chosen design).
   const tagChipHTML = (id) => {
-    if (!/^\d{12}$/.test(id || "")) return "";
+    if (!isTagKey(id)) return "";
     const n = AccountTagsManager.tagsFor(id).length;
     const cls = n ? "tm_tag_chip" : "tm_tag_chip tm_no_tags";
     const title = n ? `${n} tag${n === 1 ? "" : "s"} — click to edit` : "Add a tag";
-    return `<button type="button" class="${cls}" data-account-id="${escapeHtml(id)}" aria-expanded="false" title="${title}">${tagChipInner(id)}</button>`;
+    return `<button type="button" class="${cls}" data-tag-key="${escapeHtml(id)}" aria-expanded="false" title="${title}">${tagChipInner(id)}</button>`;
   };
 
   const tagPillsHTML = (id) =>
     AccountTagsManager.tagsFor(id)
       .map((t) => {
         const e = escapeHtml(t);
-        return `<span class="tm_tag_pill">${e}<button type="button" class="tm_tag_del" data-account-id="${escapeHtml(id)}" data-tag="${e}" aria-label="Remove ${e}">✕</button></span>`;
+        return `<span class="tm_tag_pill">${e}<button type="button" class="tm_tag_del" data-tag-key="${escapeHtml(id)}" data-tag="${e}" aria-label="Remove ${e}">✕</button></span>`;
       })
       .join("");
 
   // Editor body revealed under an open row: removable pills + an add affordance
   // (the pills area re-renders on edit; the add area holds the button/input).
   const tagEditorHTML = (id) => {
-    if (!/^\d{12}$/.test(id || "")) return "";
+    if (!isTagKey(id)) return "";
     return (
       `<div class="tm_tag_pills">${tagPillsHTML(id)}</div>` +
-      `<div class="tm_tag_addwrap"><button type="button" class="tm_tag_add" data-account-id="${escapeHtml(id)}"><span class="tm_tag_plus">+</span> tag</button></div>`
+      `<div class="tm_tag_addwrap"><button type="button" class="tm_tag_add" data-tag-key="${escapeHtml(id)}"><span class="tm_tag_plus">+</span> tag</button></div>`
     );
   };
 
-  // Tags are per-account, so refresh the chip + pills on EVERY role row of the
-  // account, and re-run the filter so an active tag/text search stays accurate.
-  // Repaint one account-tag chip / editor-pills node in place. Shared by the
-  // inline-edit path (one account) and the bulk-edit path (every account).
+  // Repaint one tag chip / editor-pills node in place. Shared by the inline-edit
+  // path (one account + role) and the bulk-edit path (every row).
   const paintTagChip = (chip) => {
-    const id = chip.getAttribute("data-account-id");
+    const id = chip.getAttribute("data-tag-key");
     chip.classList.toggle("tm_no_tags", AccountTagsManager.tagsFor(id).length === 0);
     chip.innerHTML = tagChipInner(id);
   };
   const paintTagPills = (pillsEl) => {
     const editor = pillsEl.closest(".tm_tag_editor");
-    if (editor) pillsEl.innerHTML = tagPillsHTML(editor.getAttribute("data-account-id"));
+    if (editor) pillsEl.innerHTML = tagPillsHTML(editor.getAttribute("data-tag-key"));
   };
-  const updateTagUIForAccount = (id) => {
-    if (!/^\d{12}$/.test(id || "")) return;
-    document.querySelectorAll(`.tm_tag_chip[data-account-id="${id}"]`).forEach(paintTagChip);
-    document.querySelectorAll(`.tm_tag_editor[data-account-id="${id}"] .tm_tag_pills`).forEach(paintTagPills);
+  // Refresh every row showing this account + role (a role can also appear as a
+  // jump row), then re-run the filter so an active tag/text search stays accurate.
+  const updateTagUIForKey = (id) => {
+    if (!isTagKey(id)) return;
+    document.querySelectorAll(".tm_tag_chip[data-tag-key]").forEach((c) => {
+      if (c.getAttribute("data-tag-key") === id) paintTagChip(c);
+    });
+    document.querySelectorAll(".tm_tag_editor[data-tag-key]").forEach((ed) => {
+      const pills = ed.getAttribute("data-tag-key") === id && ed.querySelector(".tm_tag_pills");
+      if (pills) paintTagPills(pills);
+    });
     renderTagFilterRow();
     FilterManager.applyFilters(true);
   };
@@ -1876,7 +1986,7 @@ import {
     input.type = "text";
     input.className = "tm_tag_input";
     input.setAttribute("list", "tm_tag_vocab");
-    input.setAttribute("data-account-id", id);
+    input.setAttribute("data-tag-key", id);
     input.setAttribute("placeholder", "tag…");
     input.setAttribute("aria-label", "Add a tag");
     return input;
@@ -1885,14 +1995,14 @@ import {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "tm_tag_add";
-    b.setAttribute("data-account-id", id);
+    b.setAttribute("data-tag-key", id);
     b.innerHTML = '<span class="tm_tag_plus">+</span> tag';
     return b;
   };
   // Turn an "+ tag" button into a focused, autocompleted input (one action).
   const openTagInput = (addBtn) => {
     populateTagVocab();
-    const input = makeTagInput(addBtn.getAttribute("data-account-id"));
+    const input = makeTagInput(addBtn.getAttribute("data-tag-key"));
     addBtn.replaceWith(input);
     input.focus();
     return input;
@@ -2242,7 +2352,8 @@ import {
     const $container = $(`.tm_button_group[data-filter-group="${groupKey}"]`);
     if (!$container.length) return;
     $container.find(".tm_filter_button").remove();
-    const buttons = (entries || []).map((e) => {
+    const ordered = ChipOrderManager.apply(groupKey, entries || [], (e) => String(e.id));
+    const buttons = ordered.map((e) => {
       const safeLabel = escapeHtml(e.label || e.id);
       const safeId    = escapeHtml(e.id);
       const safeColor = (e.color && /^#[0-9a-fA-F]{3,8}$/.test(e.color)) ? e.color : "#adb5bd";
@@ -2261,6 +2372,7 @@ import {
     }
     refreshCachedElements();
     updateFilterRowVisibility(groupKey);
+    scheduleFitFilterRows();
   };
 
   // Re-render every configurable filter row from its current cache.
@@ -2347,9 +2459,11 @@ import {
     const accountName = $role.find(".tm_account_name").text().toLowerCase();
     const accountId = $role.find(".tm_account_id").text().toLowerCase();
     const roleName = $role.find(".tm_role_name").text().toLowerCase();
-    // Account tags join the searchable text, so "palo alto" finds a tagged
-    // account even when the name/id/role don't contain it.
-    const tags = AccountTagsManager.tagsFor(accountId).join(" ").toLowerCase();
+    // Tags join the searchable text, so "palo alto" finds a tagged role even
+    // when the name/id/role don't contain it. Tags belong to the account + role.
+    const tagKey = $role.find(".tm_tag_chip").attr("data-tag-key") || "";
+    const rowTagList = AccountTagsManager.tagsFor(tagKey);
+    const tags = rowTagList.join(" ").toLowerCase();
     const fullText = `${accountName} ${accountId} ${roleName} ${tags}`;
     const roleArn = $role.find(".tm_signin_button").data("role-arn");
     const isJumpRow = $role.attr("data-jump") === "1";
@@ -2447,10 +2561,9 @@ import {
       if (!activeFilters.source.includes(isJumpRow ? "jump" : "direct")) return false;
     }
 
-    // Account-tag filters — the row's account must carry at least one active tag.
+    // Tag filters — the row's account + role must carry at least one active tag.
     if (activeFilters.tag.length > 0) {
-      const rowTags = AccountTagsManager.tagsFor(accountId);
-      if (!activeFilters.tag.some((t) => rowTags.includes(t))) return false;
+      if (!activeFilters.tag.some((t) => rowTagList.includes(t))) return false;
     }
 
     // Special "show" filters: built-in Favorites/Recent + any user-defined
@@ -2523,6 +2636,8 @@ import {
 
       // A saved-view chip lights up only while the live view still matches it.
       ShortcutsManager.refreshActive();
+      // Active chips must stay in view; re-fold rows whose actives changed.
+      scheduleFitFilterRows();
 
       if (filtersActive && !silent) {
         showToast(
@@ -2554,6 +2669,7 @@ import {
       // Filters are off again: drop the body marker drag-and-drop watches.
       document.body.classList.remove("tm_filters_active");
       applyEnvironmentStyling();
+      scheduleFitFilterRows();
 
       showToast("All filters cleared", "info", CONFIG.TOAST_DURATION_SHORT);
     },
@@ -2925,6 +3041,23 @@ import {
   // today's list (callers skip the rest first). The service worker opens one
   // tab per entry, each of which posts its own sign-in, so the picker stays
   // put. `tag` names the Chrome tab group the tabs gather in.
+  // How long ago the IdP issued this page's SAML response, in ms (null when it
+  // can't be read). AWS accepts a response for 5 minutes, so a picker left
+  // open longer can't sign anything in — every tab would land on AWS's
+  // "Token must be redeemed within 5 minutes" page. Read locally, never sent.
+  const samlResponseAgeMs = () => {
+    try {
+      const input = document.querySelector('#saml_form input[name="SAMLResponse"]');
+      const xml = input ? atob(String(input.value || "").replace(/\s+/g, "")) : "";
+      const m = xml.match(/IssueInstant="([^"]+)"/);
+      const t = m ? Date.parse(m[1]) : NaN;
+      return Number.isFinite(t) ? Date.now() - t : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  const SAML_FRESH_MS = 4.5 * 60 * 1000;
+
   const launchSigninTabs = async (tabs, { tag = "" } = {}) => {
     const form = document.getElementById("saml_form");
     if (!form) throw new Error("the role picker's sign-in form is missing");
@@ -2957,8 +3090,6 @@ import {
         n
       );
     }
-    for (const t of tabs) await RecentRolesManager.recordSignIn(t.roleArn);
-
     const res = await new Promise((resolve) => {
       try {
         chrome.runtime.sendMessage(
@@ -2972,6 +3103,7 @@ import {
     if (!res || !res.ok) {
       throw new Error((res && res.error) || "the extension's background worker didn't answer");
     }
+    for (const t of tabs) await RecentRolesManager.recordSignIn(t.roleArn);
     return res.opened;
   };
 
@@ -2984,9 +3116,6 @@ import {
   // While a set is previewed: { id, arns: Set<roleArn> }. matchesFilters hides
   // every row whose role isn't in it.
   let setPreview = null;
-  // The Sets column shows the most recently used few; "More" shows the rest.
-  const SETS_SHOWN = 5;
-  let setsExpanded = false;
 
   const newLaunchSetId = () => {
     const bytes = new Uint8Array(6);
@@ -3036,11 +3165,26 @@ import {
       const n = String(name || "").trim().toLowerCase();
       return launchSetsCache.find((s) => s.id !== exceptId && s.name.toLowerCase() === n) || null;
     },
-    // Most recently opened first, then by name.
+    // The user's order (dragged in the Launch Sets window); new sets start at the top.
     ordered() {
-      return [...launchSetsCache].sort(
-        (a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || a.name.localeCompare(b.name)
-      );
+      return launchSetsCache.slice();
+    },
+    // Sets in use: what the Sets column shows. Archived ones live only in the
+    // Launch Sets window until restored.
+    active() {
+      return launchSetsCache.filter((s) => !s.archived);
+    },
+    archived() {
+      return launchSetsCache.filter((s) => s.archived);
+    },
+    async setArchived(id, archived) {
+      const set = this.find(id);
+      if (!set) return false;
+      const next = { ...set };
+      if (archived) next.archived = true;
+      else delete next.archived;
+      if (archived && setPreview && setPreview.id === id) endSetPreview();
+      return this.upsert(next);
     },
     async saveAll(list) {
       const clean = normalizeLaunchSets(list);
@@ -3059,7 +3203,19 @@ import {
       const i = launchSetsCache.findIndex((s) => s.id === set.id);
       const list = launchSetsCache.slice();
       if (i >= 0) list[i] = set;
-      else list.push(set);
+      else {
+        if (list.length >= LAUNCH_SETS_MAX) {
+          showToast(`You have ${LAUNCH_SETS_MAX} sets, the most there can be. Delete some (archived ones too) first.`, "error", CONFIG.TOAST_DURATION_LONG);
+          return false;
+        }
+        list.unshift(set);
+      }
+      return this.saveAll(list);
+    },
+    async reorder(ids) {
+      const byId = new Map(launchSetsCache.map((s) => [s.id, s]));
+      const list = ids.map((id) => byId.get(id)).filter(Boolean);
+      launchSetsCache.forEach((s) => { if (!list.includes(s)) list.push(s); });
       return this.saveAll(list);
     },
     async remove(id) {
@@ -3073,32 +3229,483 @@ import {
     render() {
       const $list = $("#tm_sets_list");
       if (!$list.length) return;
-      const sets = this.ordered();
+      const sets = this.active();
       if (!sets.length) {
         $list.html(
           `<div class="tm_sets_empty">Save the console tabs a ticket needs, then open them all in one click.</div>`
         );
         return;
       }
-      const shown = setsExpanded ? sets : sets.slice(0, SETS_SHOWN);
-      const lines = shown.map((s) => {
+      const lines = sets.map((s) => {
         const active = setPreview && setPreview.id === s.id;
         const id = escapeHtml(s.id);
         const n = s.tabs.length;
         return `
-          <div class="tm_set_line">
+          <div class="tm_set_line${active ? " tm_set_line_active" : ""}">
             <a href="#" class="tm_set_chip${active ? " active" : ""}" data-set-id="${id}" title="Show this set's roles in the listing">
               <span class="tm_set_name">${escapeHtml(s.name)}</span>
               <span class="tm_set_count">${plural(n, "tab")}</span>
             </a>
-            <button type="button" class="tm_set_open" data-set-id="${id}" title="Open all ${plural(n, "tab")}">Open ↗</button>
+            <button type="button" class="tm_set_open tm_set_open_icon" data-set-id="${id}" title="Open all ${plural(n, "tab")}" aria-label="Open ${escapeHtml(s.name)}: ${plural(n, "tab")}">↗</button>
           </div>`;
       }).join("");
-      const more = sets.length > SETS_SHOWN
-        ? `<a href="#" id="tm_sets_more">${setsExpanded ? "Fewer" : `More (${sets.length - SETS_SHOWN})`}</a>`
-        : "";
-      $list.html(lines + more);
+      $list.html(lines + `<a href="#" id="tm_sets_all" title="Open, edit or delete any set">Manage sets ›</a>`);
+      fitSetsList();
+      renderSetsManagerBody();
     },
+  };
+
+  // The Sets column never makes the filter panel taller. Each set lines up with
+  // a filter row: the header sits beside the first row, one set beside each
+  // row after it (a wrapped row still counts once), and "Manage sets" beside
+  // Shortcuts. Sets beyond that — in the user's order, a previewed set always
+  // kept — are one click away in the manager, which the side menu also opens.
+  // With too few filter rows to line up against, it fits by height instead.
+  const fitSetsList = () => {
+    const list = document.getElementById("tm_sets_list");
+    const all = document.getElementById("tm_sets_all");
+    const inner = list && list.closest(".tm_sets_inner");
+    if (!list || !all || !inner) return;
+    const lines = [...list.querySelectorAll(".tm_set_line")];
+    const total = lines.length;
+    const label = (hidden) => { all.textContent = hidden ? `All ${total} sets (${hidden} more) ›` : "Manage sets ›"; };
+    [...lines, all].forEach((el) => { el.style.removeProperty("top"); });
+    lines.forEach((l) => l.classList.remove("tm_set_line_hidden"));
+
+    const rows = [...document.querySelectorAll(".tm_left_column .tm_frow")].filter((r) => r.offsetParent && r.offsetHeight);
+    const shortcuts = rows.find((r) => r.classList.contains("tm_frow_shortcuts"));
+    const slots = rows.slice(1).filter((r) => r !== shortcuts);
+
+    if (slots.length < 2) {
+      // Fit by height, in flow.
+      list.classList.remove("tm_sets_aligned");
+      label(0);
+      const hideable = lines.filter((l) => !l.classList.contains("tm_set_line_active")).reverse();
+      let hidden = 0;
+      while (list.scrollHeight > list.clientHeight + 1 && hidden < hideable.length && total - hidden > 1) {
+        hideable[hidden++].classList.add("tm_set_line_hidden");
+        label(hidden);
+      }
+      return;
+    }
+
+    list.classList.add("tm_sets_aligned");
+    let shown = lines.slice(0, slots.length);
+    const active = lines.find((l) => l.classList.contains("tm_set_line_active"));
+    if (active && !shown.includes(active)) shown = [...shown.slice(0, -1), active];
+    lines.forEach((l) => { if (!shown.includes(l)) l.classList.add("tm_set_line_hidden"); });
+    label(total - shown.length);
+
+    // Centre each element on the first line of its row.
+    const base = list.getBoundingClientRect().top;
+    const place = (el, row) => {
+      const first = row.querySelector(".tm_filter_button") || row.querySelector(".tm_frow_label") || row;
+      const r = first.getBoundingClientRect();
+      const top = r.top - base + (r.height - el.offsetHeight) / 2;
+      el.style.setProperty("top", `${Math.round(top)}px`, "important");
+    };
+    shown.forEach((l, i) => place(l, slots[i]));
+    if (shortcuts) place(all, shortcuts);
+    else all.style.setProperty("top", `${Math.round(slots[slots.length - 1].getBoundingClientRect().bottom - base + 6)}px`, "important");
+  };
+
+  // --- Filter rows: one line each, the rest behind a "+N" chip ---
+  // Every filter row stays a single line so the panel never grows as tags or
+  // classifiers pile up. Chips that don't fit fold into "+N" (active chips are
+  // never folded away while there's room — the chip says "· N on" if they must
+  // be). "+N" or the row's label opens a list of the whole row: click to
+  // toggle a filter, drag to reorder; the order is kept per row.
+  const filterRowGroupKey = (row) => {
+    if (row.querySelector(".tm_shortcuts_section")) return "show";
+    const g = row.querySelector(".tm_button_group[data-filter-group]");
+    return g ? g.getAttribute("data-filter-group") : "";
+  };
+  const filterRowChips = (row) =>
+    [...row.querySelectorAll(".tm_button_group > .tm_filter_button")];
+
+  const fitFilterRow = (row) => {
+    const group = row.querySelector(".tm_button_group");
+    if (!group) return;
+    const chips = filterRowChips(row);
+    chips.forEach((c) => { c.classList.remove("tm_chip_overflow"); c.setAttribute("draggable", "true"); });
+    const oldMore = group.querySelector(":scope > .tm_more_chip");
+    if (oldMore) oldMore.remove();
+    if (!chips.length || !row.offsetParent) return;
+    const oneLine = (els) => {
+      const shown = els.filter((e) => !e.classList.contains("tm_chip_overflow"));
+      return shown.every((e) => e.offsetTop === shown[0].offsetTop);
+    };
+    if (oneLine(chips)) return;
+
+    const more = document.createElement("a");
+    more.href = "#";
+    more.className = "tm_more_chip";
+    more.setAttribute("role", "button");
+    more.setAttribute("aria-haspopup", "true");
+    group.appendChild(more);
+    const hidden = [];
+    const label = () => {
+      const on = hidden.filter((c) => c.classList.contains("active")).length;
+      more.textContent = `+${hidden.length}${on ? ` · ${on} on` : ""}`;
+      more.classList.toggle("tm_more_hot", on > 0);
+      more.title = `${hidden.length} more — click to show them. Drag chips to reorder; drop one here to tuck it away.`;
+    };
+    // Fold from the end: inactive chips first, active ones only if they must.
+    const order = [
+      ...chips.filter((c) => !c.classList.contains("active")).reverse(),
+      ...chips.filter((c) => c.classList.contains("active")).reverse(),
+    ];
+    for (const c of order) {
+      if (hidden.length === chips.length - 1) break;
+      c.classList.add("tm_chip_overflow");
+      hidden.push(c);
+      label();
+      if (oneLine([...chips, more])) break;
+    }
+  };
+
+  let fitRowsQueued = false;
+  const fitFilterRows = () => {
+    fitRowsQueued = false;
+    document.querySelectorAll(".tm_left_column .tm_frow").forEach(fitFilterRow);
+    fitSetsList();
+    if (chipPop) renderChipPop();
+  };
+  scheduleFitFilterRows = () => {
+    if (fitRowsQueued) return;
+    fitRowsQueued = true;
+    requestAnimationFrame(fitFilterRows);
+  };
+
+  // "+N" opens only the chips that didn't fit, drawn as the same chips — like
+  // the bookmarks bar's overflow. Click one to toggle it. Reorder by dragging
+  // chips along the row; drag one out of "+N" onto the row to keep it in view,
+  // or a row chip onto "+N" to tuck it away. The order is kept per row.
+  let chipPop = null; // { row, group, anchor }
+  const closeChipPop = () => {
+    chipPop = null;
+    const el = document.getElementById("tm_chip_pop");
+    if (el) el.remove();
+    document.querySelectorAll(".tm_more_chip[aria-expanded]").forEach((m) => m.setAttribute("aria-expanded", "false"));
+  };
+  const renderChipPop = () => {
+    if (!chipPop || !chipPop.row.isConnected) return closeChipPop();
+    const more = chipPop.row.querySelector(".tm_more_chip");
+    const hidden = filterRowChips(chipPop.row).filter((c) => c.classList.contains("tm_chip_overflow"));
+    if (!more || !hidden.length) return closeChipPop();
+    chipPop.anchor = more;
+    more.setAttribute("aria-expanded", "true");
+    let pop = document.getElementById("tm_chip_pop");
+    const q = pop ? String((pop.querySelector("#tm_chip_pop_filter") || {}).value || "") : "";
+    const hadFocus = !!document.activeElement && document.activeElement.id === "tm_chip_pop_filter";
+    if (!pop) {
+      pop = document.createElement("div");
+      pop.id = "tm_chip_pop";
+      // Clicks here are handled below; keep them away from the toolbar's
+      // delegated chip handler, which the copies would otherwise trigger.
+      pop.addEventListener("click", onChipPopClick);
+      document.body.appendChild(pop);
+    }
+    pop.innerHTML = `${hidden.length > 8 ? `<input type="text" id="tm_chip_pop_filter" placeholder="Filter" autocomplete="off" value="${escapeHtml(q)}">` : ""}<div class="tm_chip_pop_chips"></div>`;
+    const box = pop.querySelector(".tm_chip_pop_chips");
+    for (const c of hidden) {
+      const copy = c.cloneNode(true);
+      copy.classList.remove("tm_chip_overflow");
+      copy.querySelectorAll(".tm_shortcut_del").forEach((n) => n.remove());
+      copy.removeAttribute("data-group");
+      copy.setAttribute("data-pop-filter", c.getAttribute("data-filter") || "");
+      copy.removeAttribute("data-filter");
+      copy.setAttribute("draggable", "true");
+      box.appendChild(copy);
+    }
+    applyChipPopFilter();
+    const r = more.getBoundingClientRect();
+    const left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12);
+    pop.style.setProperty("top", `${r.bottom + window.scrollY + 6}px`, "important");
+    pop.style.setProperty("left", `${Math.max(8, left) + window.scrollX}px`, "important");
+    const input = pop.querySelector("#tm_chip_pop_filter");
+    if (input && hadFocus) { input.focus(); input.setSelectionRange(q.length, q.length); }
+  };
+  const applyChipPopFilter = () => {
+    const pop = document.getElementById("tm_chip_pop");
+    const input = pop && pop.querySelector("#tm_chip_pop_filter");
+    const q = input ? input.value.trim().toLowerCase() : "";
+    if (!pop) return;
+    pop.querySelectorAll("[data-pop-filter]").forEach((c) => {
+      c.classList.toggle("tm_chip_pop_off", !!q && !c.textContent.toLowerCase().includes(q));
+    });
+  };
+  function onChipPopClick(e) {
+    e.stopPropagation();
+    const copy = e.target.closest && e.target.closest("[data-pop-filter]");
+    if (!copy || !chipPop) return;
+    e.preventDefault();
+    const id = copy.getAttribute("data-pop-filter");
+    const chip = filterRowChips(chipPop.row).find((c) => c.getAttribute("data-filter") === id);
+    if (chip) chip.click();
+    fitFilterRows();
+  }
+  const openChipPop = (row) => {
+    if (chipPop && chipPop.row === row) return closeChipPop();
+    closeChipPop();
+    chipPop = { row, group: filterRowGroupKey(row), anchor: null };
+    renderChipPop();
+    const input = document.getElementById("tm_chip_pop_filter");
+    if (input) input.focus();
+  };
+  // Re-render one row after its order changed, keeping its active chips lit.
+  const rerenderFilterRow = (group) => {
+    if (group === "show") ShortcutsManager.updateSection();
+    else if (group === "tag") renderTagFilterRow();
+    else if (group === "org") renderFilterRow("org", OrganizationsManager.entries());
+    else if (group === "env") renderFilterRow("env", EnvironmentsManager.entries());
+    else if (group === "type") renderFilterRow("type", AccountTypesManager.entries());
+    else if (group === "role") renderFilterRow("role", RolesManager.entries());
+    else if (group === "source") {
+      const g = document.querySelector('.tm_button_group[data-filter-group="source"]');
+      if (g) orderByIds([...g.querySelectorAll(".tm_filter_button")], ChipOrderManager.idsFor("source"), (c) => c.getAttribute("data-filter"))
+        .forEach((c) => g.appendChild(c));
+    }
+    if (group === "show") ShortcutsManager.refreshActive();
+    document.querySelectorAll(`.tm_filter_button[data-group="${group}"]`).forEach((b) => {
+      if (group !== "show") b.classList.toggle("active", (activeFilters[group] || []).includes(b.getAttribute("data-filter")));
+      else if (!b.classList.contains("tm_custom_shortcut")) b.classList.toggle("active", (activeFilters.show || []).includes(b.getAttribute("data-filter")));
+    });
+    refreshCachedElements();
+    fitFilterRows();
+  };
+
+  $("body").on("click", ".tm_more_chip", function (e) {
+    e.preventDefault();
+    const row = this.closest(".tm_frow");
+    if (row) openChipPop(row);
+  });
+  $("body").on("input", "#tm_chip_pop_filter", applyChipPopFilter);
+  document.addEventListener("pointerdown", (e) => {
+    if (!chipPop || !e.target.closest) return;
+    if (e.target.closest("#tm_chip_pop, .tm_more_chip")) return;
+    closeChipPop();
+  }, true);
+
+  // --- Dragging chips (native drag and drop, like the bookmarks bar) ---
+  // A drag carries its row and chip id. Over the row a bar marks where it
+  // will land among the visible chips; over "+N" or its pop-out it goes to
+  // the overflow (in the pop-out, before the chip it's dropped on).
+  let chipDrag = null; // { row, group, id }
+  const chipDropMark = () => {
+    let m = document.getElementById("tm_chip_drop_mark");
+    if (!m) {
+      m = document.createElement("div");
+      m.id = "tm_chip_drop_mark";
+      document.body.appendChild(m);
+    }
+    return m;
+  };
+  const clearChipDrop = () => {
+    const m = document.getElementById("tm_chip_drop_mark");
+    if (m) m.remove();
+    document.querySelectorAll(".tm_chip_drop_into").forEach((el) => el.classList.remove("tm_chip_drop_into"));
+  };
+  // Where a drop at clientX lands in the row: the id of the visible chip to
+  // go before, or "" for after the last visible chip.
+  const rowDropTarget = (row, x) => {
+    const shown = filterRowChips(row).filter((c) => !c.classList.contains("tm_chip_overflow"));
+    for (const c of shown) {
+      const r = c.getBoundingClientRect();
+      if (x < r.left + r.width / 2) return { before: c.getAttribute("data-filter"), rect: r, side: "left" };
+    }
+    const last = shown[shown.length - 1];
+    return { before: "", rect: last ? last.getBoundingClientRect() : null, side: "right" };
+  };
+  const saveChipMove = async (row, group, id, beforeId, toOverflow, fromOverflow) => {
+    const ids = filterRowChips(row).map((c) => c.getAttribute("data-filter")).filter((x) => x !== id);
+    let at;
+    if (beforeId) at = ids.indexOf(beforeId);
+    else if (toOverflow) at = ids.length;
+    else if (fromOverflow) {
+      // Out of "+N" to the row's end: take the last visible chip's place, so
+      // that one folds instead (after it would fold straight back).
+      const shown = filterRowChips(row).filter((c) => !c.classList.contains("tm_chip_overflow") && c.getAttribute("data-filter") !== id);
+      at = shown.length ? ids.indexOf(shown[shown.length - 1].getAttribute("data-filter")) : 0;
+    }
+    else {
+      // After the last visible chip = before the first folded one.
+      const firstHidden = filterRowChips(row).find((c) => c.classList.contains("tm_chip_overflow") && c.getAttribute("data-filter") !== id);
+      at = firstHidden ? ids.indexOf(firstHidden.getAttribute("data-filter")) : ids.length;
+    }
+    if (at < 0) at = ids.length;
+    ids.splice(at, 0, id);
+    if (await ChipOrderManager.setOrder(group, ids)) rerenderFilterRow(group);
+  };
+
+  document.addEventListener("dragstart", (e) => {
+    const el = e.target.closest && e.target.closest(".tm_left_column .tm_frow .tm_filter_button, #tm_chip_pop [data-pop-filter]");
+    if (!el) return;
+    const inPop = el.hasAttribute("data-pop-filter");
+    const row = inPop ? chipPop && chipPop.row : el.closest(".tm_frow");
+    if (!row) return;
+    chipDrag = { row, group: filterRowGroupKey(row), id: el.getAttribute(inPop ? "data-pop-filter" : "data-filter"), fromOverflow: inPop };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", el.textContent.trim());
+    el.classList.add("tm_chip_dragging");
+  });
+  document.addEventListener("dragend", (e) => {
+    if (e.target.classList) e.target.classList.remove("tm_chip_dragging");
+    chipDrag = null;
+    clearChipDrop();
+  });
+  document.addEventListener("dragover", (e) => {
+    if (!chipDrag) return;
+    const t = e.target.closest && e.target;
+    const overMore = t && t.closest(".tm_more_chip");
+    const overPop = t && t.closest("#tm_chip_pop");
+    const overRow = t && t.closest(".tm_frow");
+    clearChipDrop();
+    if ((overMore && overMore.closest(".tm_frow") === chipDrag.row) || (overPop && chipPop && chipPop.row === chipDrag.row)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const target = overPop && t.closest("[data-pop-filter]");
+      if (target) {
+        const r = target.getBoundingClientRect();
+        const m = chipDropMark();
+        m.style.setProperty("left", `${r.left + window.scrollX - 5}px`, "important");
+        m.style.setProperty("top", `${r.top + window.scrollY}px`, "important");
+        m.style.setProperty("height", `${r.height}px`, "important");
+      } else {
+        (overMore || overPop).classList.add("tm_chip_drop_into");
+      }
+      return;
+    }
+    if (overRow === chipDrag.row) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const { rect, side } = rowDropTarget(overRow, e.clientX);
+      if (!rect) return;
+      const m = chipDropMark();
+      const x = side === "left" ? rect.left - 5 : rect.right + 3;
+      m.style.setProperty("left", `${x + window.scrollX}px`, "important");
+      m.style.setProperty("top", `${rect.top + window.scrollY}px`, "important");
+      m.style.setProperty("height", `${rect.height}px`, "important");
+    }
+  });
+  document.addEventListener("drop", (e) => {
+    if (!chipDrag) return;
+    const { row, group, id, fromOverflow } = chipDrag;
+    const t = e.target.closest && e.target;
+    const overMore = t && t.closest(".tm_more_chip");
+    const overPop = t && t.closest("#tm_chip_pop");
+    const overRow = t && t.closest(".tm_frow");
+    clearChipDrop();
+    if ((overMore && overMore.closest(".tm_frow") === row) || (overPop && chipPop && chipPop.row === row)) {
+      e.preventDefault();
+      const target = overPop && t.closest("[data-pop-filter]");
+      const before = target ? target.getAttribute("data-pop-filter") : "";
+      saveChipMove(row, group, id, before && before !== id ? before : "", true);
+    } else if (overRow === row) {
+      e.preventDefault();
+      const { before } = rowDropTarget(row, e.clientX);
+      if (before !== id) saveChipMove(row, group, id, before, false, fromOverflow);
+    }
+    chipDrag = null;
+  });
+  window.addEventListener("resize", () => { closeChipPop(); scheduleFitFilterRows(); });
+
+  // --- Sets manager (side menu "Launch Sets", or "Manage sets" under the column) ---
+  const setLastUsedText = (t) => {
+    if (!t) return "never opened";
+    const d = new Date(t);
+    return `opened ${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+  };
+
+  const renderSetsManagerBody = () => {
+    const $m = $("#tm_sets_manage_modal");
+    if (!$m.length) return;
+    const rowHTML = (s, archived) => {
+      const id = escapeHtml(s.id);
+      const roles = launchSetRoleCount(s);
+      const meta = `${plural(s.tabs.length, "tab")} · ${plural(roles, "role")} · ${setLastUsedText(s.lastUsed)}`;
+      const acts = archived
+        ? `<button type="button" class="tm_sv_btn" data-act="unarchive" title="Put it back in the Sets column">Restore</button>
+            <button type="button" class="tm_sv_btn tm_set_delete" data-act="delete">Delete</button>`
+        : `<button type="button" class="tm_sv_btn" data-act="show" title="Show this set's roles in the listing">Show</button>
+            <button type="button" class="tm_sv_btn" data-act="edit">Edit</button>
+            <button type="button" class="tm_sv_btn" data-act="archive" title="Keep it, but out of the Sets column">Archive</button>
+            <button type="button" class="tm_sv_btn tm_set_delete" data-act="delete">Delete</button>
+            <button type="button" class="tm_sv_btn tm_set_primary" data-act="open" title="Open all ${plural(s.tabs.length, "tab")}">Open ↗</button>`;
+      return `
+        <div class="tm_setm_row${archived ? " tm_setm_row_archived" : ""}" data-set-id="${id}"${archived ? "" : ` title="Drag to reorder"`}>
+          <span class="tm_setm_grip" aria-hidden="true">${archived ? "" : "⋮⋮"}</span>
+          <span class="tm_setm_name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+          <span class="tm_setm_meta">${meta}</span>
+          <span class="tm_setm_acts">${acts}</span>
+        </div>`;
+    };
+    const active = LaunchSetsManager.active();
+    const archived = LaunchSetsManager.archived();
+    $m.find(".tm_setm_list").html(
+      active.map((s) => rowHTML(s, false)).join("") ||
+        `<div class="tm_setm_empty">${archived.length ? "No sets in use. Restore one below, or save a new one." : "No sets yet. Save the current view or your open console tabs to make one."}</div>`
+    );
+    const $arch = $m.find(".tm_setm_archive");
+    if ($arch[0]) $arch[0].style.setProperty("display", archived.length ? "block" : "none", "important");
+    $arch.find(".tm_setm_archive_toggle").text(`${setsArchiveOpen ? "▾" : "▸"} Archived (${archived.length})`);
+    $arch.find(".tm_setm_archived_list").html(setsArchiveOpen ? archived.map((s) => rowHTML(s, true)).join("") : "");
+  };
+  let setsArchiveOpen = false;
+
+  const showSetsManagerModal = () => {
+    $("#tm_sets_manage_modal").remove();
+    const footer = `
+      <span><button type="button" class="tm_sv_btn" data-act="new-view">Save current view…</button>
+      <button type="button" class="tm_sv_btn" data-act="new-tabs">Save open tabs…</button></span>
+      <button type="button" class="tm_sv_btn" data-act="close">Close</button>`;
+    $("body").append(modalShell(
+      "tm_sets_manage_modal",
+      "Launch Sets",
+      "Each set opens the console tabs a ticket needs in one click. Drag to reorder; the Sets column shows them in this order, as many as fit. Archive a set you're done with to keep it without it taking a place in the column.",
+      `<div class="tm_setm_list" id="tm_setm_list"></div>
+       <div class="tm_setm_archive">
+         <button type="button" class="tm_setm_archive_toggle"></button>
+         <div class="tm_setm_archived_list"></div>
+       </div>`,
+      footer,
+      760
+    ));
+    const $m = $("#tm_sets_manage_modal");
+    renderSetsManagerBody();
+    $m.on("click", function (e) { if (e.target === this) $m.remove(); });
+    $m.find('[data-act="close"]').on("click", () => $m.remove());
+    $m.find('[data-act="new-view"]').on("click", () => showSaveViewModal());
+    $m.find('[data-act="new-tabs"]').on("click", () => showSaveOpenTabsModal());
+    $m.on("click", ".tm_setm_archive_toggle", () => {
+      setsArchiveOpen = !setsArchiveOpen;
+      renderSetsManagerBody();
+    });
+    $m.on("click", ".tm_setm_row [data-act]", async function () {
+      const id = this.closest(".tm_setm_row").getAttribute("data-set-id");
+      const act = this.getAttribute("data-act");
+      if (act === "archive" || act === "unarchive") {
+        const set = LaunchSetsManager.find(id);
+        if (set && (await LaunchSetsManager.setArchived(id, act === "archive"))) {
+          showToast(act === "archive" ? `Archived ${set.name}.` : `Restored ${set.name}.`, "info", CONFIG.TOAST_DURATION);
+        }
+        return;
+      }
+      if (act === "edit") return showEditSetModal(id);
+      if (act === "show") { $m.remove(); return startSetPreview(id); }
+      if (act === "open") { $m.remove(); return openLaunchSet(id); }
+      if (act === "delete") {
+        if (!this.classList.contains("tm_set_delete_armed")) {
+          this.classList.add("tm_set_delete_armed");
+          this.textContent = "Click again";
+          return;
+        }
+        const set = LaunchSetsManager.find(id);
+        if (set && (await LaunchSetsManager.remove(id))) {
+          showToast(`Deleted ${set.name}.`, "info", CONFIG.TOAST_DURATION);
+        }
+      }
+    });
   };
 
   // --- Preview: show only a set's roles, with a bar to open or edit it ---
@@ -3122,6 +3729,18 @@ import {
     }
   };
 
+  // A set's tabs are grouped like any other sign-in, by the toolbar's Tabs
+  // setting. Only in Custom tag mode does the set's own tab-group name apply
+  // (falling back to the toolbar tag).
+  const setGroupTag = (set) =>
+    tabGroupModeCache === "custom" ? set.group || tabGroupTagCache : "";
+  const setGroupingNote = (set) => {
+    if (tabGroupModeCache === "role") return "tabs grouped by role";
+    if (tabGroupModeCache === "org") return "tabs grouped by org";
+    const tag = setGroupTag(set);
+    return tag ? `tab group “${escapeHtml(tag)}”` : "no tab group";
+  };
+
   const renderSetBar = (set) => {
     $("#tm_set_bar").remove();
     if (!set) return;
@@ -3130,7 +3749,7 @@ import {
     const roles = launchSetRoleCount(set);
     const bits = [
       `${plural(set.tabs.length, "tab")} across ${plural(roles, "role")}`,
-      set.group ? `tab group “${escapeHtml(set.group)}”` : "no tab group",
+      setGroupingNote(set),
     ];
     if (missing) bits.push(`<span class="tm_set_bar_warn">${missing} not in today's role list</span>`);
     const bar = `
@@ -3291,9 +3910,19 @@ import {
       const ok = await confirmLaunchSet(set, ready, missing, sensitive, budget);
       if (!ok) return;
     }
+    // Checked after the confirmation too, since that can sit open a while.
+    const age = samlResponseAgeMs();
+    if (age !== null && age > SAML_FRESH_MS) {
+      showToast(
+        `This sign-in page is ${Math.floor(age / 60000)} minutes old, and AWS only accepts it for 5. Sign in again through your identity provider, then open ${set.name}.`,
+        "error",
+        8000
+      );
+      return;
+    }
     launchInFlight = true;
     try {
-      const opened = await launchSigninTabs(ready, { tag: set.group });
+      const opened = await launchSigninTabs(ready, { tag: setGroupTag(set) });
       showToast(`Opening ${plural(opened, "tab")} for ${set.name}…`, "info", CONFIG.TOAST_DURATION_LONG);
       await LaunchSetsManager.touch(id);
     } catch (err) {
@@ -3353,7 +3982,7 @@ import {
   const setNameFieldsHTML = (name, group) => `
     <div class="tm_set_fields">
       <label>Set name<input type="text" class="tm_set_name_input" maxlength="64" value="${escapeHtml(name)}" placeholder="e.g. OPS-1234" autocomplete="off"></label>
-      <label>Tab group<input type="text" class="tm_set_group_input" maxlength="64" value="${escapeHtml(group)}" placeholder="no tab group" autocomplete="off"></label>
+      <label title="Used when Tabs is set to Custom tag. Otherwise the set's tabs are grouped like any sign-in (by role, by org, or not at all).">Tab group (Custom tag mode)<input type="text" class="tm_set_group_input" maxlength="64" value="${escapeHtml(group)}" placeholder="no tab group" autocomplete="off"></label>
     </div>`;
 
   // Keep the tab-group field following the name until the user edits it.
@@ -3376,8 +4005,13 @@ import {
     const name = String($m.find(".tm_set_name_input").val() || "").trim();
     const group = String($m.find(".tm_set_group_input").val() || "").trim();
     if (!name) return { error: "Give the set a name." };
-    if (LaunchSetsManager.findByName(name, exceptId)) {
-      return { error: `There's already a set called “${name}”. Pick another name, or edit that set.` };
+    const clash = LaunchSetsManager.findByName(name, exceptId);
+    if (clash) {
+      return {
+        error: clash.archived
+          ? `There's an archived set called “${name}”. Pick another name, or restore it from Launch Sets in the side menu.`
+          : `There's already a set called “${name}”. Pick another name, or edit that set.`,
+      };
     }
     return { name, group };
   };
@@ -3580,7 +4214,8 @@ import {
       const names = readSetNames($m, set.id);
       if (names.error) return setModalError($m, names.error);
       if (!tabs.length) return setModalError($m, "A set needs at least one tab. Add one, or Delete the set.");
-      const saved = await LaunchSetsManager.upsert({ ...set, name: names.name, group: names.group, tabs });
+      const latest = LaunchSetsManager.find(set.id) || set;
+      const saved = await LaunchSetsManager.upsert({ ...latest, name: names.name, group: names.group, tabs });
       if (saved) {
         $m.remove();
         showToast(`Saved ${names.name}.`, "success", CONFIG.TOAST_DURATION);
@@ -3642,8 +4277,8 @@ import {
       return { ...t, roleArn, info, why };
     });
 
-    // Tabs by Chrome tab group, groups first. The group holding the most
-    // savable tabs starts ticked — usually the ticket's own group.
+    // Tabs by Chrome tab group, groups first. Every savable tab starts ticked
+    // (up to a set's limit); "only these" narrows to one group.
     const sections = new Map();
     rows.forEach((r, i) => {
       const key = r.groupId !== -1 ? `g${r.groupId}` : "none";
@@ -3652,13 +4287,18 @@ import {
     });
     const ordered = [...sections.values()].sort((a, b) => Number(b.grouped) - Number(a.grouped));
     const savable = (sec) => sec.idx.filter((i) => rows[i].roleArn).length;
-    const best = ordered.filter((sec) => sec.grouped).sort((a, b) => savable(b) - savable(a))[0];
-    const preselect = best && savable(best) ? new Set(best.idx) : new Set(rows.map((_, i) => i));
-    const name = best && savable(best) ? best.title : "";
+    const preselect = new Set(
+      ordered.flatMap((sec) => sec.idx).filter((i) => rows[i].roleArn).slice(0, LAUNCH_SET_MAX_TABS)
+    );
+    // Name it after the tab group only when every savable tab is in that one
+    // group and it's a name the user chose (Custom tag mode) — By role / By org
+    // titles like "123456789012 · Admin" make poor set names.
+    const withTabs = ordered.filter((sec) => savable(sec));
+    const name = tabGroupModeCache === "custom" && withTabs.length === 1 && withTabs[0].grouped ? withTabs[0].title : "";
 
     const rowHTML = (i) => {
       const r = rows[i];
-      const on = r.roleArn && preselect.has(i) && [...preselect].indexOf(i) < LAUNCH_SET_MAX_TABS;
+      const on = preselect.has(i);
       const color = r.info && r.info.env !== "default" ? EnvironmentsManager.colorFor(r.info.env) : "#ced4da";
       const who = r.info
         ? `${escapeHtml(r.info.accountName)} · ${escapeHtml(r.info.roleName)}`
@@ -3792,10 +4432,9 @@ import {
     if (this.disabled) return;
     openLaunchSet(this.getAttribute("data-set-id"));
   });
-  $("body").on("click", "#tm_sets_more", function (e) {
+  $("body").on("click", "#tm_sets_all, #tm_manage_launch_sets", function (e) {
     e.preventDefault();
-    setsExpanded = !setsExpanded;
-    LaunchSetsManager.render();
+    showSetsManagerModal();
   });
   $("body").on("click", "#tm_set_bar_close", function (e) {
     e.preventDefault();
@@ -3858,7 +4497,7 @@ import {
                         </div>
                     </div>
                 </div>
-                <div class="tm_sets_column" id="tm_sets_column">
+                <div class="tm_sets_column" id="tm_sets_column"><div class="tm_sets_inner">
                     <div class="tm_sets_head">
                         <span class="tm_frow_label">Sets</span>
                         <div class="tm_sets_new_wrap">
@@ -3870,7 +4509,7 @@ import {
                         </div>
                     </div>
                     <div id="tm_sets_list"></div>
-                </div>
+                </div></div>
                 <div class="tm_right_column">
                     <div id="tm_search_container">
                         <div id="tm_search_pop">
@@ -3970,7 +4609,8 @@ import {
                                 <div id="tm_sessions_rows"></div>
                                 <div id="tm_sessions_foot">
                                     <div id="tm_sessions_hint">Sign out a session to free a slot for a new sign-in.</div>
-                                    <button type="button" id="tm_sess_signout_all" title="Sign out of every AWS console session — needs a second click to confirm">Sign out all sessions</button>
+                                    <button type="button" id="tm_sess_signout_idle" title="Sign out of every session that has no console tab open — needs a second click to confirm" style="display: none;">Sign out idle</button>
+                                    <button type="button" id="tm_sess_signout_all" title="Sign out of every AWS console session and close their tabs — needs a second click to confirm">Sign out all sessions</button>
                                 </div>
                             </div>
                         </div>
@@ -3992,6 +4632,7 @@ import {
                 <a href="#" class="tm_action_button" id="tm_start_view">Start View: Off</a>
                 <div class="tm_menu_header">Configure</div>
                 <a href="#" class="tm_action_button" id="tm_manage_shortcuts">Shortcuts</a>
+                <a href="#" class="tm_action_button" id="tm_manage_launch_sets">Launch Sets</a>
                 <a href="#" class="tm_action_button" id="tm_manage_organizations">Organizations</a>
                 <a href="#" class="tm_action_button" id="tm_manage_environments">Environments</a>
                 <a href="#" class="tm_action_button" id="tm_manage_types">Account Types</a>
@@ -3999,7 +4640,7 @@ import {
                 <a href="#" class="tm_action_button" id="tm_manage_services">Services</a>
                 <a href="#" class="tm_action_button" id="tm_manage_regions">Regions</a>
                 <a href="#" class="tm_action_button" id="tm_manage_account_names">Account Names</a>
-                <a href="#" class="tm_action_button" id="tm_manage_account_tags">Account Tags</a>
+                <a href="#" class="tm_action_button" id="tm_manage_account_tags">Tags</a>
                 <a href="#" class="tm_action_button" id="tm_manage_assume_profiles">Jump Profiles</a>
                 <a href="#" class="tm_action_button" id="tm_manage_jump_dests">Jump Destinations</a>
                 <a href="#" class="tm_action_button" id="tm_general_settings">General Settings</a>
@@ -4348,11 +4989,15 @@ import {
             align-items: center !important; gap: 16px !important; padding-top: 8px !important;
         }
         #tm_sessions_hint { font-size: 12px !important; color: #8a9199 !important; flex: 1 !important; }
-        #tm_sess_signout_all {
+        #tm_sess_signout_all, #tm_sess_signout_idle {
             border: 1px solid #c0392b !important; color: #c0392b !important; background: #fff !important;
             border-radius: 4px !important; padding: 6px 12px !important; font-size: 12px !important;
             cursor: pointer !important; white-space: nowrap !important;
         }
+        #tm_sess_signout_idle:hover { background: #fbeae8 !important; }
+        #tm_sess_signout_idle.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
+        body.tm_theme_dark #tm_sess_signout_idle { background: #232830 !important; }
+        body.tm_theme_dark #tm_sess_signout_idle.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
         #tm_sess_signout_all:hover { background: #fbeae8 !important; }
         #tm_sess_signout_all.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
         body.tm_theme_dark #tm_sessions_scrim { background: rgba(0, 0, 0, 0.35) !important; }
@@ -4774,7 +5419,8 @@ import {
             width: 236px !important;
             right: -236px !important;
             box-sizing: border-box !important;
-            z-index: 1000 !important;
+            /* Above the search pop-out (1002), below dialogs and the sessions scrim. */
+            z-index: 1005 !important;
             transition: right 0.3s ease !important;
             background: rgba(255, 255, 255, 0.95) !important;
             border-radius: 8px 0 0 8px !important;
@@ -5731,12 +6377,14 @@ import {
   // Launch Sets: the Sets column, set bar, row hints and the set dialogs.
   const launchSetsCss = `
         .tm_sets_column {
-            flex: 0 0 250px !important;
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 6px !important;
-            padding: 0 15px !important;
+            flex: 0 0 220px !important;
+            position: relative !important;
             min-width: 0 !important;
+            min-height: 96px !important;
+        }
+        .tm_sets_inner {
+            position: absolute !important; top: 0 !important; bottom: 0 !important; left: 15px !important; right: 15px !important;
+            display: flex !important; flex-direction: column !important; gap: 6px !important;
         }
         .tm_sets_head {
             display: flex !important;
@@ -5761,7 +6409,15 @@ import {
             text-decoration: none !important; font-size: 13px !important; white-space: nowrap !important;
         }
         #tm_sets_menu a:hover { background: #f1f3f5 !important; }
-        #tm_sets_list { display: flex !important; flex-direction: column !important; gap: 6px !important; }
+        #tm_sets_list {
+            display: flex !important; flex-direction: column !important; gap: 6px !important;
+            flex: 1 1 auto !important; min-height: 0 !important; overflow: hidden !important;
+        }
+        .tm_set_line.tm_set_line_hidden { display: none !important; }
+        #tm_sets_list.tm_sets_aligned { display: block !important; position: relative !important; overflow: visible !important; }
+        #tm_sets_list.tm_sets_aligned .tm_set_line,
+        #tm_sets_list.tm_sets_aligned #tm_sets_all { position: absolute !important; left: 0 !important; right: 0 !important; }
+        #tm_sets_list.tm_sets_aligned #tm_sets_all { right: auto !important; }
         .tm_sets_empty { color: #6c757d !important; font-size: 12.5px !important; line-height: 1.45 !important; }
         .tm_set_line { display: flex !important; align-items: center !important; gap: 6px !important; }
         .tm_set_chip {
@@ -5783,8 +6439,71 @@ import {
         }
         .tm_set_open:hover { background: #e7f2fb !important; }
         .tm_set_open.tm_set_open_primary { background: #0073bb !important; color: #fff !important; padding: 6px 14px !important; font-size: 13px !important; }
+        .tm_set_open.tm_set_open_icon { padding: 2px 0 !important; width: 26px !important; font-size: 13px !important; line-height: 1.3 !important; }
         .tm_set_open:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
-        #tm_sets_more { font-size: 12.5px !important; color: #0073bb !important; text-decoration: none !important; }
+        .tm_filter_button.tm_chip_overflow { display: none !important; }
+        .tm_more_chip {
+            padding: 4px 10px !important; border: 1px dashed #adb5bd !important; border-radius: 15px !important;
+            font-size: 13px !important; color: #6c757d !important; background: transparent !important;
+            text-decoration: none !important; cursor: pointer !important; white-space: nowrap !important; line-height: 1.2 !important;
+        }
+        .tm_more_chip:hover, .tm_more_chip[aria-expanded="true"] { border-color: #0073bb !important; color: #0073bb !important; }
+        .tm_more_chip.tm_more_hot { border-style: solid !important; border-color: #0073bb !important; color: #0073bb !important; background: #e7f2fb !important; }
+        .tm_more_chip.tm_chip_drop_into, #tm_chip_pop.tm_chip_drop_into { outline: 2px solid #0073bb !important; outline-offset: 2px !important; }
+        #tm_chip_pop {
+            position: absolute !important; z-index: 10000 !important; max-width: 420px !important; min-width: 160px !important;
+            max-height: 320px !important; overflow-y: auto !important;
+            background: white !important; border: 1px solid #ccc !important; border-radius: 8px !important;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.16) !important; padding: 10px !important;
+        }
+        .tm_chip_pop_chips { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+        #tm_chip_pop_filter {
+            width: 100% !important; box-sizing: border-box !important; height: 28px !important; margin: 0 0 8px 0 !important;
+            border: 1px solid #ccc !important; border-radius: 4px !important; padding: 0 8px !important; font-size: 13px !important;
+        }
+        #tm_chip_pop .tm_chip_pop_off { display: none !important; }
+        .tm_filter_button[draggable="true"] { -webkit-user-drag: element !important; }
+        .tm_filter_button.tm_chip_dragging { opacity: 0.4 !important; }
+        #tm_chip_drop_mark {
+            position: absolute !important; z-index: 10002 !important; width: 2px !important; background: #0073bb !important;
+            border-radius: 1px !important; pointer-events: none !important;
+        }
+        body.tm_theme_dark .tm_more_chip { border-color: #6b7280 !important; color: #a0aec0 !important; }
+        body.tm_theme_dark .tm_more_chip.tm_more_hot { background: #2a4365 !important; border-color: #3182ce !important; color: #e2e8f0 !important; }
+        body.tm_theme_dark #tm_chip_pop { background: #2d3748 !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark #tm_chip_pop_filter { background: #1a202c !important; border-color: #4a5568 !important; color: #e2e8f0 !important; }
+        body.tm_compact_mode .tm_more_chip { padding: 2px 8px !important; font-size: 12px !important; }
+        #tm_sets_all { flex: none !important; font-size: 12.5px !important; color: #0073bb !important; text-decoration: none !important; }
+        #tm_sets_all:hover { text-decoration: underline !important; }
+        .tm_setm_list { display: flex !important; flex-direction: column !important; }
+        .tm_setm_row {
+            display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto auto !important; gap: 4px 14px !important;
+            align-items: center !important; padding: 9px 4px !important; border-top: 1px solid #f1f3f5 !important;
+        }
+        .tm_setm_row:first-child { border-top: 0 !important; }
+        .tm_setm_name { font-weight: 600 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+        .tm_setm_meta { font-size: 12px !important; color: #6c757d !important; white-space: nowrap !important; }
+        .tm_setm_acts { display: flex !important; gap: 6px !important; }
+        .tm_setm_acts .tm_sv_btn { padding: 4px 10px !important; font-size: 12.5px !important; }
+        .tm_setm_empty { color: #6c757d !important; padding: 10px 0 !important; }
+        .tm_setm_archive { margin-top: 12px !important; border-top: 1px solid #e9ecef !important; padding-top: 8px !important; }
+        .tm_setm_archive_toggle {
+            border: 0 !important; background: transparent !important; color: #6c757d !important; font-size: 12.5px !important;
+            cursor: pointer !important; padding: 4px 0 !important; font-family: inherit !important;
+        }
+        .tm_setm_archive_toggle:hover { color: #0073bb !important; }
+        .tm_setm_row.tm_setm_row_archived { cursor: default !important; }
+        .tm_setm_row_archived .tm_setm_name { font-weight: 400 !important; color: #6c757d !important; }
+        body.tm_theme_dark .tm_setm_archive { border-top-color: #3a4148 !important; }
+        .tm_setm_row { cursor: grab !important; background: white !important; border-radius: 4px !important; transition: transform 0.18s ease !important; touch-action: none !important; }
+        .tm_setm_row button { cursor: pointer !important; }
+        .tm_setm_grip { color: #adb5bd !important; font-size: 13px !important; letter-spacing: -3px !important; user-select: none !important; }
+        .tm_setm_row.tm_dragging {
+            position: relative !important; z-index: 2 !important; cursor: grabbing !important;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.18) !important; border-top-color: transparent !important;
+        }
+        body.tm_setm_dragging_active { user-select: none !important; }
+        body.tm_setm_dragging_active .tm_setm_row:not(.tm_dragging) { opacity: 0.7 !important; }
 
         #tm_set_bar {
             display: flex !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important;
@@ -5899,13 +6618,15 @@ import {
         body.tm_theme_dark .tm_set_grid select,
         body.tm_theme_dark .tm_set_addrole_select { background: #2d3748 !important; color: #e9ecef !important; border-color: #4a5568 !important; }
         body.tm_theme_dark .tm_set_row { border-top-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_setm_row { border-top-color: #3a4148 !important; background: #2d3748 !important; }
+        body.tm_theme_dark .tm_setm_meta, body.tm_theme_dark .tm_setm_empty { color: #a0aec0 !important; }
         body.tm_theme_dark .tm_set_row_extra { background: #25303d !important; }
         body.tm_theme_dark .tm_set_ghead { border-bottom-color: #3a4148 !important; }
         body.tm_theme_dark .tm_set_picklist { border-color: #4a5568 !important; }
         body.tm_theme_dark .tm_set_pick + .tm_set_pick { border-top-color: #3a4148 !important; }
         body.tm_theme_dark .tm_set_page { color: #cbd5e0 !important; }
 
-        body.tm_compact_mode .tm_sets_column { flex-basis: 220px !important; }
+        body.tm_compact_mode .tm_sets_column { flex-basis: 200px !important; }
   `;
 
   const styleEl = document.createElement("style");
@@ -5919,6 +6640,7 @@ import {
   await RegionsManager.loadLastRegionsCache();
   await AccountNamesManager.loadCache();
   await AccountTagsManager.loadCache();
+  await ChipOrderManager.loadCache();
   await AssumeProfilesManager.loadCache();
   await JumpDestinationsManager.loadCache();
   await LaunchSetsManager.loadCache();
@@ -5936,6 +6658,14 @@ import {
   // and reflect the configured homepage URL in the footer.
   renderAllFilterRows();
   LaunchSetsManager.render();
+  // Refit whenever the filter rows change the column's height (wrapping,
+  // compact mode, rows appearing as they're configured).
+  const setsColumn = document.getElementById("tm_sets_column");
+  if (setsColumn && window.ResizeObserver) new ResizeObserver(() => fitSetsList()).observe(setsColumn);
+  // Filter rows re-fold onto one line whenever the panel's width changes.
+  const filterColumn = document.querySelector(".tm_left_column");
+  if (filterColumn && window.ResizeObserver) new ResizeObserver(() => scheduleFitFilterRows()).observe(filterColumn);
+  rerenderFilterRow("source");
   updateHomepageFooter();
 
   // --- Transform each role to add buttons and account info ---
@@ -5970,12 +6700,13 @@ import {
       const safeAccountId   = escapeHtml(accountInfo.id);
       const safeRoleName    = escapeHtml(roleName);
       const safeRoleArn     = escapeHtml(roleArn);
+      const tagKey = tagKeyFor(accountInfo.id, String(roleArn).split("/").pop());
 
       const roleInfoHTML = `
                 <div class="tm_role_info">
                     <button type="button" class="tm_favorite_button" data-role-arn="${safeRoleArn}" title="Add to favorites">☆</button>
                     <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="${safeAwsName}">${safeAccountName}</div>
-                    <div class="tm_tag_cell">${tagChipHTML(accountInfo.id)}</div>
+                    <div class="tm_tag_cell">${tagChipHTML(tagKey)}</div>
                     <div class="tm_role_name">${safeRoleName}</div>
                 </div>
                 <div class="tm_role_buttons">
@@ -5984,12 +6715,31 @@ import {
                     ${RegionsManager.generateRegionDropdownHTML(roleArn)}
                     <button type="button" class="tm_role_button primary tm_signin_button" data-role-arn="${safeRoleArn}" title="Sign in — ⌘/Ctrl-click or middle-click toggles new tab">Sign In</button>
                 </div>
-                <div class="tm_tag_editor" data-account-id="${safeAccountId}">${tagEditorHTML(accountInfo.id)}</div>
+                <div class="tm_tag_editor" data-tag-key="${escapeHtml(tagKey)}">${tagEditorHTML(tagKey)}</div>
             `;
 
       $role.append(roleInfoHTML);
     }
   });
+
+  // Tags used to belong to a whole account; copy any such tag onto each role of
+  // that account listed here (direct roles and jump destinations), once.
+  const listedTagRoles = () => {
+    const listed = [];
+    document.querySelectorAll('.saml-role input[type="radio"][name="roleIndex"]').forEach((r) => {
+      const parts = String(r.value).split(":");
+      if (parts.length > 5) listed.push({ account: parts[4], role: String(r.value).split("/").pop() });
+    });
+    for (const dest of JumpDestinationsManager.all()) {
+      const profile = AssumeProfilesManager.byName(dest.profile);
+      if (profile && profile.role) listed.push({ account: dest.account, role: profile.role });
+    }
+    return listed;
+  };
+  if (await AccountTagsManager.migrate(listedTagRoles())) {
+    document.querySelectorAll(".tm_tag_chip[data-tag-key]").forEach(paintTagChip);
+    document.querySelectorAll(".tm_tag_editor[data-tag-key] .tm_tag_pills").forEach(paintTagPills);
+  }
 
   // Flatten roles into a single container and apply the user's saved order.
   // Must come after the transform so .tm_signin_button (and its data-role-arn)
@@ -6125,8 +6875,8 @@ import {
 
   // --- Account tags: chip toggles the row's inline editor; ✕ removes a tag;
   //     "+ tag" opens an autocompleted input (Enter/comma commit, Esc cancels,
-  //     focusout commits any pending value). Tags are per-account, so edits
-  //     refresh every role row of that account via updateTagUIForAccount. ---
+  //     focusout commits any pending value). Tags are per account + role, so
+  //     edits refresh that role's row(s) via updateTagUIForKey. ---
   $("body").on("click", ".tm_tag_chip", function (e) {
     e.preventDefault();
     const row = this.closest(".saml-role");
@@ -6151,9 +6901,9 @@ import {
     e.stopPropagation();
     const del = this;
     twoStepDelete($(this).closest(".tm_tag_pill"), this, async () => {
-      const id = del.getAttribute("data-account-id");
+      const id = del.getAttribute("data-tag-key");
       await AccountTagsManager.removeTag(id, del.getAttribute("data-tag"));
-      updateTagUIForAccount(id);
+      updateTagUIForKey(id);
     });
   });
 
@@ -6164,14 +6914,14 @@ import {
   });
 
   $("body").on("keydown", ".tm_tag_input", async function (e) {
-    const id = this.getAttribute("data-account-id");
+    const id = this.getAttribute("data-tag-key");
     if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
       const val = this.value.trim();
       this.value = "";
       if (val) {
         await AccountTagsManager.addTag(id, val);
-        updateTagUIForAccount(id);
+        updateTagUIForKey(id);
         populateTagVocab();
         this.focus();
       }
@@ -6184,12 +6934,12 @@ import {
 
   $("body").on("focusout", ".tm_tag_input", async function () {
     if (!this.isConnected) return; // already removed by Enter/Escape
-    const id = this.getAttribute("data-account-id");
+    const id = this.getAttribute("data-tag-key");
     const val = this.value.trim();
     this.replaceWith(makeTagAddButton(id));
     if (val) {
       await AccountTagsManager.addTag(id, val);
-      updateTagUIForAccount(id);
+      updateTagUIForKey(id);
     }
   });
 
@@ -6321,7 +7071,8 @@ import {
           }
           // A freed slot means the cap warning is worth showing again.
           sessionsFullToastShown = false;
-          showToast("Session signed out — a slot is free.", "success", CONFIG.TOAST_DURATION);
+          const closed = res.closed ? `, ${res.closed} tab${res.closed === 1 ? "" : "s"} closed` : "";
+          showToast(`Session signed out${closed} — a slot is free.`, "success", CONFIG.TOAST_DURATION);
           refreshSessions({ keepOpen: sessionsPopoverOpen });
         }
       );
@@ -6339,6 +7090,36 @@ import {
 
   // "Sign out all" — same two-step arm as the per-row ✕ (first click fills it
   // red, second confirms), then one message signs out every live session.
+  // "Sign out idle" — every session with no console tab open, same two-step arm.
+  $("body").on("click", "#tm_sess_signout_idle", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sessionsCache.some((s) => !s.tabs)) return;
+    twoStepDelete($(this), this, () => {
+      showToast("Signing out of sessions with no open tabs…", "info", CONFIG.TOAST_DURATION);
+      chrome.runtime.sendMessage(
+        { type: "hop_signout_idle", region: GeneralSettingsManager.region() },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.ok) {
+            showToast("Could not sign the idle sessions out.", "error", CONFIG.TOAST_DURATION);
+            return;
+          }
+          sessionsFullToastShown = false;
+          showToast(
+            !res.total
+              ? "No idle sessions left to sign out."
+              : res.done === res.total
+                ? `Signed out of ${res.done} idle session${res.done === 1 ? "" : "s"}.`
+                : `Signed out of ${res.done} of ${res.total} idle sessions.`,
+            res.done === res.total ? "success" : "error",
+            CONFIG.TOAST_DURATION
+          );
+          refreshSessions({ keepOpen: sessionsPopoverOpen });
+        }
+      );
+    });
+  });
+
   $("body").on("click", "#tm_sess_signout_all", function (e) {
     e.preventDefault();
     e.stopPropagation();
@@ -6353,10 +7134,11 @@ import {
             return;
           }
           sessionsFullToastShown = false;
+          const closed = res.closed ? `, ${res.closed} tab${res.closed === 1 ? "" : "s"} closed` : "";
           showToast(
             res.done === res.total
-              ? `Signed out of ${res.done} session${res.done === 1 ? "" : "s"}.`
-              : `Signed out of ${res.done} of ${res.total} sessions.`,
+              ? `Signed out of ${res.done} session${res.done === 1 ? "" : "s"}${closed}.`
+              : `Signed out of ${res.done} of ${res.total} sessions${closed}.`,
             res.done === res.total ? "success" : "error",
             CONFIG.TOAST_DURATION
           );
@@ -6803,8 +7585,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   // Re-render every row's tag chip + pills after a bulk edit, then re-filter.
   const refreshAllTagUI = () => {
-    document.querySelectorAll(".tm_tag_chip[data-account-id]").forEach(paintTagChip);
-    document.querySelectorAll(".tm_tag_editor[data-account-id] .tm_tag_pills").forEach(paintTagPills);
+    document.querySelectorAll(".tm_tag_chip[data-tag-key]").forEach(paintTagChip);
+    document.querySelectorAll(".tm_tag_editor[data-tag-key] .tm_tag_pills").forEach(paintTagPills);
     renderTagFilterRow();
     FilterManager.applyFilters(true);
   };
@@ -6822,19 +7604,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     background: white !important; border-radius: 8px !important; padding: 20px !important;
                     max-width: 520px !important; width: 90% !important; max-height: 80vh !important; overflow-y: auto !important;
                 ">
-                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Account Tags</h3>
+                    <h3 style="margin: 0 0 15px 0 !important; color: #16191f !important;">Tags</h3>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
-                        Attach free-text tags to accounts so you can find them by concept,
-                        not just by name. One account per line:
-                        <code>123456789012: palo alto, firewall, pci</code>. Tags may contain
-                        spaces, and searching any tag surfaces the account. Leave the box empty
-                        to clear all tags.
+                        Attach free-text tags to an account + role so you can find it by
+                        concept or ticket, not just by name. One per line:
+                        <code>123456789012/Admin: palo alto, OPS-1234</code>. A line with just the
+                        account id (<code>123456789012: pci</code>) puts the tags on every role of
+                        that account in today's list. Tags may contain spaces, and searching any
+                        tag surfaces the role. Leave the box empty to clear all tags.
                     </p>
                     <textarea id="tm_account_tags_input" style="
                         width: 100% !important; height: 220px !important; border: 1px solid #ccc !important;
                         border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
                         font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
-                    " placeholder="123456789012: palo alto, firewall&#10;999999999999: splunk, siem">${escapeHtml(current)}</textarea>
+                    " placeholder="123456789012/Admin: palo alto, firewall&#10;999999999999/ReadOnly: splunk, siem">${escapeHtml(current)}</textarea>
                     <div style="margin-top: 15px !important; text-align: right !important;">
                         <button id="tm_account_tags_cancel" style="
                             padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
@@ -6858,10 +7641,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $("#tm_account_tags_save").on("click", async function () {
       const map = parseAccountTagLines($("#tm_account_tags_input").val());
       const saved = await AccountTagsManager.save(map);
+      // A bare account line means "every role of this account": spread it now.
+      if (saved) await AccountTagsManager.migrate(listedTagRoles());
       if (saved) {
         $("#tm_account_tags_modal").remove();
         refreshAllTagUI();
-        showToast("Account tags updated.", "success", CONFIG.TOAST_DURATION);
+        showToast("Tags updated.", "success", CONFIG.TOAST_DURATION);
       }
     });
   };
@@ -7125,6 +7910,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const via = avail.ok ? `via ${dest.profile} hub · max 1 h${labelSuffix}` : avail.why;
       const safeKey = escapeHtml(key);
       const safeAccountId = escapeHtml(dest.account);
+      const tagKey = tagKeyFor(dest.account, roleName);
       // Region precedence: per-row memory (when remembering) → the
       // destination's own region → the profile's landing region → default.
       const memRegion = GeneralSettingsManager.rememberRegion()
@@ -7148,7 +7934,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     <div class="tm_account_name" data-account-id="${safeAccountId}" data-aws-name="">⤳ ${escapeHtml(shownName)}</div>
                     <div class="tm_jump_via">${escapeHtml(via)}</div>
                 </div>
-                <div class="tm_tag_cell">${tagChipHTML(dest.account)}</div>
+                <div class="tm_tag_cell">${tagChipHTML(tagKey)}</div>
                 <div class="tm_role_name">${escapeHtml(roleName)}</div>
             </div>
             <div class="tm_role_buttons">
@@ -7161,7 +7947,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                 </select>
                 <button type="button" class="tm_role_button primary tm_signin_button" data-role-arn="${safeKey}" data-jump="1" title="${avail.ok ? "Jump — sign into the hub, then switch into this account (chained sessions last 1 h by AWS)" : escapeHtml(avail.why)}">Jump</button>
             </div>
-            <div class="tm_tag_editor" data-account-id="${safeAccountId}">${tagEditorHTML(dest.account)}</div>
+            <div class="tm_tag_editor" data-tag-key="${escapeHtml(tagKey)}">${tagEditorHTML(tagKey)}</div>
         </div>
       `;
       $list.append(rowHTML);
@@ -7270,6 +8056,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (!sessionsCache.length) {
       $rows.html(`<div id="tm_sessions_empty">No active AWS console sessions.</div>`);
       $("#tm_sess_signout_all").hide();
+      $("#tm_sess_signout_idle").hide();
       $("#tm_sessions_hint").text("All sessions are signed out — close the panel when you're done.");
       return;
     }
@@ -7277,6 +8064,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $("#tm_sess_signout_all")
       .text(`Sign out all sessions (${sessionsCache.length})`)
       .show();
+    const idleCount = sessionsCache.filter((s) => !s.tabs).length;
+    if (idleCount) $("#tm_sess_signout_idle").text(`Sign out idle (${idleCount})`).show();
+    else $("#tm_sess_signout_idle").hide();
     const header =
       `<div class="tm_sess_th"><span>Label</span><span>Account &middot; role</span>` +
       `<span>Region</span><span>Tab group</span><span>Started</span><span>Expires</span><span>Tabs</span><span></span></div>`;
@@ -7301,7 +8091,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         // Every session is signable-out from here: the picker page is not itself
         // inside a console session, so there is no "current" one to protect —
         // and no row is singled out, which would only imply otherwise.
-        const action = `<span class="tm_sess_del" role="button" tabindex="-1" title="Sign this session out" aria-label="Sign out">&#10005;</span>`;
+        const action = `<span class="tm_sess_del" role="button" tabindex="-1" title="Sign this session out and close its tabs" aria-label="Sign out and close its tabs">&#10005;</span>`;
         // Title on the ROW, not just the truncating cells, so hovering anywhere
         // along it shows the full detail — the columns that never truncate
         // (started, expires, tabs) would otherwise be dead to the pointer.
@@ -8311,6 +9101,29 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     };
   });
 
+  // Launch Sets window: same engine, rows are the sets.
+  $("body").on("pointerdown", "#tm_setm_list .tm_setm_row", function (e) {
+    if (dragState) return;
+    if (e.button !== 0) return;
+    if (e.target.closest && e.target.closest("button, a, input, select")) return;
+    dragState = {
+      row: this,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startX: e.clientX,
+      activated: false,
+      filtersBlocked: false,
+      listId: "tm_setm_list",
+      rowClass: "tm_setm_row",
+      activeClass: "tm_setm_dragging_active",
+      // Archived sets keep their place after the active ones.
+      onReorder: () => LaunchSetsManager.reorder([
+        ...[...document.querySelectorAll("#tm_setm_list .tm_setm_row")].map((r) => r.getAttribute("data-set-id")),
+        ...LaunchSetsManager.archived().map((s) => s.id),
+      ]),
+    };
+  });
+
   const activateDrag = () => {
     const list = document.getElementById(dragState.listId);
     if (!list) { dragState = null; return; }
@@ -8530,7 +9343,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   $(document).on("keydown", function (e) {
     // Any open modal short-circuits the role-list shortcuts so we never
     // accidentally sign in / navigate while a dialog is up.
-    const $openModal = $('[id$="_modal"]').first();
+    const $openModal = $('[id$="_modal"]').last();
     const modalOpen = $openModal.length > 0;
 
     // Option/Alt focuses the search box on PRESS, so you can hold it and flow
@@ -8548,12 +9361,19 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
     // Esc — universal close/clear.
     if (e.key === "Escape") {
+      if (chipPop) {
+        closeChipPop();
+        return;
+      }
       if (jumpPopoverOpen) {
         closeJumpPopover();
         return;
       }
       if (modalOpen) {
-        $openModal.remove();
+        // The open-set confirmation awaits an answer; Esc is its Cancel.
+        const cancel = $openModal[0].id === "tm_set_open_modal" && $openModal[0].querySelector('[data-action="cancel"]');
+        if (cancel) cancel.click();
+        else $openModal.remove();
         return;
       }
       // First Esc cancels a suggestion highlight (box stays open); a second Esc
@@ -8747,13 +9567,13 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           <h3 style="margin: 0 0 12px 0 !important; color:#16191f !important; font-size: 18px !important;">Console Hopper</h3>
           ${intro}
           ${sectionHTML("Filter, search, favorite",
-            `Narrow the role list from the toolbar — by organisation, environment, account type, role name or <strong>tag</strong> — or use the search box. Search is <strong>separator-insensitive</strong> (<code>test 123</code> finds <code>test123</code>) and understands <strong>scoped terms</strong>: <code>tag:</code>, <code>role:</code>, <code>name:</code>, <code>account:</code>, <code>env:</code>, <code>type:</code>, <code>org:</code>. Combine them with a space (<em>and</em>), a comma (<em>or</em>) or a leading <code>-</code> (<em>exclude</em>), with <code>"quotes"</code> for an exact phrase. Focus the box and it pops out with click-to-insert suggestions and a live match count. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly. Press <kbd>Esc</kbd> to clear every filter and the search at once.`)}
-          ${sectionHTML("Account tags",
-            `Tag accounts with your own labels — <code>palo-alto</code>, <code>prod-network</code>, a ticket number — and organise by them. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Account Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
+            `Narrow the role list from the toolbar — by organisation, environment, account type, role name or <strong>tag</strong> — or use the search box. Each filter row stays on one line: chips that don't fit fold into a <strong>+N</strong> chip (it says <em>· N on</em> if a selected one is inside). Click <strong>+N</strong> to see the ones that didn't fit. <strong>Drag chips along a row to reorder it</strong>; drag one out of <strong>+N</strong> onto the row to keep it in view, or a row chip onto <strong>+N</strong> to tuck it away — like the bookmarks bar. Search is <strong>separator-insensitive</strong> (<code>test 123</code> finds <code>test123</code>) and understands <strong>scoped terms</strong>: <code>tag:</code>, <code>role:</code>, <code>name:</code>, <code>account:</code>, <code>env:</code>, <code>type:</code>, <code>org:</code>. Combine them with a space (<em>and</em>), a comma (<em>or</em>) or a leading <code>-</code> (<em>exclude</em>), with <code>"quotes"</code> for an exact phrase. Focus the box and it pops out with click-to-insert suggestions and a live match count. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly. Press <kbd>Esc</kbd> to clear every filter and the search at once.`)}
+          ${sectionHTML("Tags",
+            `Tag an account + role with your own labels — <code>palo-alto</code>, <code>prod-network</code>, a ticket number — and organise by them. A tag belongs to that one role, so tagging your Admin role doesn't tag the account's other roles. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
           ${sectionHTML("Save a search as a Shortcut",
             `Built a query and filter set you'll want again? Click <strong>☆ save as shortcut</strong> in the search card and name it — it becomes a chip in the <em>Shortcuts</em> row, and one click re-applies the whole view (search <em>and</em> filters). Remove one with its <strong>✕</strong> — click to arm, click again to confirm.`)}
           ${sectionHTML("Launch Sets",
-            `Open every console a ticket needs in one click. Search for the ticket (or filter to its accounts) and click <strong>↗ save as set</strong> in the search card — or use <strong>+ New set</strong> in the <em>Sets</em> column, which can also save the <strong>console tabs you have open</strong>. Each tab keeps its own role, service and region, and one role can have several tabs (EC2 and IAM side by side): click a set's name, then <strong>Edit</strong>. <strong>Open</strong> signs every tab in at once, next to this page, gathered in a Chrome tab group named after the set. Sensitive roles, roles missing from today's list and AWS's five-session limit get one confirmation for the whole set.`)}
+            `Open every console a ticket needs in one click. Search for the ticket (or filter to its accounts) and click <strong>↗ save as set</strong> in the search card — or use <strong>+ New set</strong> in the <em>Sets</em> column, which can also save the <strong>console tabs you have open</strong>. Each tab keeps its own role, service and region, and one role can have several tabs (EC2 and IAM side by side): click a set's name, then <strong>Edit</strong>, or manage every set from <strong>Launch Sets</strong> in the side menu, where you can also <strong>archive</strong> a set you're done with (it leaves the column but stays saved, ready to restore). Drag them into order there; the column shows them in that order, as many as fit beside the filters; <strong>All sets</strong> lists the rest. <strong>Open</strong> signs every tab in at once, next to this page, grouped the way your <strong>Tabs</strong> setting says (by role, by org or off); in <em>Custom tag</em> mode they gather in one group named after the set. Sensitive roles, roles missing from today's list and AWS's five-session limit get one confirmation for the whole set.`)}
           ${sectionHTML("Start view",
             `Have the picker open on a view every load. Open <em>Start View</em> in the side menu and pick one chip — <strong>★ Favorites</strong>, <strong>↻ Recent</strong>, one of your saved <em>Shortcuts</em>, or a <em>Tag</em>. The active choice is highlighted; <strong>Save current filters</strong> snapshots whatever you have on right now, and <strong>Clear</strong> removes it (your favorites stay put).`)}
           ${sectionHTML("Reorder by drag",
@@ -9591,6 +10411,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.REGION_LIST]:  isRegionList,
         [SK.ACCOUNT_NAMES]: isPlainStringMap,
         [SK.ACCOUNT_TAGS]: isAccountTagMap,
+        [SK.CHIP_ORDER]:   (v) => isAccountTagMap(v),
         [SK.ENV_PATTERNS]: isPatternEntryList,
         [SK.ORG_PATTERNS]: isPatternEntryList,
         [SK.TYPE_PATTERNS]: isPatternEntryList,

@@ -13,13 +13,13 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
 
 ## What it looks like
 
-| The role picker | Jump to account |
+| The role picker | Launch Sets |
 |---|---|
-| <img src="store-assets/screenshot-1-main.png" alt="Role picker with filters and env-coloured rows"> | <img src="store-assets/screenshot-2-jump.png" alt="Jump-to-account popover with recent jumps"> |
+| <img src="store-assets/screenshot-1-main.png" alt="Role picker with one-line filter rows, a +N chip and the Sets column"> | <img src="store-assets/screenshot-2-sets.png" alt="Launch Sets panel listing sets with Show, Edit, Archive, Delete and Open"> |
 
-| Filtering by role | The side menu |
+| Editing a set | Active AWS sessions |
 |---|---|
-| <img src="store-assets/screenshot-4-filter.png" alt="PROD and ReadOnly filters applied"> | <img src="store-assets/screenshot-3-side-menu.png" alt="Grouped side menu: View, Configure, Data"> |
+| <img src="store-assets/screenshot-3-edit.png" alt="Edit set dialog: tabs per role with landing service and region"> | <img src="store-assets/screenshot-4-sessions.png" alt="Sessions panel with Sign out idle and Sign out all sessions"> |
 
 ## Quick start
 
@@ -94,8 +94,8 @@ features.
   a per-ticket override tag using Chrome's native tab groups.
 - **Launch Sets** — save the console tabs a ticket needs (role, service and
   region for each, several tabs per role if you like) under a name such as
-  the ticket id, then open them all in one click, gathered in one Chrome tab
-  group. Save one from a search (**↗ save as set** in the search card) or
+  the ticket id, then open them all in one click, grouped by your Tabs
+  setting like any sign-in. Save one from a search (**↗ save as set** in the search card) or
   from the console tabs you already have open; sensitive roles, missing
   roles and the five-session limit get one confirmation for the whole set.
 - **Sensitive-sign-in confirmation** — pops a confirmation modal for
@@ -108,7 +108,7 @@ features.
   counter at the foot of the right column turns amber with one slot left
   and red when full; open it for every session's account, role, region,
   tab group, age, time left and open tabs — and sign any one of them out
-  to free a slot. Session metadata only; cookie contents are never read.
+  (closing its console tabs) to free a slot. Session metadata only; cookie contents are never read.
 - **Clear AWS Sessions** — one click signs you out of all open AWS
   consoles by clearing AWS auth cookies (your console favourites and
   settings are kept).

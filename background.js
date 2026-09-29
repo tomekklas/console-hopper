@@ -183,18 +183,85 @@ async function launchTabs(action, tabs, sender) {
   });
 
   // New tabs go right after the picker, in order, without taking focus from it.
+  // AWS starts a NEW console session for every sign-in it receives before the
+  // role's session cookie exists, so two tabs of one role posted together can
+  // cost two of the five session slots. Open each role's first tab now; its
+  // other tabs follow once that one has reached the console (its session is
+  // set), placed right after it.
   const pickerTab = sender.tab;
-  let index = pickerTab.index + 1;
-  for (let i = 0; i < tickets.length; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL(`launch.html#${tickets[i]}`),
+  const byRole = new Map();
+  cleaned.forEach((fields, i) => {
+    const role = (fields.find(([name]) => name === "roleIndex") || [])[1];
+    if (!byRole.has(role)) byRole.set(role, []);
+    byRole.get(role).push(tickets[i]);
+  });
+  const openTab = (ticket, index) =>
+    chrome.tabs.create({
+      url: chrome.runtime.getURL(`launch.html#${ticket}`),
       windowId: pickerTab.windowId,
-      index: index++,
+      index,
       active: false,
+    });
+  let index = pickerTab.index + 1;
+  let first = true;
+  const leaders = [];
+  for (const [, roleTickets] of byRole) {
+    if (!first) await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
+    first = false;
+    leaders.push({ tab: await openTab(roleTickets[0], index++), rest: roleTickets.slice(1) });
+  }
+  // The rest open in the background; the picker has its answer already.
+  for (const { tab, rest } of leaders) {
+    if (!rest.length) continue;
+    waitForConsole(tab.id, LAUNCH_FOLLOW_TIMEOUT_MS).then(async () => {
+      let at;
+      try {
+        at = (await chrome.tabs.get(tab.id)).index + 1;
+      } catch {
+        at = undefined; // leader closed: append at the end of the window
+      }
+      for (const ticket of rest) {
+        await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
+        try {
+          await openTab(ticket, at === undefined ? undefined : at++);
+        } catch (err) {
+          console.warn("[hop] launch: couldn't open a tab:", err);
+        }
+      }
     });
   }
   return tickets.length;
+}
+
+// Resolves once the tab is on an AWS console page (true), or on close or
+// timeout (false) — either way the caller carries on.
+const CONSOLE_URL_RE = /^https:\/\/(?:[a-z0-9-]+\.)*console\.aws\.amazon\.com\//;
+const LAUNCH_FOLLOW_TIMEOUT_MS = 20000;
+function waitForConsole(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const onUpdated = (id, info, tab) => {
+      if (id === tabId && CONSOLE_URL_RE.test(String(info.url || (tab && tab.url) || ""))) finish(true);
+    };
+    const onRemoved = (id) => {
+      if (id === tabId) finish(false);
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    timer = setTimeout(() => finish(false), timeoutMs);
+    chrome.tabs.get(tabId).then((t) => {
+      if (t && CONSOLE_URL_RE.test(String(t.url || ""))) finish(true);
+    }, () => finish(false));
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -489,10 +556,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Close the console tabs that belong to signed-out sessions. A multi-session
+// console host starts with its session's differentiator
+// ("123456789012-abcd.eu-central-1.console.aws.amazon.com"), so only that
+// session's tabs match; tabs without one are left alone.
+async function closeSessionTabs(differentiators) {
+  const wanted = new Set(differentiators);
+  if (!wanted.size) return 0;
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: "https://*.console.aws.amazon.com/*" });
+  } catch {
+    return 0;
+  }
+  const ids = tabs
+    .filter((t) => {
+      const page = consolePageOf(t.url);
+      return page && page.differentiator && wanted.has(page.differentiator);
+    })
+    .map((t) => t.id);
+  if (!ids.length) return 0;
+  try {
+    await chrome.tabs.remove(ids);
+  } catch (err) {
+    console.warn("[hop] couldn't close signed-out tabs:", err);
+    return 0;
+  }
+  return ids.length;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "hop_signout_session") return;
   signOutAwsSession(message.region, message.differentiator)
-    .then(() => sendResponse({ ok: true }))
+    .then(() => closeSessionTabs([message.differentiator]))
+    .then((closed) => sendResponse({ ok: true, closed }))
     .catch((err) => sendResponse({ ok: false, error: String(err) }));
   return true;
 });
@@ -514,14 +611,39 @@ async function signOutAllAwsSessions(region) {
       console.warn("[hop] sign-out-all: one session failed:", r.reason);
     }
   }
-  const done = results.filter((r) => r.status === "fulfilled").length;
-  return { done, total: sessions.length };
+  const signedOut = sessions.filter((s, i) => results[i].status === "fulfilled");
+  const closed = await closeSessionTabs(signedOut.map((s) => s.differentiator));
+  return { done: signedOut.length, total: sessions.length, closed };
 }
+
+// Sign out every session with no open console tab — the sessions panel's
+// "Sign out idle" button. Re-reads the sessions (and their tab counts) here,
+// so a tab opened since the panel was drawn keeps its session.
+async function signOutIdleAwsSessions(region) {
+  const idle = (await listAwsSessions(region)).filter((s) => !s.tabs);
+  const results = await Promise.allSettled(
+    idle.map((s) => signOutAwsSession(region, s.differentiator))
+  );
+  for (const r of results) {
+    if (r.status === "rejected") {
+      console.warn("[hop] sign-out-idle: one session failed:", r.reason);
+    }
+  }
+  return { done: results.filter((r) => r.status === "fulfilled").length, total: idle.length };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_signout_idle") return;
+  signOutIdleAwsSessions(message.region)
+    .then((r) => sendResponse({ ok: true, done: r.done, total: r.total }))
+    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  return true;
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "hop_signout_all") return;
   signOutAllAwsSessions(message.region)
-    .then((r) => sendResponse({ ok: true, done: r.done, total: r.total }))
+    .then((r) => sendResponse({ ok: true, done: r.done, total: r.total, closed: r.closed }))
     .catch((err) => sendResponse({ ok: false, error: String(err) }));
   return true;
 });

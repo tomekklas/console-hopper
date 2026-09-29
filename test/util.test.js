@@ -23,6 +23,10 @@ import {
   parseAccountTagLines,
   formatAccountTagLines,
   normalizeAccountTags,
+  migrateAccountTags,
+  normalizeChipOrder,
+  orderByIds,
+  tagKeyFor,
   searchMatches,
   parseQuery,
   matchesQuery,
@@ -373,6 +377,50 @@ describe("parseAccountTagLines", () => {
   });
 });
 
+describe("parseAccountTagLines — role keys", () => {
+  it("accepts account/role keys alongside account-wide ones", () => {
+    expect(
+      parseAccountTagLines("123456789012/Admin: ops-1\n123456789012: pci\n123456789012/Bad Role: x")
+    ).toEqual({ "123456789012/Admin": ["ops-1"], "123456789012": ["pci"] });
+  });
+  it("merges repeated keys", () => {
+    expect(parseAccountTagLines("123456789012/Admin: a\n123456789012/Admin: b, A")).toEqual({
+      "123456789012/Admin": ["a", "b"],
+    });
+  });
+});
+
+describe("tagKeyFor", () => {
+  it("builds account/role keys and rejects bad parts", () => {
+    expect(tagKeyFor("123456789012", "ReadOnly")).toBe("123456789012/ReadOnly");
+    expect(tagKeyFor("12345", "ReadOnly")).toBe("");
+    expect(tagKeyFor("123456789012", "")).toBe("");
+    expect(tagKeyFor("123456789012", "has space")).toBe("");
+  });
+});
+
+describe("migrateAccountTags", () => {
+  it("copies an account-wide tag onto each listed role and drops the account key", () => {
+    const { map, changed } = migrateAccountTags(
+      { "123456789012": ["pci"], "123456789012/Admin": ["ops-1"], "210987654321": ["splunk"] },
+      [
+        { account: "123456789012", role: "Admin" },
+        { account: "123456789012", role: "ReadOnly" },
+      ]
+    );
+    expect(changed).toBe(true);
+    expect(map).toEqual({
+      "123456789012/Admin": ["ops-1", "pci"],
+      "123456789012/ReadOnly": ["pci"],
+      "210987654321": ["splunk"],
+    });
+  });
+  it("reports no change when nothing is account-wide or listed", () => {
+    expect(migrateAccountTags({ "123456789012/Admin": ["a"] }, []).changed).toBe(false);
+    expect(migrateAccountTags({ "210987654321": ["a"] }, [{ account: "123456789012", role: "X" }]).changed).toBe(false);
+  });
+});
+
 describe("formatAccountTagLines", () => {
   it("round-trips with parseAccountTagLines", () => {
     const map = { "123456789012": ["palo alto", "pci"], "210987654321": ["splunk"] };
@@ -678,6 +726,11 @@ describe("normalizeLaunchSets", () => {
     expect(normalizeLaunchSets([good])).toEqual([good]);
   });
 
+  it("keeps archived: true and drops any other archived value", () => {
+    expect(normalizeLaunchSets([{ ...good, archived: true }])).toEqual([{ ...good, archived: true }]);
+    expect(normalizeLaunchSets([{ ...good, archived: "yes" }])).toEqual([good]);
+  });
+
   it("returns [] for non-arrays", () => {
     expect(normalizeLaunchSets(null)).toEqual([]);
     expect(normalizeLaunchSets({})).toEqual([]);
@@ -717,5 +770,28 @@ describe("normalizeLaunchSets", () => {
   it("counts distinct roles, not tabs", () => {
     expect(launchSetRoleCount(good)).toBe(2);
     expect(launchSetRoleCount(null)).toBe(0);
+  });
+});
+
+describe("normalizeChipOrder", () => {
+  it("keeps known groups with unique string ids", () => {
+    expect(normalizeChipOrder({ tag: ["b", "a", "b", 3, ""], org: [], nope: ["x"], env: "x" })).toEqual({ tag: ["b", "a"] });
+  });
+  it("returns {} for non-objects", () => {
+    expect(normalizeChipOrder(null)).toEqual({});
+    expect(normalizeChipOrder([])).toEqual({});
+  });
+});
+
+describe("orderByIds", () => {
+  const id = (x) => x;
+  it("puts placed items in stored order, others after", () => {
+    expect(orderByIds(["a", "b", "c", "d"], ["c", "a"], id)).toEqual(["c", "a", "b", "d"]);
+  });
+  it("puts unplaced items first with newFirst", () => {
+    expect(orderByIds(["a", "b", "c", "d"], ["c", "a"], id, { newFirst: true })).toEqual(["b", "d", "c", "a"]);
+  });
+  it("ignores stored ids that no longer exist", () => {
+    expect(orderByIds(["a", "b"], ["z", "b"], id)).toEqual(["b", "a"]);
   });
 });

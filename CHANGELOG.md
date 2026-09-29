@@ -3,7 +3,7 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
-## Unreleased
+## 1.7.0 — 2026-09-29
 
 ### Added
 
@@ -11,11 +11,20 @@ All notable changes to Console Hopper are listed here. Dates are in
   the ticket id, then open them all in one click. Each tab in a set has its
   own role, service and region, and one role can have several tabs — EC2
   and IAM side by side. The tabs open next to the role picker, without
-  taking focus, and gather in one Chrome tab group named after the set.
+  taking focus, and are grouped by the **Tabs** setting like any sign-in
+  (by role, by org or off); in Custom tag mode they gather in one group
+  named after the set.
   - A **Sets** column sits in the filter panel, beside the search column:
-    each set with its tab count and an **Open** button, most recently used
-    first. Clicking a set's name shows only its roles in the listing, each
-    noting what it opens, under a bar with **Edit** and **Open all**.
+    each set with its tab count and a small **↗** button to open it, in
+    your order. Clicking a set's name shows only its roles in the listing, each
+    noting what it opens, under a bar with **Edit** and **Open all**. The
+    column never makes the panel taller: it shows as many sets as fit
+    beside the filter rows, and **All sets** opens the rest.
+  - **Launch Sets** in the side menu lists every set to reorder (drag), show,
+    edit, archive, delete or open, and saves new ones. New sets start at
+    the top. **Archive** keeps a finished ticket's set without it taking a
+    place in the Sets column; the window's *Archived* section restores or
+    deletes it. Up to 200 sets, archived ones included.
   - **↗ save as set** in the search card saves the roles your search shows,
     each with the service and region its row is set to. **+ New set** offers
     the same (*Save current view*) and **Save open tabs**, which records
@@ -32,6 +41,37 @@ All notable changes to Console Hopper are listed here. Dates are in
 
 ### Changed
 
+- Signing a session out in the sessions panel (✕, or **Sign out all
+  sessions**) now also closes that session's console tabs, which would
+  only show AWS's signed-out page otherwise. Tabs are matched by the
+  session in their address, so other sessions' tabs stay open.
+- **Sign out idle** in the sessions panel, beside *Sign out all sessions*,
+  signs out every session with no console tab open (two clicks, like the
+  others), freeing slots without touching the sessions you're working in.
+- **Filter rows stay on one line.** Chips that don't fit fold into a **+N**
+  chip (showing *· N on* when a selected one is inside), so the panel no
+  longer grows as tags pile up and the Sets column lines up one set per
+  row. **+N** opens just the chips that didn't fit. Drag chips along a row
+  to reorder it, drag one out of **+N** onto the row to keep it in view, or
+  a row chip onto **+N** to tuck it away — like the bookmarks bar. The order
+  is kept per row, separately from the Organizations/Environments/...
+  lists; new tags start at the front.
+- **Tags belong to an account + role**, not the whole account: tagging your
+  Admin role no longer tags every other role of that account. Existing
+  account tags are copied onto each role of that account the picker lists,
+  so nothing is lost — remove them from the roles you don't want. The bulk
+  editor (now **Tags** in the side menu) takes `123456789012/Admin: tags`
+  lines; a bare `123456789012: tags` line still tags every role of the
+  account.
+- A Launch Set's extra tabs for the same role open once that role's first
+  tab has reached the console, so they share its AWS session instead of
+  each starting one of the five.
+- Opening a Launch Set from a role picker that has been open more than
+  about five minutes now says to sign in again, instead of opening tabs
+  that AWS would reject ("Token must be redeemed within 5 minutes").
+- If Console Hopper is installed twice (say the Web Store copy and an
+  unpacked build), the second copy stands aside and a banner says so,
+  instead of both decorating every role row.
 - Tabs opened together now join one tab group instead of each creating its
   own: grouping runs one tab at a time.
 - Several tabs of the same account landing at once are all decorated; the

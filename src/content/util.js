@@ -149,9 +149,18 @@ export const normalizeAccountNames = (raw) => {
   return out;
 };
 
-// Account tags: a { accountId -> [tag, ...] } map. Tags are free-text labels
-// (spaces allowed) so an account can be found by concept, not just by its name.
-// Line-based editor like account names: "id: tag, tag, tag".
+// Tags: a { key -> [tag, ...] } map. Tags are free-text labels (spaces
+// allowed) so a role can be found by concept, not just by its name. A key is
+// "accountId/RoleName" — one account + role combination. A bare "accountId"
+// key is the older account-wide form: the picker copies it onto every role of
+// that account it lists (migrateAccountTags), then drops it.
+// Line-based editor like account names: "key: tag, tag, tag".
+const TAG_KEY_RE = /^\d{12}(\/[\w+=,.@-]{1,64})?$/;
+export const isTagKey = (key) => TAG_KEY_RE.test(String(key || ""));
+export const tagKeyFor = (accountId, roleName) => {
+  const key = `${accountId}/${roleName}`;
+  return /^\d{12}\//.test(key) && isTagKey(key) ? key : "";
+};
 const MAX_TAG_LEN = 40;
 const MAX_TAGS_PER_ACCOUNT = 24;
 
@@ -180,9 +189,9 @@ export const parseAccountTagLines = (text) => {
     const sep = line.indexOf(":");
     if (sep === -1) continue;
     const id = line.slice(0, sep).trim();
-    if (!/^\d{12}$/.test(id)) continue;
+    if (!isTagKey(id)) continue;
     const tags = normalizeTagList(line.slice(sep + 1).split(","));
-    if (tags.length) out[id] = tags;
+    if (tags.length) out[id] = normalizeTagList([...(out[id] || []), ...tags]);
   }
   return out;
 };
@@ -196,11 +205,34 @@ export const normalizeAccountTags = (raw) => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out = {};
   for (const [id, tags] of Object.entries(raw)) {
-    if (!/^\d{12}$/.test(id)) continue;
+    if (!isTagKey(id)) continue;
     const clean = normalizeTagList(tags);
     if (clean.length) out[id] = clean;
   }
   return out;
+};
+
+// Copy each account-wide tag list onto every listed role of that account, then
+// drop the account-wide key. Accounts with no listed role keep theirs until
+// one appears. `roles` is [{ account, role }]. Returns { map, changed }.
+export const migrateAccountTags = (map, roles) => {
+  const src = normalizeAccountTags(map);
+  const byAccount = new Map();
+  for (const r of Array.isArray(roles) ? roles : []) {
+    const key = tagKeyFor(r && r.account, r && r.role);
+    if (!key) continue;
+    if (!byAccount.has(r.account)) byAccount.set(r.account, new Set());
+    byAccount.get(r.account).add(key);
+  }
+  const out = { ...src };
+  let changed = false;
+  for (const [id, tags] of Object.entries(src)) {
+    if (!/^\d{12}$/.test(id) || !byAccount.has(id)) continue;
+    for (const key of byAccount.get(id)) out[key] = normalizeTagList([...(out[key] || []), ...tags]);
+    delete out[id];
+    changed = true;
+  }
+  return { map: out, changed };
 };
 
 // Assume-role "jump" profiles — one per org, for accounts reached by chaining
@@ -537,7 +569,7 @@ export const formatJumpDestLines = (list, services) =>
 // several tabs. Everything is re-validated on load and import: service paths
 // and regions end up in a sign-in URL.
 export const LAUNCH_SET_MAX_TABS = 20;
-export const LAUNCH_SETS_MAX = 50;
+export const LAUNCH_SETS_MAX = 200;
 const LAUNCH_SET_ID_RE = /^[a-z0-9]{1,24}$/;
 const ROLE_ARN_RE = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]{1,512}$/;
 
@@ -567,7 +599,10 @@ export const normalizeLaunchSets = (raw) => {
     const tabs = normalizeLaunchSetTabs(s.tabs);
     if (!tabs.length) continue;
     const lastUsed = Number.isFinite(s.lastUsed) && s.lastUsed > 0 ? s.lastUsed : 0;
-    out.push({ id, name, group, tabs, lastUsed });
+    const set = { id, name, group, tabs, lastUsed };
+    // Archived sets stay saved but leave the Sets column.
+    if (s.archived === true) set.archived = true;
+    out.push(set);
     ids.add(id);
     if (out.length >= LAUNCH_SETS_MAX) break;
   }
@@ -578,3 +613,38 @@ export const normalizeLaunchSets = (raw) => {
 // five-session budget, since tabs of one role share a session.
 export const launchSetRoleCount = (set) =>
   new Set(((set && set.tabs) || []).map((t) => t.roleArn)).size;
+
+// Filter-row chip order: { group -> [chip id, ...] }, set by dragging in a
+// row's "show all" list. Only the order the user placed is stored; chips it
+// doesn't mention keep their natural place (orderByIds).
+export const CHIP_ORDER_GROUPS = ["org", "env", "type", "role", "source", "tag", "show"];
+const CHIP_ORDER_MAX = 300;
+
+export const normalizeChipOrder = (raw) => {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const g of CHIP_ORDER_GROUPS) {
+    if (!Array.isArray(raw[g])) continue;
+    const seen = new Set();
+    const ids = [];
+    for (const v of raw[g]) {
+      if (typeof v !== "string" || !v || v.length > 128 || seen.has(v)) continue;
+      seen.add(v);
+      ids.push(v);
+      if (ids.length >= CHIP_ORDER_MAX) break;
+    }
+    if (ids.length) out[g] = ids;
+  }
+  return out;
+};
+
+// Reorder `items` by a stored id list. Items the list doesn't mention keep
+// their relative order and go after the placed ones — or before them with
+// `newFirst` (new tags, so the current ticket's tag is on show).
+export const orderByIds = (items, ids, idOf, { newFirst = false } = {}) => {
+  const list = Array.isArray(items) ? items : [];
+  const rank = new Map((Array.isArray(ids) ? ids : []).map((id, i) => [id, i]));
+  const placed = list.filter((it) => rank.has(idOf(it))).sort((a, b) => rank.get(idOf(a)) - rank.get(idOf(b)));
+  const rest = list.filter((it) => !rank.has(idOf(it)));
+  return newFirst ? [...rest, ...placed] : [...placed, ...rest];
+};
