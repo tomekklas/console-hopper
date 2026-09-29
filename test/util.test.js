@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  LAUNCH_SET_MAX_TABS,
+  launchSetRoleCount,
+  normalizeLaunchSets,
   escapeHtml,
   sanitizeInput,
   parseAccountInfo,
@@ -653,5 +656,66 @@ describe("parseJumpDestLines / formatJumpDestLines", () => {
     const text = formatJumpDestLines(list, SVC);
     expect(text.split("\n")[1]).toBe("606060606060 | Org B");
     expect(parseJumpDestLines(text, SVC)).toEqual(list);
+  });
+});
+
+describe("normalizeLaunchSets", () => {
+  const ARN = "arn:aws:iam::123456789012:role/ReadOnly";
+  const ARN2 = "arn:aws:iam::210987654321:role/Admin";
+  const good = {
+    id: "ab12",
+    name: "OPS-1234",
+    group: "OPS-1234",
+    tabs: [
+      { roleArn: ARN, service: "ec2/home?region={region}#Instances:", region: "eu-west-1" },
+      { roleArn: ARN, service: "iam/home", region: "" },
+      { roleArn: ARN2, service: "", region: "eu-central-1" },
+    ],
+    lastUsed: 1700000000000,
+  };
+
+  it("keeps a well-formed set as is", () => {
+    expect(normalizeLaunchSets([good])).toEqual([good]);
+  });
+
+  it("returns [] for non-arrays", () => {
+    expect(normalizeLaunchSets(null)).toEqual([]);
+    expect(normalizeLaunchSets({})).toEqual([]);
+  });
+
+  it("drops sets without an id, a name or any valid tab, and duplicate ids", () => {
+    const out = normalizeLaunchSets([
+      { ...good, id: "" },
+      { ...good, id: "BAD ID" },
+      { ...good, id: "x1", name: "  " },
+      { ...good, id: "x2", tabs: [{ roleArn: "nope" }] },
+      good,
+      { ...good, name: "dup" },
+    ]);
+    expect(out.map((s) => s.name)).toEqual(["OPS-1234"]);
+  });
+
+  it("blanks unsafe service paths and bad regions instead of keeping them", () => {
+    const [s] = normalizeLaunchSets([
+      { ...good, tabs: [{ roleArn: ARN, service: "//evil.example/", region: "eu-west-1.evil" }] },
+    ]);
+    expect(s.tabs).toEqual([{ roleArn: ARN, service: "", region: "" }]);
+  });
+
+  it("defaults the tab group to the name, and keeps an explicit empty group", () => {
+    const noGroup = { ...good };
+    delete noGroup.group;
+    expect(normalizeLaunchSets([noGroup])[0].group).toBe("OPS-1234");
+    expect(normalizeLaunchSets([{ ...good, group: "" }])[0].group).toBe("");
+  });
+
+  it("caps tabs per set", () => {
+    const tabs = Array.from({ length: LAUNCH_SET_MAX_TABS + 5 }, () => ({ roleArn: ARN }));
+    expect(normalizeLaunchSets([{ ...good, tabs }])[0].tabs).toHaveLength(LAUNCH_SET_MAX_TABS);
+  });
+
+  it("counts distinct roles, not tabs", () => {
+    expect(launchSetRoleCount(good)).toBe(2);
+    expect(launchSetRoleCount(null)).toBe(0);
   });
 });

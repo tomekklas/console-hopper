@@ -32,6 +32,11 @@ import {
   searchMatches,
   parseQuery,
   matchesQuery,
+  isRoleArn,
+  normalizeLaunchSets,
+  launchSetRoleCount,
+  LAUNCH_SET_MAX_TABS,
+  LAUNCH_SETS_MAX,
 } from "./util.js";
 
 (async function () {
@@ -84,6 +89,7 @@ import {
       JUMP_RECENTS: "aws_jump_recents",
       JUMP_PINNED: "aws_jump_pinned",
       JUMP_DESTS: "aws_jump_dests",
+      LAUNCH_SETS: "aws_launch_sets",
     },
     TAB_GROUP_MODES: ["role", "org", "off", "custom"],
     TAB_GROUP_MODE_LABELS: { role: "By role", org: "By org", off: "Off", custom: "Custom tag" },
@@ -688,6 +694,19 @@ import {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.JUMP_DESTS]: JSON.stringify(list),
         });
+        return true;
+      }, false);
+    },
+    async getLaunchSets() {
+      const raw = await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.LAUNCH_SETS);
+        return result[CONFIG.STORAGE_KEYS.LAUNCH_SETS] ?? null;
+      }, null);
+      return normalizeLaunchSets(raw);
+    },
+    async saveLaunchSets(list) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.LAUNCH_SETS]: list });
         return true;
       }, false);
     },
@@ -2335,6 +2354,9 @@ import {
     const roleArn = $role.find(".tm_signin_button").data("role-arn");
     const isJumpRow = $role.attr("data-jump") === "1";
 
+    // A previewed Launch Set shows only its own roles.
+    if (setPreview && (isJumpRow || !setPreview.arns.has(roleArn))) return false;
+
     // Scoped search: bare words hit everything; `field:value` scopes to a field;
     // space = AND, comma = OR within a field, `-` excludes, "..." = exact.
     const query = getQuery();
@@ -2492,7 +2514,7 @@ import {
 
       const filterCount = Object.values(activeFilters).flat().length;
       const hasSearch = searchTerm.length > 0;
-      const filtersActive = filterCount > 0 || hasSearch;
+      const filtersActive = filterCount > 0 || hasSearch || !!setPreview;
 
       // Toggle a global flag so the drag-and-drop layer can refuse to start
       // a reorder while the view is filtered (avoids unintuitive ordering of
@@ -2512,6 +2534,13 @@ import {
     },
 
     clearAll() {
+      // Clearing filters also leaves a Launch Set preview.
+      if (setPreview) {
+        setPreview = null;
+        renderSetRowHints(null);
+        renderSetBar(null);
+        LaunchSetsManager.render();
+      }
       activeFilters = emptyFilters();
       searchTerm = "";
 
@@ -2946,6 +2975,667 @@ import {
     return res.opened;
   };
 
+  // === LAUNCH SETS ===
+  // A set is a named list of console tabs — role, service, region — that open
+  // together in one click, gathered in one Chrome tab group. Typically one per
+  // ticket. The Sets column lists them; clicking a name previews the set (the
+  // listing shows only its roles), and Open launches it via launchSigninTabs.
+  let launchSetsCache = [];
+  // While a set is previewed: { id, arns: Set<roleArn> }. matchesFilters hides
+  // every row whose role isn't in it.
+  let setPreview = null;
+  // The Sets column shows the most recently used few; "More" shows the rest.
+  const SETS_SHOWN = 5;
+  let setsExpanded = false;
+
+  const newLaunchSetId = () => {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 12);
+  };
+
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  // What a tab lands on, for display: the configured service's name, the
+  // console home, or — for a tab saved from an open console — the page itself.
+  const serviceNameFor = (path) => {
+    if (!path) return "Console home";
+    const known = ServicesManager.getServicesSync().find((s) => s && s.path === path);
+    if (known) return known.name;
+    const first = path.split(/[/?#]/)[0] || path;
+    return first.length <= 4 ? first.toUpperCase() : first.charAt(0).toUpperCase() + first.slice(1);
+  };
+  const isKnownServicePath = (path) =>
+    !path || ServicesManager.getServicesSync().some((s) => s && s.path === path);
+
+  // Service <select> for a set's tab: the usual options, plus the tab's own
+  // saved page when it isn't one of the configured services.
+  const setServiceOptionsHTML = (path) => {
+    const base = ServicesManager.serviceOptionsHTML(path);
+    if (isKnownServicePath(path)) return base;
+    return `<option value="${escapeHtml(path)}" selected>${escapeHtml(serviceNameFor(path))} · saved page</option>${base}`;
+  };
+
+  // Account · role for a tab's role, from today's listing when it's there,
+  // else from the ARN itself.
+  const roleLabelFor = (roleArn) => {
+    const info = directRoleInfo(roleArn);
+    if (info) return { account: info.accountName, accountId: info.accountId, role: info.roleName, info };
+    const m = String(roleArn).match(/^arn:aws[a-z-]*:iam::(\d{12}):role\/(?:.*\/)?([^/]+)$/);
+    return { account: m ? m[1] : roleArn, accountId: m ? m[1] : "", role: m ? m[2] : "", info: null };
+  };
+
+  const LaunchSetsManager = {
+    async loadCache() {
+      launchSetsCache = await StorageManager.getLaunchSets();
+    },
+    find(id) {
+      return launchSetsCache.find((s) => s.id === id) || null;
+    },
+    findByName(name, exceptId) {
+      const n = String(name || "").trim().toLowerCase();
+      return launchSetsCache.find((s) => s.id !== exceptId && s.name.toLowerCase() === n) || null;
+    },
+    // Most recently opened first, then by name.
+    ordered() {
+      return [...launchSetsCache].sort(
+        (a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || a.name.localeCompare(b.name)
+      );
+    },
+    async saveAll(list) {
+      const clean = normalizeLaunchSets(list);
+      const ok = await StorageManager.saveLaunchSets(clean);
+      if (ok === false) {
+        showToast("Couldn't save your sets.", "error", CONFIG.TOAST_DURATION_LONG);
+        return false;
+      }
+      launchSetsCache = clean;
+      if (setPreview && !this.find(setPreview.id)) endSetPreview();
+      else if (setPreview) startSetPreview(setPreview.id, { keepFilters: true });
+      this.render();
+      return true;
+    },
+    async upsert(set) {
+      const i = launchSetsCache.findIndex((s) => s.id === set.id);
+      const list = launchSetsCache.slice();
+      if (i >= 0) list[i] = set;
+      else list.push(set);
+      return this.saveAll(list);
+    },
+    async remove(id) {
+      return this.saveAll(launchSetsCache.filter((s) => s.id !== id));
+    },
+    async touch(id) {
+      const set = this.find(id);
+      if (set) await this.upsert({ ...set, lastUsed: Date.now() });
+    },
+
+    render() {
+      const $list = $("#tm_sets_list");
+      if (!$list.length) return;
+      const sets = this.ordered();
+      if (!sets.length) {
+        $list.html(
+          `<div class="tm_sets_empty">Save the console tabs a ticket needs, then open them all in one click.</div>`
+        );
+        return;
+      }
+      const shown = setsExpanded ? sets : sets.slice(0, SETS_SHOWN);
+      const lines = shown.map((s) => {
+        const active = setPreview && setPreview.id === s.id;
+        const id = escapeHtml(s.id);
+        const n = s.tabs.length;
+        return `
+          <div class="tm_set_line">
+            <a href="#" class="tm_set_chip${active ? " active" : ""}" data-set-id="${id}" title="Show this set's roles in the listing">
+              <span class="tm_set_name">${escapeHtml(s.name)}</span>
+              <span class="tm_set_count">${plural(n, "tab")}</span>
+            </a>
+            <button type="button" class="tm_set_open" data-set-id="${id}" title="Open all ${plural(n, "tab")}">Open ↗</button>
+          </div>`;
+      }).join("");
+      const more = sets.length > SETS_SHOWN
+        ? `<a href="#" id="tm_sets_more">${setsExpanded ? "Fewer" : `More (${sets.length - SETS_SHOWN})`}</a>`
+        : "";
+      $list.html(lines + more);
+    },
+  };
+
+  // --- Preview: show only a set's roles, with a bar to open or edit it ---
+  // Each previewed row says what the set opens for it. The hint is CSS
+  // generated content from a data attribute, so it never becomes part of the
+  // role name that .text() reads for sign-in labels.
+  const setRowHintText = (tabs) => "opens " + tabs.map((t) => serviceNameFor(t.service)).join(" + ");
+
+  const renderSetRowHints = (set) => {
+    document.querySelectorAll(".tm_role_name[data-set-hint]").forEach((el) => el.removeAttribute("data-set-hint"));
+    if (!set) return;
+    const byRole = new Map();
+    set.tabs.forEach((t) => {
+      if (!byRole.has(t.roleArn)) byRole.set(t.roleArn, []);
+      byRole.get(t.roleArn).push(t);
+    });
+    for (const [roleArn, tabs] of byRole) {
+      const info = directRoleInfo(roleArn);
+      const el = info && info.$role.find(".tm_role_name")[0];
+      if (el) el.setAttribute("data-set-hint", setRowHintText(tabs));
+    }
+  };
+
+  const renderSetBar = (set) => {
+    $("#tm_set_bar").remove();
+    if (!set) return;
+    const ready = set.tabs.filter((t) => directRoleInfo(t.roleArn));
+    const missing = set.tabs.length - ready.length;
+    const roles = launchSetRoleCount(set);
+    const bits = [
+      `${plural(set.tabs.length, "tab")} across ${plural(roles, "role")}`,
+      set.group ? `tab group “${escapeHtml(set.group)}”` : "no tab group",
+    ];
+    if (missing) bits.push(`<span class="tm_set_bar_warn">${missing} not in today's role list</span>`);
+    const bar = `
+      <div id="tm_set_bar">
+        <strong>Set: ${escapeHtml(set.name)}</strong>
+        <span class="tm_set_bar_sub">${bits.join(" · ")}</span>
+        <span class="tm_set_bar_spacer"></span>
+        <a href="#" id="tm_set_bar_edit">Edit</a>
+        <a href="#" id="tm_set_bar_close">Show all roles</a>
+        <button type="button" class="tm_set_open tm_set_open_primary" data-set-id="${escapeHtml(set.id)}"${ready.length ? "" : " disabled"}>Open all (${ready.length}) ↗</button>
+      </div>`;
+    $("#tm_role_list").before(bar);
+  };
+
+  // Previewing replaces the current filters and search — it shows exactly the
+  // set's roles. Filters picked while previewing then narrow within the set.
+  const startSetPreview = (id, { keepFilters = false } = {}) => {
+    const set = LaunchSetsManager.find(id);
+    if (!set) return;
+    if (!keepFilters) {
+      activeFilters = emptyFilters();
+      searchTerm = "";
+      $(".tm_filter_button").removeClass("active");
+      getCachedElement(CONFIG.SELECTORS.SEARCH_INPUT).val("");
+    }
+    setPreview = { id, arns: new Set(set.tabs.map((t) => t.roleArn)) };
+    renderSetRowHints(set);
+    renderSetBar(set);
+    LaunchSetsManager.render();
+    FilterManager.applyFilters(true);
+  };
+
+  const endSetPreview = () => {
+    if (!setPreview) return;
+    setPreview = null;
+    renderSetRowHints(null);
+    renderSetBar(null);
+    LaunchSetsManager.render();
+    FilterManager.applyFilters(true);
+  };
+
+  // --- Opening a set ---
+  // What opening would cost in AWS sessions: tabs of one role share a session,
+  // and a role that already has one live costs nothing more.
+  const setSessionBudget = (infos) => {
+    const roleNameOf = (arn) => String(arn).split("/").pop();
+    const live = new Set(sessionsCache.map((s) => `${s.account}/${s.role}`));
+    const needed = infos.filter((i) => !live.has(`${i.accountId}/${roleNameOf(i.roleArn)}`)).length;
+    return { known: sessionsKnown, inUse: sessionsCache.length, needed, limit: sessionsLimit || 5 };
+  };
+
+  const confirmLaunchSet = (set, ready, missing, sensitive, budget) =>
+    new Promise((resolve) => {
+      const over = budget.known && budget.inUse + budget.needed > budget.limit;
+      const danger = sensitive.length > 0;
+      const accent = danger ? "#dc3545" : "#d69e2e";
+      const byRole = new Map();
+      ready.forEach((t) => {
+        if (!byRole.has(t.roleArn)) byRole.set(t.roleArn, []);
+        byRole.get(t.roleArn).push(t);
+      });
+      const flagged = new Map(sensitive.map((s) => [s.info.roleArn, s.reasons]));
+      const lineHTML = (label, where, badge, muted) => `
+        <div style="display: flex !important; align-items: center !important; gap: 10px !important; padding: 5px 0 !important; border-bottom: 1px solid #eef0f2 !important;${muted ? " color: #adb5bd !important;" : ""}">
+          <span style="flex: 1 !important; min-width: 0 !important;">${label}</span>
+          <span style="color: ${muted ? "#adb5bd" : "#6c757d"} !important; font-size: 12.5px !important; text-align: right !important;">${where}</span>
+          ${badge || ""}
+        </div>`;
+      const badge = (text, bg, fg) =>
+        `<span style="background: ${bg} !important; color: ${fg} !important; font-size: 11px !important; font-weight: 700 !important; border-radius: 3px !important; padding: 1px 6px !important; white-space: nowrap !important;">${escapeHtml(text)}</span>`;
+      const readyHTML = [...byRole].map(([roleArn, tabs]) => {
+        const l = roleLabelFor(roleArn);
+        const reasons = flagged.get(roleArn);
+        const label = `${reasons ? "<strong>" : ""}${escapeHtml(l.account)} · ${escapeHtml(l.role)}${reasons ? "</strong>" : ""}`;
+        const where = tabs.map((t) => escapeHtml(serviceNameFor(t.service))).join(", ") +
+          (tabs.length > 1 ? ` (${tabs.length} tabs)` : "");
+        return lineHTML(label, where, reasons ? badge(reasons.join(" · "), "#fdecee", "#b02a37") : "");
+      }).join("");
+      const missingRoles = [...new Set(missing.map((t) => t.roleArn))];
+      const missingHTML = missingRoles.map((roleArn) => {
+        const l = roleLabelFor(roleArn);
+        return lineHTML(`${escapeHtml(l.account)} · ${escapeHtml(l.role)}`, "", badge("Not in today's role list — skipped", "#f1f3f5", "#6c757d"), true);
+      }).join("");
+
+      const headline = danger
+        ? `<div style="background: #dc3545 !important; color: #fff !important; padding: 12px 20px !important; border-radius: 6px !important; font-size: 18px !important; font-weight: 700 !important; text-align: center !important; margin-bottom: 14px !important; box-shadow: 0 2px 6px rgba(220,53,69,0.25) !important;">Includes ${plural(sensitive.length, "sensitive role")}</div>`
+        : "";
+      const sessionsHTML = over
+        ? `<div style="border: 1px solid #f0c64b !important; background: #fff8e1 !important; border-radius: 4px !important; padding: 9px 12px !important; margin: 0 0 18px 0 !important; font-size: 13px !important; color: #16191f !important;">
+             <strong>AWS sessions: ${budget.inUse} in use + ${budget.needed} new = ${budget.inUse + budget.needed} of ${budget.limit}.</strong>
+             AWS allows ${budget.limit} console sessions at once, so some of these tabs won't sign in. Sign a session out first, or open anyway.
+           </div>`
+        : "";
+      const n = ready.length;
+
+      const modalHTML = `
+        <div id="tm_set_open_modal" style="
+            position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+            background: rgba(0,0,0,0.55) !important; z-index: 10001 !important;
+            display: flex !important; align-items: center !important; justify-content: center !important;
+        ">
+          <div style="
+              background: white !important; border-radius: 8px !important; padding: 22px 24px !important;
+              max-width: 560px !important; width: 90% !important; max-height: 84vh !important; overflow-y: auto !important;
+              border-top: 6px solid ${accent} !important; box-shadow: 0 8px 32px rgba(0,0,0,0.25) !important;
+              font-size: 13.5px !important; color: #16191f !important;
+          ">
+            <div style="font-size: 12px !important; font-weight: 600 !important; letter-spacing: 1px !important; text-transform: uppercase !important; color: ${accent} !important; margin-bottom: 8px !important;">Open set · ${escapeHtml(set.name)}</div>
+            ${headline}
+            <div style="background: #f8f9fa !important; border: 1px solid #e1e4e8 !important; border-radius: 4px !important; padding: 6px 12px !important; margin: 0 0 14px 0 !important;">
+              ${readyHTML}${missingHTML}
+            </div>
+            ${sessionsHTML}
+            <div style="text-align: right !important;">
+              <button type="button" data-action="cancel" class="tm_sv_btn" style="margin-right: 8px !important;">Cancel</button>
+              ${over ? `<button type="button" data-action="sessions" class="tm_sv_btn" style="margin-right: 8px !important;">Manage sessions…</button>` : ""}
+              <button type="button" data-action="confirm" style="
+                  padding: 7px 14px !important; border: 1px solid ${danger ? "#dc3545" : "#0073bb"} !important;
+                  background: ${danger ? "#dc3545" : "#0073bb"} !important; color: white !important; border-radius: 4px !important;
+                  cursor: pointer !important; font-weight: 600 !important; font-size: 13px !important;
+              ">${over ? "Open anyway" : `Open ${plural(n, "tab")}`}</button>
+            </div>
+          </div>
+        </div>`;
+      $("body").append(modalHTML);
+      const $m = $("#tm_set_open_modal");
+      const close = (result) => { $m.remove(); resolve(result); };
+      $m.on("click", function (e) { if (e.target === this) close(false); });
+      $m.find('[data-action="cancel"]').on("click", () => close(false));
+      $m.find('[data-action="confirm"]').on("click", () => close(true));
+      $m.find('[data-action="sessions"]').on("click", () => {
+        close(false);
+        const pill = document.getElementById("tm_sessions_pill");
+        if (pill) pill.click();
+      });
+    });
+
+  let launchInFlight = false;
+
+  const openLaunchSet = async (id) => {
+    const set = LaunchSetsManager.find(id);
+    if (!set || launchInFlight) return;
+    const ready = [];
+    const missing = [];
+    for (const t of set.tabs) (directRoleInfo(t.roleArn) ? ready : missing).push(t);
+    if (!ready.length) {
+      showToast(`None of ${set.name}'s roles are in today's role list.`, "error", CONFIG.TOAST_DURATION_LONG);
+      return;
+    }
+    const infos = [...new Set(ready.map((t) => t.roleArn))].map(directRoleInfo);
+    const sensitive = infos
+      .map((info) => ({ info, reasons: sensitiveSignInReasons(info.roleName, info.accountName, info.accountId) }))
+      .filter((s) => s.reasons.length);
+    const budget = setSessionBudget(infos);
+    const over = budget.known && budget.inUse + budget.needed > budget.limit;
+    // Nothing to warn about: one click opens the set.
+    if (sensitive.length || missing.length || over) {
+      const ok = await confirmLaunchSet(set, ready, missing, sensitive, budget);
+      if (!ok) return;
+    }
+    launchInFlight = true;
+    try {
+      const opened = await launchSigninTabs(ready, { tag: set.group });
+      showToast(`Opening ${plural(opened, "tab")} for ${set.name}…`, "info", CONFIG.TOAST_DURATION_LONG);
+      await LaunchSetsManager.touch(id);
+    } catch (err) {
+      showToast(`Couldn't open ${set.name}: ${err && err.message ? err.message : err}`, "error", CONFIG.TOAST_DURATION_LONG);
+    } finally {
+      launchInFlight = false;
+    }
+  };
+
+  // --- Save current view as a set ---
+  // The visible direct rows, each with the service and region its dropdowns
+  // are showing now.
+  const visibleDirectRows = () => {
+    const rows = [];
+    $(".saml-role").each(function () {
+      if (this.style.display === "none" || this.getAttribute("data-jump") === "1") return;
+      const radio = this.querySelector('input[type="radio"][name="roleIndex"]');
+      if (!radio || !isRoleArn(radio.value)) return;
+      const $r = $(this);
+      rows.push({
+        roleArn: radio.value,
+        service: String($r.find(".tm_service_dropdown").val() || ""),
+        region: String($r.find(".tm_region_dropdown").val() || ""),
+        account: $r.find(".tm_account_name").text().trim(),
+        role: $r.find(".tm_role_name").text().trim(),
+      });
+    });
+    return rows;
+  };
+
+  // A name to start from: the search text, or the single tag being filtered on.
+  const suggestSetName = () => {
+    if (searchTerm.trim()) return searchTerm.trim().replace(/^tag:/i, "").slice(0, 64);
+    if (activeFilters.tag && activeFilters.tag.length === 1) return String(activeFilters.tag[0]).slice(0, 64);
+    return "";
+  };
+
+  const modalShell = (id, title, intro, body, footer, width = 640) => `
+    <div id="${id}" style="
+        position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+        background: rgba(0,0,0,0.5) !important; z-index: 10001 !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
+    ">
+      <div style="
+          background: white !important; border-radius: 8px !important; padding: 20px !important;
+          max-width: ${width}px !important; width: 94% !important; max-height: 84vh !important; overflow-y: auto !important;
+          font-size: 13.5px !important; color: #16191f !important;
+      ">
+        <h3 style="margin: 0 0 12px 0 !important; color: #16191f !important;">${title}</h3>
+        ${intro ? `<p style="margin: 0 0 14px 0 !important; color: #6c757d !important; font-size: 13.5px !important; line-height: 1.45 !important;">${intro}</p>` : ""}
+        ${body}
+        <div class="tm_set_modal_error" style="display: none; color: #b02a37 !important; font-size: 13px !important; margin-top: 10px !important;"></div>
+        <div class="tm_set_modal_foot">${footer}</div>
+      </div>
+    </div>`;
+
+  const setNameFieldsHTML = (name, group) => `
+    <div class="tm_set_fields">
+      <label>Set name<input type="text" class="tm_set_name_input" maxlength="64" value="${escapeHtml(name)}" placeholder="e.g. OPS-1234" autocomplete="off"></label>
+      <label>Tab group<input type="text" class="tm_set_group_input" maxlength="64" value="${escapeHtml(group)}" placeholder="no tab group" autocomplete="off"></label>
+    </div>`;
+
+  // Keep the tab-group field following the name until the user edits it.
+  const bindNameToGroup = ($m, following) => {
+    let follow = following;
+    $m.find(".tm_set_group_input").on("input", () => { follow = false; });
+    $m.find(".tm_set_name_input").on("input", function () {
+      if (follow) $m.find(".tm_set_group_input").val(this.value);
+    });
+  };
+
+  const setModalError = ($m, text) => {
+    const el = $m.find(".tm_set_modal_error")[0];
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.setProperty("display", text ? "block" : "none", "important");
+  };
+
+  const readSetNames = ($m, exceptId) => {
+    const name = String($m.find(".tm_set_name_input").val() || "").trim();
+    const group = String($m.find(".tm_set_group_input").val() || "").trim();
+    if (!name) return { error: "Give the set a name." };
+    if (LaunchSetsManager.findByName(name, exceptId)) {
+      return { error: `There's already a set called “${name}”. Pick another name, or edit that set.` };
+    }
+    return { name, group };
+  };
+
+  const showSaveViewModal = () => {
+    const rows = visibleDirectRows();
+    if (!rows.length) {
+      showToast("Filter the listing to the roles you want in the set first.", "info", CONFIG.TOAST_DURATION_LONG);
+      return;
+    }
+    $("#tm_set_save_modal").remove();
+    const name = suggestSetName();
+    const listHTML = rows.map((r, i) => `
+      <label class="tm_set_pick">
+        <input type="checkbox" data-row="${i}"${i < LAUNCH_SET_MAX_TABS ? " checked" : ""}>
+        <span class="tm_set_pick_who">${escapeHtml(r.account)} · ${escapeHtml(r.role)}</span>
+        <span class="tm_set_pick_where">${escapeHtml(serviceNameFor(r.service))}${r.region ? ` · ${escapeHtml(r.region)}` : ""}</span>
+      </label>`).join("");
+    const body = `
+      ${setNameFieldsHTML(name, name)}
+      <div class="tm_set_list_head"><span class="tm_set_count_label"></span><a href="#" class="tm_set_toggle_all">Select none</a></div>
+      <div class="tm_set_picklist">${listHTML}</div>`;
+    const footer = `
+      <span></span>
+      <span><button type="button" class="tm_sv_btn" data-action="cancel">Cancel</button>
+      <button type="button" class="tm_sv_btn tm_set_primary" data-action="save">Save set</button></span>`;
+    $("body").append(modalShell(
+      "tm_set_save_modal",
+      "Save current view as a set",
+      `Every role the listing shows now, each opening on the service and region its row is set to. Untick the ones you don't need. You can add more tabs per role afterwards with <strong>Edit</strong>.`,
+      body,
+      footer
+    ));
+    const $m = $("#tm_set_save_modal");
+    bindNameToGroup($m, true);
+    const refreshCount = () => {
+      const n = $m.find(".tm_set_pick input:checked").length;
+      $m.find(".tm_set_count_label").text(`${plural(n, "tab")} selected${n > LAUNCH_SET_MAX_TABS ? ` — a set holds at most ${LAUNCH_SET_MAX_TABS}` : ""}`);
+      $m.find(".tm_set_toggle_all").text(n ? "Select none" : "Select all");
+    };
+    refreshCount();
+    $m.on("change", ".tm_set_pick input", refreshCount);
+    $m.find(".tm_set_toggle_all").on("click", (e) => {
+      e.preventDefault();
+      const any = $m.find(".tm_set_pick input:checked").length > 0;
+      $m.find(".tm_set_pick input").prop("checked", !any);
+      refreshCount();
+    });
+    $m.on("click", function (e) { if (e.target === this) $m.remove(); });
+    $m.find('[data-action="cancel"]').on("click", () => $m.remove());
+    $m.find('[data-action="save"]').on("click", async () => {
+      const names = readSetNames($m);
+      if (names.error) return setModalError($m, names.error);
+      const picked = $m.find(".tm_set_pick input:checked").get().map((el) => rows[Number(el.getAttribute("data-row"))]);
+      if (!picked.length) return setModalError($m, "Tick at least one role.");
+      if (picked.length > LAUNCH_SET_MAX_TABS) {
+        return setModalError($m, `A set holds at most ${LAUNCH_SET_MAX_TABS} tabs; untick ${picked.length - LAUNCH_SET_MAX_TABS}.`);
+      }
+      const set = {
+        id: newLaunchSetId(),
+        name: names.name,
+        group: names.group,
+        tabs: picked.map((r) => ({ roleArn: r.roleArn, service: r.service, region: r.region })),
+        lastUsed: 0,
+      };
+      if (await LaunchSetsManager.upsert(set)) {
+        $m.remove();
+        showToast(`Saved ${set.name} (${plural(set.tabs.length, "tab")}).`, "success", CONFIG.TOAST_DURATION);
+        startSetPreview(set.id);
+      }
+    });
+    $m.find(".tm_set_name_input").trigger("focus");
+  };
+
+  // --- Edit a set: its tabs, one line each, grouped by role ---
+  const showEditSetModal = (id) => {
+    const set = LaunchSetsManager.find(id);
+    if (!set) return;
+    $("#tm_set_edit_modal").remove();
+    // Working copy; nothing is saved until Save.
+    let tabs = set.tabs.map((t) => ({ ...t }));
+
+    const allDirectRoles = () => {
+      const out = [];
+      document.querySelectorAll('input[type="radio"][name="roleIndex"]').forEach((r) => {
+        const info = directRoleInfo(r.value);
+        if (info) out.push(info);
+      });
+      return out;
+    };
+
+    const gridHTML = () => {
+      // Tabs of one role stay together, in the order roles first appear.
+      const order = [];
+      tabs.forEach((t) => { if (!order.includes(t.roleArn)) order.push(t.roleArn); });
+      const rowsHTML = order.map((roleArn) => {
+        const l = roleLabelFor(roleArn);
+        const color = l.info && l.info.env !== "default" ? EnvironmentsManager.colorFor(l.info.env) : "#ced4da";
+        const idxs = tabs.map((t, i) => (t.roleArn === roleArn ? i : -1)).filter((i) => i >= 0);
+        const lines = idxs.map((i, k) => {
+          const t = tabs[i];
+          const who = k === 0
+            ? `<div class="tm_set_who"><strong>${escapeHtml(l.account)}</strong> · ${escapeHtml(l.role)}
+                 <small>${escapeHtml(l.accountId)}${l.info ? "" : " · not in today's role list"}</small></div>`
+            : `<div class="tm_set_who tm_set_same">↳ same role, another tab</div>`;
+          const page = isKnownServicePath(t.service)
+            ? `<span class="tm_set_page_none">service home</span>`
+            : `<span title="${escapeHtml(t.service)}">${escapeHtml(t.service)}</span>`;
+          return `
+            <div class="tm_set_grid tm_set_row${k ? " tm_set_row_extra" : ""}" data-tab="${i}">
+              <span class="tm_set_stripe" style="background: ${escapeHtml(color)} !important;"></span>
+              ${who}
+              <select class="tm_set_service" data-tab="${i}">${setServiceOptionsHTML(t.service)}</select>
+              <select class="tm_set_region" data-tab="${i}"><option value=""${t.region ? "" : " selected"}>Default region</option>${RegionsManager.regionOptionsHTML(t.region)}</select>
+              <span class="tm_set_page">${page}</span>
+              <button type="button" class="tm_set_remove" data-tab="${i}" title="Remove this tab">✕</button>
+            </div>`;
+        }).join("");
+        return `${lines}<div class="tm_set_grid tm_set_addrow"><span></span><a href="#" class="tm_set_addtab" data-role="${escapeHtml(roleArn)}">+ Add tab for this role</a></div>`;
+      }).join("");
+      const inSet = new Set(tabs.map((t) => t.roleArn));
+      const options = allDirectRoles()
+        .filter((i) => !inSet.has(i.roleArn))
+        .map((i) => `<option value="${escapeHtml(i.roleArn)}">${escapeHtml(i.accountName)} · ${escapeHtml(i.roleName)}</option>`)
+        .join("");
+      return `
+        <div class="tm_set_grid tm_set_ghead"><span></span><span>Account · role</span><span>Land on service</span><span>Land in region</span><span>Page</span><span></span></div>
+        ${rowsHTML || `<div class="tm_set_empty_grid">No tabs left. Add a role below, or Delete the set.</div>`}
+        <div class="tm_set_addrole">
+          <select class="tm_set_addrole_select"><option value="">+ Add a role…</option>${options}</select>
+          <span class="tm_set_tabcount">${plural(tabs.length, "tab")} (max ${LAUNCH_SET_MAX_TABS})</span>
+        </div>`;
+    };
+
+    const body = `${setNameFieldsHTML(set.name, set.group)}<div class="tm_set_editgrid">${gridHTML()}</div>`;
+    const footer = `
+      <button type="button" class="tm_sv_btn tm_set_delete" data-action="delete">Delete set</button>
+      <span><button type="button" class="tm_sv_btn" data-action="cancel">Cancel</button>
+      <button type="button" class="tm_sv_btn tm_set_primary" data-action="save">Save set</button></span>`;
+    $("body").append(modalShell(
+      "tm_set_edit_modal",
+      `Edit set · ${escapeHtml(set.name)}`,
+      "",
+      body,
+      footer,
+      920
+    ));
+    const $m = $("#tm_set_edit_modal");
+    bindNameToGroup($m, set.group === set.name);
+    const repaint = () => $m.find(".tm_set_editgrid").html(gridHTML());
+
+    $m.on("change", ".tm_set_service", function () {
+      tabs[Number(this.getAttribute("data-tab"))].service = String(this.value || "");
+      repaint();
+    });
+    $m.on("change", ".tm_set_region", function () {
+      tabs[Number(this.getAttribute("data-tab"))].region = String(this.value || "");
+    });
+    $m.on("click", ".tm_set_remove", function () {
+      tabs.splice(Number(this.getAttribute("data-tab")), 1);
+      repaint();
+    });
+    $m.on("click", ".tm_set_addtab", function (e) {
+      e.preventDefault();
+      if (tabs.length >= LAUNCH_SET_MAX_TABS) return setModalError($m, `A set holds at most ${LAUNCH_SET_MAX_TABS} tabs.`);
+      const roleArn = this.getAttribute("data-role");
+      const last = tabs.map((t) => t.roleArn).lastIndexOf(roleArn);
+      tabs.splice(last + 1, 0, { roleArn, service: "", region: last >= 0 ? tabs[last].region : "" });
+      repaint();
+    });
+    $m.on("change", ".tm_set_addrole_select", function () {
+      const roleArn = String(this.value || "");
+      if (!roleArn) return;
+      if (tabs.length >= LAUNCH_SET_MAX_TABS) return setModalError($m, `A set holds at most ${LAUNCH_SET_MAX_TABS} tabs.`);
+      const info = directRoleInfo(roleArn);
+      tabs.push({
+        roleArn,
+        service: info ? String(info.$role.find(".tm_service_dropdown").val() || "") : "",
+        region: info ? String(info.$role.find(".tm_region_dropdown").val() || "") : "",
+      });
+      repaint();
+    });
+
+    let deleteArmed = false;
+    $m.on("click", function (e) { if (e.target === this) $m.remove(); });
+    $m.find('[data-action="cancel"]').on("click", () => $m.remove());
+    $m.find('[data-action="delete"]').on("click", async function () {
+      if (!deleteArmed) {
+        deleteArmed = true;
+        this.textContent = "Click again to delete";
+        this.classList.add("tm_set_delete_armed");
+        return;
+      }
+      if (await LaunchSetsManager.remove(set.id)) {
+        $m.remove();
+        showToast(`Deleted ${set.name}.`, "info", CONFIG.TOAST_DURATION);
+      }
+    });
+    $m.find('[data-action="save"]').on("click", async () => {
+      const names = readSetNames($m, set.id);
+      if (names.error) return setModalError($m, names.error);
+      if (!tabs.length) return setModalError($m, "A set needs at least one tab. Add one, or Delete the set.");
+      const saved = await LaunchSetsManager.upsert({ ...set, name: names.name, group: names.group, tabs });
+      if (saved) {
+        $m.remove();
+        showToast(`Saved ${names.name}.`, "success", CONFIG.TOAST_DURATION);
+      }
+    });
+  };
+
+  // --- Sets column wiring ---
+  const closeSetsMenu = () => $("#tm_sets_menu").css("display", "none");
+
+  $("body").on("click", "#tm_sets_new", function (e) {
+    e.preventDefault();
+    const $menu = $("#tm_sets_menu");
+    $menu.css("display", $menu.css("display") === "none" ? "block" : "none");
+  });
+  $(document).on("click", function (e) {
+    if (!e.target.closest || !e.target.closest("#tm_sets_new, #tm_sets_menu")) closeSetsMenu();
+  });
+  $("body").on("click", "#tm_sets_menu [data-act]", function (e) {
+    e.preventDefault();
+    closeSetsMenu();
+    const act = this.getAttribute("data-act");
+    if (act === "view") showSaveViewModal();
+  });
+  // The search card's "save as set": the search is usually the ticket id, so
+  // this is the shortest path from "find the ticket's accounts" to a set.
+  $("body").on("click", "#tm_search_saveset_btn", function (e) {
+    e.preventDefault();
+    showSaveViewModal();
+  });
+  $("body").on("click", ".tm_set_chip", function (e) {
+    e.preventDefault();
+    const id = this.getAttribute("data-set-id");
+    if (setPreview && setPreview.id === id) endSetPreview();
+    else startSetPreview(id);
+  });
+  $("body").on("click", ".tm_set_open", function (e) {
+    e.preventDefault();
+    if (this.disabled) return;
+    openLaunchSet(this.getAttribute("data-set-id"));
+  });
+  $("body").on("click", "#tm_sets_more", function (e) {
+    e.preventDefault();
+    setsExpanded = !setsExpanded;
+    LaunchSetsManager.render();
+  });
+  $("body").on("click", "#tm_set_bar_close", function (e) {
+    e.preventDefault();
+    endSetPreview();
+  });
+  $("body").on("click", "#tm_set_bar_edit", function (e) {
+    e.preventDefault();
+    if (setPreview) showEditSetModal(setPreview.id);
+  });
+
   // --- Clean up original UI ---
   $("h1.background").remove();
   $("form p").each(function () {
@@ -2998,6 +3688,18 @@ import {
                         </div>
                     </div>
                 </div>
+                <div class="tm_sets_column" id="tm_sets_column">
+                    <div class="tm_sets_head">
+                        <span class="tm_frow_label">Sets</span>
+                        <div class="tm_sets_new_wrap">
+                            <button type="button" id="tm_sets_new" title="Save a set of console tabs to open together">+ New set ▾</button>
+                            <div id="tm_sets_menu" style="display: none;">
+                                <a href="#" data-act="view" title="Every role the listing shows now, with its service and region">Save current view…</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="tm_sets_list"></div>
+                </div>
                 <div class="tm_right_column">
                     <div id="tm_search_container">
                         <div id="tm_search_pop">
@@ -3009,6 +3711,7 @@ import {
                             <div id="tm_search_foot">
                                 <div id="tm_search_save">
                                     <button type="button" id="tm_search_save_btn" title="Save this search and its filters as a reusable Shortcut">☆ save as shortcut</button>
+                                    <button type="button" id="tm_search_saveset_btn" title="Save the roles this search shows as a Launch Set — open them all in one click">↗ save as set</button>
                                     <span id="tm_search_save_form">
                                         <input type="text" id="tm_search_save_name" placeholder="shortcut name" autocomplete="off" maxlength="40">
                                         <button type="button" id="tm_search_save_go">save</button>
@@ -3823,6 +4526,14 @@ import {
             cursor: pointer !important;
         }
         #tm_search_save_btn:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        #tm_search_saveset_btn {
+            display: inline-flex !important; align-items: center !important; gap: 4px !important; margin-left: 4px !important;
+            border: 1px solid #d5d9de !important; background: transparent !important; color: #57606a !important;
+            border-radius: 4px !important; padding: 3px 8px !important; font-size: 11.5px !important;
+            font-family: inherit !important; cursor: pointer !important;
+        }
+        #tm_search_saveset_btn:hover { border-color: #0073bb !important; color: #0073bb !important; }
+        #tm_search_save.tm_saving #tm_search_saveset_btn { display: none !important; }
         #tm_search_save_form { display: none !important; align-items: center !important; gap: 5px !important; }
         #tm_search_save.tm_saving #tm_search_save_btn { display: none !important; }
         #tm_search_save.tm_saving #tm_search_save_form { display: flex !important; }
@@ -3846,7 +4557,8 @@ import {
             font-family: inherit !important;
             cursor: pointer !important;
         }
-        body.tm_theme_dark #tm_search_save_btn { border-color: #55606e !important; color: #adb5bd !important; }
+        body.tm_theme_dark #tm_search_save_btn,
+        body.tm_theme_dark #tm_search_saveset_btn { border-color: #55606e !important; color: #adb5bd !important; }
         body.tm_theme_dark #tm_search_save_name { background: #3a4453 !important; color: #e9ecef !important; }
         body.tm_theme_dark #tm_search_container:focus-within #tm_search_foot.tm_foot_on { border-top-color: #3a4148 !important; }
         .tm_suggest_chips { display: flex !important; flex-wrap: wrap !important; gap: 5px !important; }
@@ -4845,8 +5557,171 @@ import {
         }
     `;
 
+  // Launch Sets: the Sets column, set bar, row hints and the set dialogs.
+  const launchSetsCss = `
+        .tm_sets_column {
+            flex: 0 0 250px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 6px !important;
+            padding: 0 15px !important;
+            min-width: 0 !important;
+        }
+        .tm_sets_head {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            min-height: 25px !important;
+        }
+        .tm_sets_head .tm_frow_label { width: auto !important; text-align: left !important; }
+        .tm_sets_new_wrap { position: relative !important; }
+        #tm_sets_new {
+            border: 0 !important; background: transparent !important; color: #0073bb !important;
+            font-size: 12.5px !important; cursor: pointer !important; padding: 2px 0 !important; font-family: inherit !important;
+        }
+        #tm_sets_new:hover { text-decoration: underline !important; }
+        #tm_sets_menu {
+            position: absolute !important; right: 0 !important; top: calc(100% + 4px) !important; z-index: 10000 !important;
+            min-width: 190px !important; background: white !important; border: 1px solid #ccc !important;
+            border-radius: 6px !important; box-shadow: 0 8px 24px rgba(0,0,0,0.16) !important; padding: 4px 0 !important;
+        }
+        #tm_sets_menu a {
+            display: block !important; padding: 7px 12px !important; color: #16191f !important;
+            text-decoration: none !important; font-size: 13px !important; white-space: nowrap !important;
+        }
+        #tm_sets_menu a:hover { background: #f1f3f5 !important; }
+        #tm_sets_list { display: flex !important; flex-direction: column !important; gap: 6px !important; }
+        .tm_sets_empty { color: #6c757d !important; font-size: 12.5px !important; line-height: 1.45 !important; }
+        .tm_set_line { display: flex !important; align-items: center !important; gap: 6px !important; }
+        .tm_set_chip {
+            flex: 1 1 auto !important; min-width: 0 !important;
+            display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important;
+            padding: 3px 11px !important; border: 1px solid #adb5bd !important; border-radius: 15px !important;
+            color: #16191f !important; background: #fff !important; text-decoration: none !important;
+            font-size: 13px !important; cursor: pointer !important; transition: all 0.2s ease !important;
+        }
+        .tm_set_chip:hover { background: #e9ecef !important; }
+        .tm_set_chip.active { background: #0073bb !important; border-color: #0073bb !important; color: #fff !important; }
+        .tm_set_name { overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+        .tm_set_count { flex: none !important; font-size: 11.5px !important; color: #6c757d !important; }
+        .tm_set_chip.active .tm_set_count { color: #cfe3f3 !important; }
+        .tm_set_open {
+            flex: none !important; border: 1px solid #0073bb !important; background: #fff !important; color: #0073bb !important;
+            border-radius: 4px !important; font-size: 12px !important; font-weight: 600 !important; padding: 3px 9px !important;
+            cursor: pointer !important; white-space: nowrap !important; font-family: inherit !important;
+        }
+        .tm_set_open:hover { background: #e7f2fb !important; }
+        .tm_set_open.tm_set_open_primary { background: #0073bb !important; color: #fff !important; padding: 6px 14px !important; font-size: 13px !important; }
+        .tm_set_open:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
+        #tm_sets_more { font-size: 12.5px !important; color: #0073bb !important; text-decoration: none !important; }
+
+        #tm_set_bar {
+            display: flex !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important;
+            background: #eef6fc !important; border: 1px solid #b3d6ee !important; border-radius: 6px !important;
+            padding: 9px 16px !important; margin: 0 0 10px 0 !important; font-size: 13px !important; color: #16191f !important;
+        }
+        .tm_set_bar_sub { color: #4a5568 !important; }
+        .tm_set_bar_warn { color: #b02a37 !important; }
+        .tm_set_bar_spacer { flex: 1 !important; }
+        #tm_set_bar a { color: #0073bb !important; font-size: 13px !important; }
+        .tm_role_name[data-set-hint] { overflow: visible !important; white-space: normal !important; line-height: 1.25 !important; }
+        .tm_role_name[data-set-hint]::after {
+            content: attr(data-set-hint);
+            display: block; font-size: 11px; color: #0073bb; font-weight: 400;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+
+        .tm_set_modal_foot {
+            display: flex !important; justify-content: space-between !important; align-items: center !important;
+            gap: 8px !important; margin-top: 16px !important;
+        }
+        .tm_set_primary { background: #0073bb !important; border-color: #0073bb !important; color: #fff !important; font-weight: 600 !important; }
+        .tm_set_primary:hover:not(:disabled) { color: #fff !important; background: #005f9e !important; }
+        .tm_set_delete { color: #dc3545 !important; }
+        .tm_set_delete.tm_set_delete_armed { background: #dc3545 !important; border-color: #dc3545 !important; color: #fff !important; }
+        .tm_set_fields { display: flex !important; gap: 14px !important; flex-wrap: wrap !important; margin-bottom: 14px !important; }
+        .tm_set_fields label {
+            display: flex !important; flex-direction: column !important; gap: 4px !important; flex: 1 1 200px !important;
+            font-size: 11px !important; text-transform: uppercase !important; letter-spacing: 0.04em !important; color: #6c757d !important;
+        }
+        .tm_set_fields input {
+            border: 1px solid #ccc !important; border-radius: 4px !important; padding: 6px 9px !important;
+            font-size: 13.5px !important; text-transform: none !important; letter-spacing: normal !important;
+            color: #16191f !important; font-family: inherit !important;
+        }
+        .tm_set_list_head { display: flex !important; justify-content: space-between !important; font-size: 12.5px !important; color: #6c757d !important; margin-bottom: 6px !important; }
+        .tm_set_list_head a { color: #0073bb !important; }
+        .tm_set_picklist { border: 1px solid #e1e4e8 !important; border-radius: 5px !important; max-height: 46vh !important; overflow-y: auto !important; }
+        .tm_set_pick {
+            display: grid !important; grid-template-columns: 18px 1fr auto !important; gap: 10px !important; align-items: center !important;
+            padding: 7px 10px !important; font-size: 13px !important; cursor: pointer !important;
+        }
+        .tm_set_pick + .tm_set_pick { border-top: 1px solid #f1f3f5 !important; }
+        .tm_set_pick_where { color: #6c757d !important; font-size: 12px !important; }
+
+        .tm_set_grid {
+            display: grid !important; grid-template-columns: 6px minmax(160px, 1.4fr) 170px 180px minmax(100px, 1fr) 26px !important;
+            gap: 10px !important; align-items: center !important;
+        }
+        .tm_set_ghead {
+            font-size: 11px !important; text-transform: uppercase !important; letter-spacing: 0.04em !important; color: #6c757d !important;
+            padding: 0 6px 6px !important; border-bottom: 1px solid #e9ecef !important;
+        }
+        .tm_set_row { padding: 7px 6px !important; border-top: 1px solid #f1f3f5 !important; }
+        .tm_set_row_extra { background: #f3f9fd !important; border-top: 0 !important; }
+        .tm_set_stripe { width: 4px !important; height: 28px !important; border-radius: 2px !important; }
+        .tm_set_who { font-size: 13px !important; min-width: 0 !important; overflow-wrap: anywhere !important; }
+        .tm_set_who small { display: block !important; color: #6c757d !important; font-size: 11.5px !important; }
+        .tm_set_same { color: #adb5bd !important; font-size: 12px !important; padding-left: 10px !important; }
+        .tm_set_grid select {
+            width: 100% !important; border: 1px solid #ccc !important; border-radius: 4px !important; padding: 5px 6px !important;
+            font-size: 13px !important; background: #fff !important; color: #16191f !important; font-family: inherit !important;
+        }
+        .tm_set_page {
+            font-size: 12px !important; color: #4a5568 !important; overflow: hidden !important;
+            text-overflow: ellipsis !important; white-space: nowrap !important; min-width: 0 !important;
+        }
+        .tm_set_page_none { color: #adb5bd !important; }
+        .tm_set_remove { border: 0 !important; background: transparent !important; color: #adb5bd !important; cursor: pointer !important; font-size: 14px !important; }
+        .tm_set_remove:hover { color: #dc3545 !important; }
+        .tm_set_addrow { padding: 0 6px 6px !important; }
+        .tm_set_addtab { color: #0073bb !important; font-size: 12.5px !important; grid-column: 2 / span 2 !important; }
+        .tm_set_addrole { display: flex !important; align-items: center !important; gap: 12px !important; margin-top: 12px !important; }
+        .tm_set_addrole_select {
+            border: 1px solid #ccc !important; border-radius: 4px !important; padding: 5px 6px !important;
+            font-size: 13px !important; background: #fff !important; color: #16191f !important; max-width: 60% !important;
+        }
+        .tm_set_tabcount { color: #6c757d !important; font-size: 12.5px !important; }
+        .tm_set_empty_grid { color: #6c757d !important; padding: 12px 6px !important; }
+
+        body.tm_theme_dark .tm_set_chip { background-color: #4a5568 !important; color: #e9ecef !important; border-color: #6b7280 !important; }
+        body.tm_theme_dark .tm_set_chip:hover { background-color: #5a6578 !important; }
+        body.tm_theme_dark .tm_set_chip.active { background-color: #3182ce !important; border-color: #3182ce !important; }
+        body.tm_theme_dark .tm_set_count { color: #cbd5e0 !important; }
+        body.tm_theme_dark .tm_set_open { background: transparent !important; color: #63b3ed !important; border-color: #63b3ed !important; }
+        body.tm_theme_dark .tm_set_open.tm_set_open_primary { background: #3182ce !important; color: #fff !important; border-color: #3182ce !important; }
+        body.tm_theme_dark .tm_sets_empty { color: #a0aec0 !important; }
+        body.tm_theme_dark #tm_sets_menu { background: #2d3748 !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark #tm_sets_menu a { color: #e9ecef !important; }
+        body.tm_theme_dark #tm_sets_menu a:hover { background: #4a5568 !important; }
+        body.tm_theme_dark #tm_set_bar { background: #1f3a52 !important; border-color: #2c5282 !important; color: #e9ecef !important; }
+        body.tm_theme_dark .tm_set_bar_sub { color: #cbd5e0 !important; }
+        body.tm_theme_dark #tm_set_bar a { color: #63b3ed !important; }
+        body.tm_theme_dark .tm_role_name[data-set-hint]::after { color: #90cdf4; }
+        body.tm_theme_dark .tm_set_grid select,
+        body.tm_theme_dark .tm_set_addrole_select { background: #2d3748 !important; color: #e9ecef !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_set_row { border-top-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_set_row_extra { background: #25303d !important; }
+        body.tm_theme_dark .tm_set_ghead { border-bottom-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_set_picklist { border-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_set_pick + .tm_set_pick { border-top-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_set_page { color: #cbd5e0 !important; }
+
+        body.tm_compact_mode .tm_sets_column { flex-basis: 220px !important; }
+  `;
+
   const styleEl = document.createElement("style");
-  styleEl.textContent = css;
+  styleEl.textContent = css + launchSetsCss;
   document.head.appendChild(styleEl);
 
   // Load services and last selections before transforming roles (needed for dropdown generation)
@@ -4858,6 +5733,7 @@ import {
   await AccountTagsManager.loadCache();
   await AssumeProfilesManager.loadCache();
   await JumpDestinationsManager.loadCache();
+  await LaunchSetsManager.loadCache();
   jumpRecentsCache = await StorageManager.getJumpRecents();
   jumpPinnedCache = await StorageManager.getJumpPinned();
   // Pattern caches must be loaded before filtering / styling kicks in.
@@ -4871,6 +5747,7 @@ import {
   // Now that all caches are populated, paint the configurable filter rows
   // and reflect the configured homepage URL in the footer.
   renderAllFilterRows();
+  LaunchSetsManager.render();
   updateHomepageFooter();
 
   // --- Transform each role to add buttons and account info ---
@@ -6184,6 +7061,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   let sessionsCache = [];
   let sessionsLimit = 5;
+  // Whether sessionsCache reflects a successful read — Launch Sets only warns
+  // about the session limit when the count is real.
+  let sessionsKnown = false;
   let sessionsPopoverOpen = false;
 
   const closeSessionsPopover = () => {
@@ -6283,6 +7163,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           }
           sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
           sessionsLimit = res.limit || 5;
+          sessionsKnown = true;
           if (!sessionsCache.length && !sessionsPopoverOpen) {
             $section.hide();
             return;
@@ -8562,6 +9443,16 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             (d.service === undefined ||
               (typeof d.service === "string" && isSafeServicePath(d.service)))
           ),
+        // Launch sets carry role ARNs, service paths and regions that end up in
+        // a sign-in URL: every set and every tab must survive the same
+        // normalizer the loader uses, unchanged in count.
+        [SK.LAUNCH_SETS]: (v) =>
+          Array.isArray(v) && v.length <= LAUNCH_SETS_MAX &&
+          normalizeLaunchSets(v).length === v.length &&
+          normalizeLaunchSets(v).every((set, i) =>
+            set.tabs.length === v[i].tabs.length &&
+            set.tabs.every((t, j) =>
+              t.service === (v[i].tabs[j].service || "") && t.region === (v[i].tabs[j].region || ""))),
         [SK.JUMP_RECENTS]: (v) =>
           Array.isArray(v) && v.every((r) =>
             r && typeof r === "object" &&
