@@ -57,7 +57,8 @@ Used solely by the extension's "Clear AWS Sessions" feature, which lets the user
 --- Host permission justification (COMBINED — the dashboard has one field)
 
 Paste this whole block into the single "Host permission justification"
-textarea. The field caps at 1000 characters; this is 990, so it fits.
+textarea. The field caps at 1000 characters; this is 959 (967 counting
+line breaks as two, as the form does), so it fits.
 The per-pattern versions further down are reference only — the form has
 no field per pattern, do not paste those.
 
@@ -74,7 +75,7 @@ signin.aws.amazon.com/sessions/* and /switchrole* — during a role-chaining jum
 
 console.aws.amazon.com/* — sets the tab favicon colour and account-name title, and returns a tab to its Region after an account-wide console drops it.
 
-aws.amazon.com/* — the cookies API deletes AWS auth cookies for "Clear AWS Sessions" (names and domains only, never contents). The service worker calls sessions/v1/list to show how many of AWS's five sessions are in use, and sessions/{id}/v1/logout to sign one (the idle ones, or all) out — to AWS only, with the user's existing cookies. The list is metadata only (account id, role, start, expiry), never stored or sent elsewhere.
+aws.amazon.com/* — the cookies API deletes AWS auth cookies for "Clear AWS Sessions" (names and domains only, never contents). The service worker calls sessions/v1/list to show how many of AWS's five sessions are in use, and sessions/{id}/v1/logout to sign sessions out — to AWS only, with the user's cookies. The list is metadata only (account, role, start, expiry), never stored or sent elsewhere.
 
 
 --- Are you using remote code? --------------------------------------
