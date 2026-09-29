@@ -17,7 +17,7 @@ export default [
   js.configs.recommended,
   {
     // Standalone classic content scripts loaded directly by the manifest.
-    files: ["console-decorator.js", "session-selector.js"],
+    files: ["console-decorator.js", "session-selector.js", "launch.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "script",

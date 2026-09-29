@@ -16,6 +16,7 @@
 // and can't carry sessionStorage across the hop.
 
 import { nextTabState, parseConsolePage, planRegionLock } from "./src/shared/region-lock.js";
+import { LAUNCH_MAX_TABS, isSamlAction, sanitizeLaunchFields } from "./src/shared/launch.js";
 
 const GROUP_COLORS = [
   "grey", "blue", "red", "yellow",
@@ -92,6 +93,11 @@ async function groupTab(tabId, account, role, tag, mode, org) {
   } catch (err) { /* ignore */ }
 }
 
+// Grouping runs one tab at a time. A Launch Set opens several tabs that all
+// ask for the same group within a second of each other; run concurrently, each
+// would find no group with that title yet and create its own.
+let groupQueue = Promise.resolve();
+
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (!message || message.type !== "hop_group_tab") return;
   const tabId = sender && sender.tab && sender.tab.id;
@@ -102,10 +108,127 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   const mode = (message.mode || "role").trim();
   const org = (message.org || "").trim();
   if (!account || !role) return;
-  groupTab(tabId, account, role, tag, mode, org).catch((err) =>
-    console.warn("[hop] groupTab failed:", err)
-  );
+  groupQueue = groupQueue
+    .then(() => groupTab(tabId, account, role, tag, mode, org))
+    .catch((err) => console.warn("[hop] groupTab failed:", err));
   // No response needed.
+});
+
+// === LAUNCH SETS ===
+// The role picker can't open several tabs from one click (the popup blocker
+// allows one new window per click), so it hands a batch to us: one set of SAML
+// form fields per tab. Each tab gets a single-use ticket; we open launch.html
+// with the ticket in its fragment, and that page redeems the ticket for its
+// fields and posts them to AWS. Tickets live in chrome.storage.session, which
+// content scripts cannot read, so the SAML response never reaches an AWS page
+// or a URL.
+const LAUNCH_TICKETS_KEY = "hop_launch_tickets";
+// A SAML response is only accepted by AWS for a few minutes anyway.
+const LAUNCH_TICKET_TTL_MS = 5 * 60 * 1000;
+// Opening tabs a moment apart keeps AWS's sign-in from seeing a burst of
+// simultaneous posts, and keeps the tab strip order readable as it fills.
+const LAUNCH_STAGGER_MS = 350;
+
+const PICKER_URL_RE = /^https:\/\/(?:[a-z0-9-]+\.)?signin\.aws\.amazon\.com\/saml(?:[?#]|$)/;
+
+function newTicket() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function readTickets() {
+  try {
+    const res = await chrome.storage.session.get(LAUNCH_TICKETS_KEY);
+    const all = (res && res[LAUNCH_TICKETS_KEY]) || {};
+    const now = Date.now();
+    for (const k of Object.keys(all)) {
+      if (!all[k] || now - (all[k].ts || 0) > LAUNCH_TICKET_TTL_MS) delete all[k];
+    }
+    return all;
+  } catch (err) {
+    return {};
+  }
+}
+
+// Ticket reads and writes are serialized, so two launch pages redeeming at the
+// same moment can't overwrite each other's deletion.
+let ticketQueue = Promise.resolve();
+function withTickets(fn) {
+  const run = ticketQueue.then(async () => {
+    const all = await readTickets();
+    const result = await fn(all);
+    await chrome.storage.session.set({ [LAUNCH_TICKETS_KEY]: all });
+    return result;
+  });
+  ticketQueue = run.catch(() => {});
+  return run;
+}
+
+async function launchTabs(action, tabs, sender) {
+  if (!isSamlAction(action)) throw new Error("not an AWS SAML sign-in endpoint");
+  if (!Array.isArray(tabs) || tabs.length === 0 || tabs.length > LAUNCH_MAX_TABS) {
+    throw new Error("nothing to open");
+  }
+  const cleaned = tabs.map((t) => sanitizeLaunchFields(t && t.fields));
+  if (cleaned.some((f) => !f)) throw new Error("a tab's sign-in fields were rejected");
+
+  const tickets = await withTickets((all) => {
+    const ts = Date.now();
+    return cleaned.map((fields) => {
+      const id = newTicket();
+      all[id] = { action, fields, ts };
+      return id;
+    });
+  });
+
+  // New tabs go right after the picker, in order, without taking focus from it.
+  const pickerTab = sender.tab;
+  let index = pickerTab.index + 1;
+  for (let i = 0; i < tickets.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL(`launch.html#${tickets[i]}`),
+      windowId: pickerTab.windowId,
+      index: index++,
+      active: false,
+    });
+  }
+  return tickets.length;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_launch") return;
+  // Only the role picker itself may start a launch.
+  if (!sender || !sender.tab || !PICKER_URL_RE.test(String(sender.url || ""))) {
+    sendResponse({ ok: false, error: "not sent from the AWS role picker" });
+    return;
+  }
+  launchTabs(message.action, message.tabs, sender)
+    .then((opened) => sendResponse({ ok: true, opened }))
+    .catch((err) => sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_launch_take") return;
+  // Only our own launch page may redeem a ticket.
+  const launchPage = chrome.runtime.getURL("launch.html");
+  if (!sender || sender.id !== chrome.runtime.id || !String(sender.url || "").startsWith(launchPage)) {
+    sendResponse({ ok: false });
+    return;
+  }
+  const id = String(message.ticket || "");
+  withTickets((all) => {
+    const hit = all[id];
+    delete all[id];
+    return hit || null;
+  })
+    .then((hit) =>
+      sendResponse(hit ? { ok: true, action: hit.action, fields: hit.fields } : { ok: false })
+    )
+    .catch(() => sendResponse({ ok: false }));
+  return true;
 });
 
 // Clear all AWS console sessions by deleting AWS auth cookies. This touches

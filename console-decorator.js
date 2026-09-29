@@ -400,7 +400,14 @@
           return;
         }
       }
-      delete pending[acct];
+      // A Launch Set can open several tabs of the same account at once, and
+      // they all land here looking for this one entry; `remaining` says how
+      // many of them it is for. Entries without it are single-use.
+      if (Number(hit.remaining) > 1) {
+        hit.remaining = Number(hit.remaining) - 1;
+      } else {
+        delete pending[acct];
+      }
       chrome.storage.local.set({ hop_pending_jumps: pending });
       const jumpLabel = {
         account: hit.label || acct,
