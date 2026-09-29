@@ -1,8 +1,18 @@
+/* global SCENE */
 (function () {
   // Display-only staging for a store screenshot. Rewrites VISIBLE TEXT to safe
   // demo values and leaves every data-* attribute holding the real value, so
   // the mapping stays stable and this whole script is re-runnable. A page
   // reload restores the real data.
+  //
+  // SCENE is set by shoot.sh (prepended as `var SCENE = "...";`):
+  //   main      light theme, filter rows with +N, the Sets column
+  //   sets      the Launch Sets panel
+  //   edit      Edit set dialog for the first set
+  //   sessions  the Active AWS sessions panel (needs live sessions)
+  //   dark      dark theme with the Tags row's +N pop-out open
+  var scene = typeof SCENE === "string" ? SCENE : "main";
+
   var IDS = ["111122223333", "444455556666", "777788889999", "123456789012",
              "222233334444", "555566667777", "888899990000", "333344445555",
              "666677778888", "999900001111", "121234345656", "343456567878"];
@@ -10,17 +20,25 @@
                "initech-test-core", "acme-dev-tools", "globex-test-data",
                "initech-prod-net", "acme-sec-logging", "globex-dev-apps",
                "initech-sandbox", "acme-test-api", "globex-sec-audit"];
-  var ROLES = { CHBilling: "Billing", CHReadOnly: "ReadOnly",
+  var ROLES = { CHBilling: "Finance", CHReadOnly: "ReadOnly",
                 CHPowerUser: "PowerUser", CHOrgAdmin: "OrgAdmin",
                 CHAdmin: "Admin", CHNetwork: "NetworkAdmin" };
-  var TAGS = ["pci", "prod-network", "sandbox", "security-core"];
+  var TAGS = ["OPS-1234", "prod-network", "pci", "security-core", "sandbox",
+              "OPS-1198", "INC-0419", "platform", "OPS-1350", "CHG-2231"];
+  var SETS = ["OPS-1234", "INC-0419", "OPS-1198", "CHG-2210", "OPS-1301",
+              "INC-0442", "CHG-2231", "OPS-1350"];
+  var SHORTCUTS = ["Prod network", "PCI accounts", "Sandboxes"];
   var VIA = "via Acme hub · max 1 h";
-  // ...plus the extension's own labels on the jump rows, which are UI
-  // strings rather than anything drawn from the org's data.
   var ROLE_POOL = Object.keys(ROLES).map(function (k) { return ROLES[k]; })
     .concat(["Jump", "Hub"]);
 
-  // Stable account map, ordered by first appearance in the DOM.
+  // ---- open the scene's UI first, so everything it shows gets rewritten ----
+  document.querySelectorAll('[id$="_modal"]').forEach(function (el) { el.remove(); });
+  var pop = document.getElementById("tm_sessions_popover");
+  if (scene === "dark") document.body.classList.add("tm_theme_dark");
+  else document.body.classList.remove("tm_theme_dark");
+
+  // ---- account ids / names / roles ----
   var idMap = {}, nameMap = {}, n = 0;
   document.querySelectorAll("[data-account-id]").forEach(function (el) {
     var a = el.getAttribute("data-account-id");
@@ -30,14 +48,11 @@
       n++;
     }
   });
-
   var realIds = Object.keys(idMap);
-
   function acct(el) {
     var a = el.getAttribute("data-account-id");
     return a && idMap[a] ? a : null;
   }
-
   document.querySelectorAll(".tm_account_id").forEach(function (el) {
     var a = acct(el);
     if (a) el.textContent = idMap[a];
@@ -46,8 +61,6 @@
     var a = acct(el);
     if (a) el.textContent = nameMap[a];
   });
-
-  // Role names: the CH* prefix is this org's, so map to generic ones.
   function mapRole(t) {
     t = (t || "").trim();
     if (ROLES[t]) return ROLES[t];
@@ -56,115 +69,211 @@
   document.querySelectorAll(".saml-role-description, .tm_role_name").forEach(function (el) {
     if (el.children.length === 0) el.textContent = mapRole(el.textContent);
   });
-
-  // Tag chips that carry a real tag name.
-  var t = 0;
-  document.querySelectorAll(".tm_tag_chip").forEach(function (el) {
-    if (el.classList.contains("tm_no_tags")) return;
-    el.textContent = TAGS[t++ % TAGS.length];
-  });
-
-  // "via <profile> hub · max 1 h" lines under jump rows, and any filter chip
-  // or label naming the real jump profile.
   document.querySelectorAll("*").forEach(function (el) {
     if (el.children.length !== 0) return;
-    var s = el.textContent;
-    if (/^\s*via\s+.+hub/.test(s)) el.textContent = VIA;
+    if (/^\s*via\s+.+hub/.test(el.textContent)) el.textContent = VIA;
   });
 
-  // Filter-bar chips for the tag group carry the org's real tag names; a real
-  // vendor's name among them was flagged on an earlier submission.
+  // ---- filter chips: tags, shortcuts ----
+  // A few display-only demo chips so the row overflows into "+N" the way a
+  // ticket-heavy tag list does. Clones; nothing is saved.
+  var tagGroup = document.querySelector('.tm_button_group[data-filter-group="tag"]');
+  if (tagGroup && !tagGroup.querySelector("[data-demo-chip]")) {
+    var model = tagGroup.querySelector(".tm_filter_button");
+    for (var d = 0; model && d < 4; d++) {
+      var c = model.cloneNode(true);
+      c.setAttribute("data-demo-chip", "1");
+      c.setAttribute("data-filter", "demo-" + d);
+      c.classList.remove("active", "tm_chip_overflow");
+      var more0 = tagGroup.querySelector(".tm_more_chip");
+      tagGroup.insertBefore(c, more0 || null);
+    }
+  }
   var f = 0;
   document.querySelectorAll('.tm_filter_button[data-group="tag"]').forEach(function (el) {
     el.textContent = TAGS[f++ % TAGS.length];
   });
-
-  document.body.classList.add("tm_theme_dark");
-
-  // Idempotent: re-running staging must not stack a second modal.
-  document.querySelectorAll("#tm_general_settings_modal").forEach(function (el) { el.remove(); });
-  var gs = document.getElementById("tm_general_settings");
-  if (gs) gs.click();
-
-  // The shipped 1.6.0 help text for this setting (source: src/content/index.js).
-  // Patched in because the extension has to be reloaded in Chrome to pick up a
-  // rebuild, and a store screenshot must not show an AWS service-name list.
-  var HELP = "Some AWS consoles are account-wide and have no region of their own, so " +
-    "leaving one drops you into whatever region your AWS profile defaults to — not " +
-    "the one you were working in. This sends the tab back. Changing region from " +
-    "AWS's own region picker still works: the tab follows you and stays there.";
-  document.querySelectorAll("span").forEach(function (el) {
-    if (el.children.length === 0 && /AWS serves global consoles/.test(el.textContent)) {
-      el.textContent = HELP;
-    }
+  var s = 0;
+  document.querySelectorAll(".tm_custom_shortcut").forEach(function (el) {
+    var node = el.firstChild;
+    if (node && node.nodeType === 3) node.nodeValue = SHORTCUTS[s++ % SHORTCUTS.length];
   });
 
+  // ---- Launch Sets column ----
+  // Keyed by set id (stable across passes); the real name is kept on the
+  // element the first time so a second pass maps the same way.
+  var setMap = {}, setById = {}, k = 0;
+  document.querySelectorAll(".tm_set_line").forEach(function (line) {
+    var chip = line.querySelector("[data-set-id]");
+    var nameEl = line.querySelector(".tm_set_name");
+    if (!chip || !nameEl) return;
+    if (!nameEl.dataset.realName) nameEl.dataset.realName = nameEl.textContent;
+    var id = chip.getAttribute("data-set-id");
+    var demo = SETS[k++ % SETS.length];
+    setById[id] = demo;
+    setMap[nameEl.dataset.realName] = demo;
+    nameEl.textContent = demo;
+  });
+  function mapSet(name) { return setMap[name] || name; }
 
-  // The extension focuses the search box whenever the window is activated,
-  // which pops the search card open over the shot.
+  // Row tag chips stay as they are (icon + count, no tag text).
+  // Refold the rows now that chip labels changed width: a resize makes the
+  // extension re-measure. Then open whatever the scene needs.
+  window.dispatchEvent(new Event("resize"));
+
+  if (scene === "sets" || scene === "edit") {
+    var mgr = document.getElementById("tm_manage_launch_sets");
+    if (mgr) mgr.click();
+    if (scene === "edit") {
+      // The set with the most tabs shows the dialog best.
+      var best = null, bestN = -1;
+      document.querySelectorAll("#tm_sets_manage_modal .tm_setm_row").forEach(function (r) {
+        var nTabs = parseInt((r.querySelector(".tm_setm_meta") || {}).textContent, 10) || 0;
+        if (nTabs > bestN) { bestN = nTabs; best = r; }
+      });
+      var e = best && best.querySelector("[data-act='edit']");
+      if (e) e.click();
+      var m = document.getElementById("tm_sets_manage_modal");
+      if (m) m.style.setProperty("display", "none", "important");
+    }
+  }
+  if (scene !== "dark") {
+    var cp = document.getElementById("tm_chip_pop");
+    if (cp) document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  }
+  if (scene === "sessions") {
+    var pill = document.getElementById("tm_sessions_pill");
+    if (pill && !(pop && pop.offsetParent)) pill.click();
+  } else if (pop && pop.offsetParent) {
+    var closeBtn = document.getElementById("tm_sessions_close");
+    if (closeBtn) closeBtn.click();
+  }
+
+  // Show one session as idle (no tabs) so the shot carries "Sign out idle",
+  // without closing anyone's real tabs. Display-only.
+  var idleBtn = document.getElementById("tm_sess_signout_idle");
+  var sessRows = document.querySelectorAll(".tm_sess_tr");
+  if (scene === "sessions" && idleBtn && getComputedStyle(idleBtn).display === "none" && sessRows.length > 1) {
+    var last = sessRows[sessRows.length - 1].children;
+    // Columns: label, account · role, region, tab group, started, expires, tabs.
+    last[2].textContent = "—";
+    last[3].textContent = "—";
+    last[6].textContent = "0";
+    idleBtn.textContent = "Sign out idle (1)";
+    idleBtn.style.setProperty("display", "inline-block", "important");
+  }
+
+  // ---- generic pass: any real id / CH role / set name left in text or options ----
+  // AWS service names must not appear in a store screenshot (flagged on an
+  // earlier submission); a saved page on one becomes the plain console.
+  var SERVICE_RE = /\b(costmanagement|billing|iam|ec2|s3|lambda|cloudwatch)\b/gi;
+  var SET_UI = "#tm_sets_list, .tm_setm_row, #tm_set_edit_modal, #tm_set_bar, #tm_set_open_modal, #tm_sets_manage_modal";
+  function scrub(str, inSetUI) {
+    var out = str;
+    // Set names first, and only where a node IS the name (or "Edit set ·
+    // <name>"): a set called "123" must not rewrite digits inside an id, and a
+    // set named after an account must match before that id is rewritten.
+    var t = out.trim();
+    if (inSetUI && setMap[t]) return out.replace(t, setMap[t]);
+    var m = inSetUI && t.match(/^(Edit set · |Set: )(.+)$/);
+    if (m && setMap[m[2]]) return out.replace(m[2], setMap[m[2]]);
+    realIds.forEach(function (id) { out = out.split(id).join(idMap[id]); });
+    out = out.replace(/costmanagement\/home[^\s]*/gi, "console/home?region=us-east-1");
+    out = out.replace(SERVICE_RE, function (w) { return w[0] === w[0].toUpperCase() ? "Console" : "console"; });
+    out = out.replace(/\bCH([A-Z][A-Za-z]+)\b/g, function (_, r) { return mapRole("CH" + r); });
+    return out;
+  }
+  var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  var node;
+  while ((node = walker.nextNode())) {
+    var v = node.nodeValue;
+    var nv = scrub(v, !!(node.parentElement && node.parentElement.closest(SET_UI)));
+    if (nv !== v) node.nodeValue = nv;
+  }
+  document.querySelectorAll("input[type='text']").forEach(function (el) {
+    if (el.value) el.value = scrub(el.value, !!el.closest(SET_UI));
+  });
+  document.querySelectorAll("option").forEach(function (o) {
+    var v = scrub(o.textContent, false);
+    if (v !== o.textContent) o.textContent = v;
+  });
+  document.querySelectorAll(".tm_setm_row[data-set-id]").forEach(function (r) {
+    var nm = r.querySelector(".tm_setm_name");
+    var demo = setById[r.getAttribute("data-set-id")];
+    if (nm && demo) { nm.textContent = demo; nm.title = demo; }
+  });
+  document.querySelectorAll(".tm_set_name_input, .tm_set_group_input").forEach(function (el) {
+    el.value = mapSet(el.value);
+  });
+
+  // ---- framing ----
   var si = document.getElementById("tm_search_input");
   if (si) si.blur();
   var rl = document.getElementById("tm_role_list");
-  if (rl) { rl.style.outline = "none"; rl.focus && rl.focus(); }
+  if (rl) { rl.style.outline = "none"; if (rl.focus) rl.focus(); }
   document.querySelectorAll("#claude-phantom-cursor, #claude-agent-glow-border")
     .forEach(function (el) { el.remove(); });
 
-  // The actions column (Find account / Jump / Tabs / sessions) is
-  // position:fixed with a JS-computed `left` that tracks the container's right
-  // edge, so at any window size it sits off-screen. Pull it back into frame —
-  // display-only, exactly like the demo-data rewrite above.
-  // The actions column is position:fixed at a `left` the extension computes
-  // from the container's right edge, so it sits off-screen whenever the page
-  // is full-width. Fighting the value directly loses — it gets recomputed
-  // before the shutter. Instead narrow the container and let the extension
-  // recompute, which puts the column inside the viewport by its own rules.
-  // This display is 1280px wide, so the store's 1280x800 frame IS the whole
-  // viewport — there is no room to capture bigger and downscale. Three staging
-  // tweaks make the picker fit that frame:
-  //  - zoom, because the layout needs ~1480px to seat the role rows and the
-  //    actions column side by side;
-  //  - body padding, because mock-saml renders the sign-in page full-width
-  //    (a real AWS SAML page is not) which spreads the role rows too wide;
-  //  - an explicit left for the side menu, which is position:fixed and parks
-  //    itself off the right edge with only its handle showing, at a left the
-  //    extension computes once from the container's right edge. On this
-  //    full-width page that computation leaves a slice of the panel in frame,
-  //    and it is NOT recomputed on a synthetic resize, so park it here — with
-  //    `important`, because the extension's own inline value carries it.
-  //    Lengths here are CSS px, which the zoom scales, hence the /Z.
+  // The store's 1280x800 frame is this display's full width, so the picker
+  // renders at zoom 0.84 and is captured 1:1 (see README.md). The side menu
+  // is position:fixed at a left the extension computes once; park it at its
+  // collapsed position, with `important` like the extension's own value.
   var Z = 0.84;
   document.documentElement.style.zoom = String(Z);
   document.body.style.paddingRight = "220px";
   var ac = document.querySelector("#tm_actions_container");
-  if (ac) ac.style.setProperty("left", ((window.innerWidth - 18) / Z) + "px", "important");
-
+  if (ac) ac.style.setProperty("left", (window.innerWidth / Z) + "px", "important");
+  window.dispatchEvent(new Event("resize"));
   void document.body.offsetWidth;
-  // Capture rect: the window is sized so the viewport IS the store's frame, so
-  // take it 1:1 — no downscale, no upscale. The 2px top offset drops a sliver
-  // of browser chrome that the viewport-origin calculation catches.
+  // The extension closes the "+N" pop-out on resize, so open it last. Its
+  // chips are copies of the (already rewritten) row chips.
+  if (scene === "dark" && !document.getElementById("tm_chip_pop")) {
+    var more = document.querySelector('.tm_button_group[data-filter-group="tag"] .tm_more_chip');
+    if (more) more.click();
+  }
+  // Staging renders at CSS zoom Z, where the extension's pixel placement of
+  // the pop-out (from a zoomed getBoundingClientRect) lands off by the zoom.
+  // Real pages aren't CSS-zoomed; re-seat it under its "+N" for the shot.
+  // The extension re-seats it on its next refit (a frame later), so do this
+  // after that too.
+  function reseatPop() {
+    var popEl = document.getElementById("tm_chip_pop");
+    var moreEl = document.querySelector('.tm_button_group[data-filter-group="tag"] .tm_more_chip');
+    if (!popEl || !moreEl) return;
+    var mr = moreEl.getBoundingClientRect();
+    popEl.style.setProperty("left", (mr.left / Z + window.scrollX) + "px", "important");
+    popEl.style.setProperty("top", (mr.bottom / Z + window.scrollY + 6) + "px", "important");
+  }
+  reseatPop();
+  setTimeout(reseatPop, 150);
+  setTimeout(reseatPop, 400);
+
   var row = document.querySelector(".saml-role");
-  var modal = document.querySelector("#tm_general_settings_modal > *") ||
-              document.querySelector("#tm_general_settings_modal");
+  var focusEl = {
+    sets: "#tm_sets_manage_modal > *",
+    edit: "#tm_set_edit_modal > *",
+    sessions: "#tm_sessions_popover",
+    dark: "#tm_chip_pop"
+  }[scene];
+  var fe = focusEl ? document.querySelector(focusEl) : null;
   var vw = window.innerWidth, vh = window.innerHeight;
   var rb = row ? row.getBoundingClientRect() : null;
-  var mb = modal ? modal.getBoundingClientRect() : null;
+  var fb = fe ? fe.getBoundingClientRect() : null;
   var framing = {
     vw: vw, vh: vh, shot: { x: 0, y: 2, w: 1280, h: 800 },
     rowLeft: rb ? Math.round(rb.left) : null,
     rowRight: rb ? Math.round(rb.right) : null,
-    modalBottom: mb ? Math.round(mb.bottom) : null
+    focusBottom: fb ? Math.round(fb.bottom) : null
   };
   framing.ok = vw >= 1280 && vh >= 802 && !!rb && rb.left > 20 && rb.right < vw &&
-    !!mb && mb.top > 2 && mb.bottom < 802;
+    (!focusEl || (!!fb && fb.width > 0 && fb.top > 2 && fb.bottom < 802));
 
-  // Refuse the shot if anything real is still legible.
+  // ---- refuse the shot if anything real is still legible ----
   var txt = document.body.innerText;
   var leaks = realIds.filter(function (id) { return txt.indexOf(id) !== -1; });
-  // Allow-list, not a blocklist: every visible identifier must be one of the
-  // demo values above. That is literal-free (this file lives in a public repo
-  // and must not name the org's real roles, profiles or tags), it survives a
-  // re-run on an already-staged page, and it catches anything the rewrite
-  // missed rather than only what we thought to look for.
+  document.querySelectorAll("option").forEach(function (o) {
+    realIds.forEach(function (id) { if (o.textContent.indexOf(id) !== -1) leaks.push("id in a dropdown option"); });
+  });
   function allowed(sel, pool, what) {
     document.querySelectorAll(sel).forEach(function (el) {
       if (el.children.length !== 0) return;
@@ -175,22 +284,21 @@
   allowed(".tm_role_name, .saml-role-description", ROLE_POOL, "role");
   allowed(".tm_account_name", NAMES, "account name");
   allowed(".tm_account_id", IDS, "account id");
-  document.querySelectorAll("*").forEach(function (el) {
-    if (el.children.length !== 0) return;
-    if (/^\s*via\s/.test(el.textContent) && el.textContent.trim() !== VIA) {
-      leaks.push("jump profile still visible: " + el.textContent.trim());
-    }
-  });
-  document.querySelectorAll('.tm_filter_button[data-group="tag"], .tm_tag_chip')
+  allowed(".tm_set_name, .tm_setm_name", SETS, "set name");
+  document.querySelectorAll('.tm_filter_button[data-group="tag"], #tm_chip_pop [data-pop-filter]')
     .forEach(function (el) {
-      var v = el.textContent.trim().replace(/^\+?tag$/, "");
-      if (v && TAGS.indexOf(v) === -1) leaks.push("tag not in the demo set: " + v);
+      var v = el.textContent.trim();
+      if (v && TAGS.indexOf(v) === -1 && !/^(Direct roles|⤳ Jumps)$/.test(v)) leaks.push("tag not in the demo set: " + v);
     });
+  if (/\bCH[A-Z][a-z]/.test(txt)) leaks.push("CH role name still visible");
   if (/\((?:IAM|EC2|S3|Billing)[,)]/.test(txt)) leaks.push("AWS service list in visible text");
+  var modalTxt = [].map.call(document.querySelectorAll('[id$="_modal"], #tm_sessions_popover'), function (el) { return el.innerText; }).join(" ");
+  var svc = modalTxt.match(SERVICE_RE);
+  if (svc) leaks.push("AWS service name visible: " + svc[0]);
 
   return JSON.stringify({
+    scene: scene,
     accounts: realIds.length,
-    modals: document.querySelectorAll("#tm_general_settings_modal").length,
     dark: document.body.classList.contains("tm_theme_dark"),
     leaks: leaks,
     framing: framing

@@ -2,7 +2,11 @@
 
 Produces a 1280×800 Chrome Web Store screenshot from the live role picker.
 
-    ./shoot.sh <chrome-window-id> out.png
+    ./shoot.sh <chrome-window-id> out.png [scene]
+
+`scene` is `main` (default), `sets`, `edit`, `sessions` or `dark`. The
+`sessions` scene needs live sessions: open a Launch Set or two first (within
+five minutes of signing in), and close one set's tabs for an idle row.
 
 `shoot.sh` sizes and activates a Chrome window, runs `stage.js` in it, and
 captures the viewport. `stage.js` does the staging and gates the shot.
@@ -33,4 +37,7 @@ captures the viewport. `stage.js` does the staging and gates the shot.
   does not recompute on a synthetic resize, and that inline value carries
   `!important` — so staging has to override it the same way.
 
-Adjust the scene (which dialog is open, theme, filters) by editing `stage.js`.
+Staging runs twice, 1.5 s apart: the first pass opens the scene, the second
+rewrites whatever arrived asynchronously and runs the leak check. Set names
+are keyed by set id and each element keeps its real name in a data attribute,
+so both passes map identically. Add or change scenes in `stage.js`.

@@ -19,224 +19,249 @@ Console Hopper
 *(max 132 characters, single line, no rich text)*
 
 ```
-Hop between AWS consoles fast: role-picker search + tags, jump to any account, env-coloured tabs, consoles that keep their region.
+Open a ticket's AWS consoles in one click: Launch Sets, role-picker search + tags, jump to any account, env-coloured tabs.
 ```
 
-*(130 chars. Either earlier summary is still valid if you'd rather not
-change it — Chrome re-reviews the listing either way:
-1.5.0: "Hop between AWS consoles fast: role-picker search + tags, jump to
-any account, env-coloured tabs, live AWS session count."
-1.3.0: "Hop between AWS consoles fast: role-picker search + account tags,
-deep-link services, env-coloured tabs, configurable tab groups.")*
+*(122 chars. The 1.6.0 summary is still valid if you'd rather not
+change it: "Hop between AWS consoles fast: role-picker search + tags, jump to
+any account, env-coloured tabs, consoles that keep their region.")*
 
 ### Detailed description
 *(max 16,000 characters; plain text with basic line breaks)*
 
 ```
 Console Hopper turns the AWS SAML role-picker into a fast, filterable
-launcher and makes a tab strip full of AWS consoles instantly readable.
+launcher and makes a tab strip full of AWS consoles instantly
+readable.
 
 If you have access to dozens — or hundreds — of AWS accounts via SAML
 SSO, the default role list is a long, unsorted scroll. Console Hopper
 gives every row a star, a service deep-link, and a one-click sign-in,
-and gives every open console tab a colour-coded favicon plus an account
-name in the title.
+and gives every open console tab a colour-coded favicon plus an
+account name in the title.
+
+NEW IN 1.7.0
+
+• Launch Sets — open every console a ticket needs in one click. Save
+  the console tabs a piece of work needs under a name (usually the
+  ticket id) — each tab with its own role, landing service and region,
+  several tabs per role if you like — and open them all at once, next
+  to the role picker. Save one from a search or filter ("Save current
+  view"), or record the console tabs you already have open ("Save open
+  tabs", exact pages included). A Sets column beside the filters holds
+  them; the Launch Sets panel in the side menu reorders (drag), edits,
+  archives and restores them. One confirmation covers the whole set
+  when it includes sensitive roles or would go past AWS's five-session
+  limit.
+• Tags belong to an account + role, not the whole account — tag the
+  one role a ticket needs and only that row carries it. Existing
+  account tags are copied onto each of that account's roles, so
+  nothing is lost.
+• Filter rows stay on one line — chips that don't fit fold into a +N
+  chip, so the panel no longer grows as tags pile up. Drag chips along
+  a row to reorder it, drag one out of +N to keep it in view, or onto
+  +N to tuck it away.
+• Sessions panel: signing a session out also closes its console tabs,
+  and "Sign out idle" signs out every session with no console tab
+  open.
+• Fixed: if Console Hopper is installed twice (say, a store copy and a
+  developer copy), the second copy stands aside instead of doubling
+  every row.
 
 NEW IN 1.6.0
 
-• Console tabs stay in their region — some AWS consoles are
-  account-wide and have no region of their own, so opening one drops
-  the region from the console address. Go back to a regional console
-  afterwards and AWS puts you wherever your AWS profile's default
-  Region points — often a region you have never worked in.
-  Console Hopper now remembers which region each console tab is
-  working in and sends the tab back. Changing region from AWS's own
-  region menu still works exactly as before: the tab follows you and
-  holds the new region. No new permissions, and no AWS credentials
-  are involved. Untick "Keep console tabs in their region" in General
-  Settings to switch it off.
-• Fixed: "Remember the region I pick per role" now survives a reload —
-  it used to quietly return to on every time the picker loaded.
-
-NEW IN 1.5.0
-
-• Saved jump destinations in the role list — accounts you chain into
-  appear as ⤳ rows next to your normal roles: searchable, taggable,
-  favouritable, with their own landing service and region and a Jump
-  button. A Source filter (direct roles vs jumps) and is:jump in search
-  keep them one keystroke away, and a new "Jump Destinations" side-menu
-  panel manages them, with bulk import.
-• Jumps can land on a service — pick the service console a jump opens
-  in, in the region you chose.
-• "Sign out all sessions" in the sessions panel — and the panel no
-  longer vanishes under your pointer after the last sign-out, so a
-  stray click can't hit a Sign In button underneath it.
+• Console tabs stay in their region — some AWS consoles are account-
+  wide and have no region of their own, so opening one drops the
+  region from the console address. Console Hopper remembers which
+  region each console tab is working in and sends the tab back. Untick
+  "Keep console tabs in their region" in General Settings to switch it
+  off.
 
 WHAT YOU GET
 
 • Filter and search the role list
-  Filter by organisation, environment (prod/test/dev), account type
-  (Management / Security / Logging / …), role-name keyword (Admin /
-  ReadOnly / PowerUser / …) or your own tags. The search box is
-  separator-insensitive (type "test 123" to find "test123") and
-  supports scoped terms — tag:, role:, name:, account:, env:, type:,
-  org: — combined with a space (and), a comma (or) or a leading -
-  (exclude), with "quotes" for an exact phrase. It pops out into a
-  roomy card with click-to-insert suggestions and a live match count.
-  Every filter group is editable from the side menu.
+Filter by organisation, environment (prod/test/dev), account type
+(Management / Security / Logging / …), role-name keyword (Admin /
+ReadOnly / PowerUser / …) or your own tags. Each filter row stays on
+one line — extra chips fold into a +N chip — and you order the chips
+by dragging. The search box is separator-insensitive (type "test 123"
+to find "test123") and supports scoped terms — tag:, role:, name:,
+account:, env:, type:, org: — combined with a space (and), a comma
+(or) or a leading - (exclude), with "quotes" for an exact phrase. It
+pops out into a roomy card with click-to-insert suggestions and a live
+match count. Every filter group is editable from the side menu.
 
-• Tag accounts
-  Give accounts your own short labels — prod-network, pci, a
-  ticket number — and organise by them. Add or remove tags inline from
-  a chip on each row (with autocomplete), or edit in bulk from the side
-  menu. Tags get their own filter row and are searchable with tag:.
+• Tag roles
+Give an account + role your own short labels — prod-network, pci, a
+ticket number — and organise by them. A tag belongs to that one role,
+so tagging your admin role doesn't tag the account's other roles. Add
+or remove tags inline from a chip on each row (with autocomplete), or
+edit in bulk from the side menu. Tags get their own filter row and are
+searchable with tag:.
+
+• Launch Sets
+Save the console tabs a ticket needs and open them all in one click.
+Each tab keeps its own role, landing service and region; one role can
+have several tabs. Save from the current search or filters, or from
+the console tabs you have open. The tabs open next to the role picker
+and are grouped the way your tab-group setting says. Reorder, edit,
+archive and restore sets from the Launch Sets panel.
 
 • Save searches as shortcuts
-  Turn a useful query + filter combination into a named chip in one
-  click, then re-apply the whole view — search and filters — whenever
-  you need it. Set any shortcut (or Favorites, Recent, or a tag) as your
-  "Start View" so the picker opens on it every load.
+Turn a useful query + filter combination into a named chip in one
+click, then re-apply the whole view — search and filters — whenever
+you need it. Set any shortcut (or Favorites, Recent, or a tag) as your
+"Start View" so the picker opens on it every load.
 
 • Rename accounts
-  Map specific account IDs to a friendly name via "Account Names". The
-  custom name replaces the AWS account name in the list and is used for
-  filtering, grouping and tab titles.
+Map specific account IDs to a friendly name via "Account Names". The
+custom name replaces the AWS account name in the list and is used for
+filtering, grouping and tab titles.
 
 • Jump to account (role chaining)
-  For accounts you can only reach by assuming a role from a hub —
-  including accounts that aren't in your role list at all. Configure each
-  org once under "Jump Profiles" (org name, hub account id, role to
-  assume, and optionally the region to land in) and a "Jump to account"
-  button appears in the search column. Enter the destination account id,
-  pick a region, add an optional session label — Console Hopper signs
-  into the hub and opens AWS's Switch Role pre-filled, one click and
-  you're in. It lands you in the region you chose rather than whichever
-  one AWS picks for that account, and when several console sessions are
-  open it selects the right one for you instead of leaving you to guess.
-  The new tab is titled with your session label, and recent jumps are one
-  click away in the popover. Save the destinations
-  you use often — via "Jump Destinations" in the side menu, or the "Save
-  as a named destination" tick when you jump — and they appear as ⤳ rows
-  in the main list itself, with a dashed environment stripe, the hub they
-  go through, and their own service and region picks.
+For accounts you can only reach by assuming a role from a hub —
+including accounts that aren't in your role list at all. Configure
+each org once under “Jump Profiles” (org name, hub account id, role to
+assume, and optionally the region to land in) and a “Jump to account”
+button appears in the search column. Enter the destination account id,
+pick a region, add an optional session label — Console Hopper signs
+into the hub and opens AWS's Switch Role pre-filled, one click and
+you're in. It lands you in the region you chose rather than whichever
+one AWS picks for that account, and when several console sessions are
+open it selects the right one for you instead of leaving you to guess.
+The new tab is titled with your session label, and recent jumps are
+one click away in the popover. Save the destinations you use often —
+via "Jump Destinations" in the side menu, or the "Save as a named
+destination" tick when you jump — and they appear as ⤳ rows in the
+main list itself, with a dashed environment stripe, the hub they go
+through, and their own service and region picks.
 
 • Favorites and Recent
-  Star roles you use often. Recently signed-in roles are tracked
-  automatically (configurable limit).
+Star roles you use often. Recently signed-in roles are tracked
+automatically (configurable limit).
 
 • Deep-link into a service
-  Each role row has a service dropdown. Pick one before Sign In and you
-  land straight in that service's own console for that role, instead of
-  the console home page and another two clicks. A handful of common
-  destinations are set up by default, and you can add, rename or remove
-  any of them from the side menu.
+Each role row has a service dropdown. Pick one before Sign In and you
+land straight in that service's own console for that role, instead of
+the console home page and another two clicks. A handful of common
+destinations are set up by default, and you can add, rename or remove
+any of them from the side menu.
 
 • Per-sign-in region
-  Each role row also has a region dropdown — choose which AWS region a
-  sign-in lands in. It defaults to your region and remembers your last
-  pick per role; turn off "Remember the region I pick per role" in
-  General Settings and every row always opens on your default instead.
-  Edit the offered regions via "Regions".
+Each role row also has a region dropdown — choose which AWS region a
+sign-in lands in. It defaults to your region and remembers your last
+pick per role; turn off “Remember the region I pick per role” in
+General Settings and every row always opens on your default instead.
+Edit the offered regions via “Regions”.
 
 • Console tabs stay in their region
-  Some AWS consoles are account-wide and carry no region of their own,
-  so visiting one drops the region from the console address — and the
-  next regional console you open lands
-  wherever your AWS profile's default Region points rather than where
-  you were working. Console Hopper remembers what region each console
-  tab is in and sends the tab back, while leaving alone any region you
-  picked yourself from AWS's own region menu.
+Some AWS consoles are account-wide and carry no region of their own,
+so visiting one drops the region from the console address — and the
+next regional console you open lands wherever your AWS profile's
+default Region points rather than where you were working. Console
+Hopper remembers what region each console tab is in and sends the tab
+back, while leaving alone any region you picked yourself from AWS's
+own region menu.
 
 • Copy account ID
-  Click the account-id button on any row to copy the 12-digit id.
+Click the account-id button on any row to copy the 12-digit id.
 
 • Colour-coded console tabs
-  Every AWS console tab opened through the plugin gets a coloured
-  favicon (env colour) and an account-name title prefix, so ten open
-  tabs are still distinguishable at a glance.
+Every AWS console tab opened through the plugin gets a coloured
+favicon (env colour) and an account-name title prefix, so ten open
+tabs are still distinguishable at a glance.
 
 • Tab groups — visual containers
-  Console Hopper drops each new console tab into a Chrome tab group:
-  by role, by organisation, or by a per-ticket override tag. Same role
-  always gets the same colour. Note: tab groups are a Chrome visual
-  feature only — they don't isolate cookies. For real session
-  isolation, combine with Chrome profiles.
+Console Hopper drops each new console tab into a Chrome tab group: by
+role, by organisation, or by a per-ticket override tag. Same role
+always gets the same colour. Note: tab groups are a Chrome visual
+feature only — they don't isolate cookies. For real session isolation,
+combine with Chrome profiles.
 
 • Sensitive-sign-in confirmation
-  Configure which role-name keywords (default: "admin") and which
-  account types are sensitive. Signing into a matching role/account
-  pops a "are you sure?" modal so you don't accidentally land in
-  production.
+Configure which role-name keywords (default: "admin") and which
+account types are sensitive. Signing into a matching role/account pops
+a "are you sure?" modal so you don't accidentally land in production.
 
 • Active AWS sessions
-  AWS allows five concurrent console sessions per browser profile, and
-  normally only tells you once you have hit the limit. A counter at the
-  foot of the right column turns amber with one slot left and red when
-  full. Open it to see every session — account, role, region, tab group,
-  when it started, how long it has left and how many tabs it still has
-  open — and sign any one of them out to free a slot. Session metadata
-  only; cookie contents are never read.
+AWS allows five concurrent console sessions per browser profile, and
+normally only tells you once you have hit the limit. A counter at the
+foot of the right column turns amber with one slot left and red when
+full. Open it to see every session — account, role, region, tab group,
+when it started, how long it has left and how many tabs it still has
+open — and sign any one of them out to free a slot (its console tabs
+close with it), sign out every session that has no tab open, or sign
+out all of them. Session metadata only; cookie contents are never
+read.
 
 • Clear AWS sessions
-  One click signs you out of your AWS console sessions by clearing
-  aws.amazon.com authentication cookies (your console favourites and
-  settings are kept). Sessions held elsewhere — an IAM Identity Center
-  portal on awsapps.com, for instance — are outside the extension's
-  reach and stay signed in.
+One click signs you out of your AWS console sessions by clearing
+aws.amazon.com authentication cookies (your console favourites and
+settings are kept). Sessions held elsewhere — an IAM Identity Center
+portal on awsapps.com, for instance — are outside the extension's
+reach and stay signed in.
 
 • New-tab sign-in
-  ⌘/Ctrl-click, middle-click or ⌘+Enter opens the console in a new tab.
-  A "Sign-in" side-menu option sets the default; the modifier inverts it.
+⌘/Ctrl-click, middle-click or ⌘+Enter opens the console in a new tab.
+A "Sign-in" side-menu option sets the default; the modifier inverts
+it.
 
 • Drag-to-reorder
-  Hold and drag any role row to set your preferred order. "Reset Order"
-  in the side menu restores AWS's default.
+Hold and drag any role row to set your preferred order. "Reset Order"
+in the side menu restores AWS's default.
 
 • Light / dark / auto theme, compact mode, keyboard shortcuts
-  / or Ctrl/Cmd+K (or a tap of Alt) focuses search, ↑/↓ moves the
-  selection, Alt+arrows walk the search suggestions, Enter signs in to
-  the selected role, Esc closes modals / clears filters.
+/ or Ctrl/Cmd+K (or a tap of Alt) focuses search, ↑/↓ moves the
+selection, Alt+arrows walk the search suggestions, Enter signs in to
+the selected role, Esc closes modals / clears filters.
 
 • Export / import settings as JSON
-  Share your configured orgs, envs, account types, role names,
-  services, tags, favorites and shortcuts with a teammate.
+Share your configured orgs, envs, account types, role names, services,
+tags, favorites and shortcuts with a teammate.
 
 • Org-agnostic
-  Ships with generic placeholders. You rename Org A / Org B / Org C and
-  fill the patterns to match your real organisations. No hard-coded
-  vendor names anywhere.
+Ships with generic placeholders. You rename Org A / Org B / Org C and
+fill the patterns to match your real organisations. No hard-coded
+vendor names anywhere.
 
 PRIVACY
 
 Console Hopper runs entirely in your browser. It does not contact any
-server of ours, send telemetry, or collect personal data. It talks only
-to AWS, and only to read which console sessions you have open and to
-sign one out when you ask — never to read credentials or cookie
-contents. All settings
-(favorites, custom org / env / type / role labels, recent signins,
-preferences) are stored in chrome.storage.local — they never leave
-your device unless you click "Export Settings" yourself.
+server of ours, send telemetry, or collect personal data. It talks
+only to AWS: to read which console sessions you have open, to sign one
+out when you ask, and — when you open a Launch Set — to post the sign-
+in page's own SAML response to AWS's sign-in endpoint once per tab,
+exactly as the page's Sign In button does. That response is the only
+authentication information Console Hopper ever handles: it is held in
+memory, one single-use copy per tab, for at most five minutes, and
+never goes anywhere but AWS's own sign-in endpoint. Your password, MFA
+codes and AWS access keys are never seen, and cookie contents are
+never read. All settings (favorites, custom org / env / type / role
+labels, recent signins, preferences) are stored in
+chrome.storage.local — they never leave your device unless you click
+"Export Settings" yourself.
 
 PERMISSIONS — WHY
 
-• storage      — persist your preferences and configuration locally
-• tabs         — read the current tab so the service worker knows which
-                 console tab just opened (needed for tab grouping)
-• tabGroups    — create and colour Chrome tab groups for each
-                 account+role combination
-• host access  — limited to AWS SAML sign-in pages and AWS console
-                 pages, so the plugin can enhance the role-picker,
-                 decorate console tabs, and ask AWS which console
-                 sessions you have open. No other sites are touched.
+• storage — persist your preferences and configuration locally
+• tabs — group new console tabs, open a Launch Set's tabs next to the
+  role picker, list your open console tabs for "Save open tabs", and
+  close a signed-out session's tabs
+• tabGroups — create and colour Chrome tab groups for each
+  account+role combination
+• host access — limited to AWS SAML sign-in pages and AWS console
+  pages, so the plugin can enhance the role-picker, decorate console
+  tabs, and ask AWS which console sessions you have open. No other
+  sites are touched.
 
 INSTALL
 
 1. Install from the Chrome Web Store.
 2. Open your AWS SAML sign-in URL. The role picker is now the Console
-   Hopper UI.
+Hopper UI.
 3. On first load, a welcome panel walks you through the highlights.
 4. Configure your organisations, environments, account types, role
-   names and services from the side menu (hover the right edge).
+names and services from the side menu (hover the right edge).
 
 This extension is community-built and not affiliated with Amazon Web
 Services. "AWS" is a trademark of Amazon.com, Inc.
@@ -264,11 +289,11 @@ package).
 | Field | Spec | File | Shows |
 |---|---|---|---|
 | Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` | — |
-| Screenshot 1 | 1280 × 800 | ✅ `store-assets/screenshot-1-main.png` | Role picker — filter rows, env colours, tags, per-row region + service |
-| Screenshot 2 | 1280 × 800 | ✅ `store-assets/screenshot-2-search.png` | Pop-out search — scoped `env:`/`role:` query, suggestions, live match count |
-| Screenshot 3 | 1280 × 800 | ✅ `store-assets/screenshot-3-sessions.png` | Active AWS sessions panel — 3 of 5 slots, per-session detail, sign-out |
-| Screenshot 4 | 1280 × 800 | ✅ `store-assets/screenshot-4-jump.png` | Jump to account — destination, region row, label, recent + pinned jumps |
-| Screenshot 5 | 1280 × 800 | ✅ `store-assets/screenshot-5-dark.png` | Dark theme |
+| Screenshot 1 | 1280 × 800 | `store-assets/screenshot-1-main.png` | Role picker — one-line filter rows with +N, the Sets column beside them |
+| Screenshot 2 | 1280 × 800 | `store-assets/screenshot-2-sets.png` | Launch Sets panel — sets in order, archive, open |
+| Screenshot 3 | 1280 × 800 | `store-assets/screenshot-3-edit.png` | Edit a set — tabs per role with landing service and region |
+| Screenshot 4 | 1280 × 800 | `store-assets/screenshot-4-sessions.png` | Active AWS sessions — sign out one, the idle ones, or all |
+| Screenshot 5 | 1280 × 800 | `store-assets/screenshot-5-dark.png` | Dark theme — a filter row's +N pop-out |
 | Small promo tile (optional) | 440 × 280 PNG | ✅ `store-assets/promo-small-440x280.png` | Icon + wordmark over the filter rows |
 | Marquee promo tile (optional) | 1400 × 560 PNG | ✅ `store-assets/promo-marquee-1400x560.png` | Wordmark + tagline beside the role picker |
 
@@ -290,20 +315,19 @@ listing now shows the shipping build.
 
 ```
 Console Hopper enhances the AWS Identity Federation sign-in page
-(https://signin.aws.amazon.com/saml) with filters, search, account
-tags, favorites, deep-link service shortcuts, environment
-colour-coding, keyboard navigation and tab grouping, so users with
-many AWS accounts via SAML SSO reach the right role faster. Saved
-"jump destinations" — accounts reached by role-chaining through a hub
-— appear as rows in the same list and sign in the same way. It
-decorates AWS console tabs with a coloured favicon and account-name
-title prefix so many open consoles stay tellable apart, and keeps each
-console tab in the AWS Region it was working in when an
-account-wide console drops it from the address. A panel
-shows how many of AWS's five concurrent console sessions are in use
-and lets the user sign one — or all — out to free a slot. "Clear AWS
-Sessions" signs the user out of all AWS consoles by deleting AWS
-authentication cookies (cookies only — never read or transmitted).
+(https://signin.aws.amazon.com/saml) with filters, search, role tags,
+favorites, deep-link service shortcuts, environment colour-coding,
+keyboard navigation and tab grouping, so users with many AWS accounts
+via SAML SSO reach the right role faster. Launch Sets save the console
+tabs a task needs (role, service, region per tab) and open them
+together from the same page. Saved jump destinations, reached by role-
+chaining through a hub, sign in from the same list. It labels AWS
+console tabs with a coloured favicon and account name so many open
+consoles stay tellable apart, and keeps each console tab in its AWS
+Region. A panel shows how many of AWS's five console sessions are in
+use and signs one, the idle ones, or all out (closing their tabs).
+"Clear AWS Sessions" deletes AWS sign-in cookies (never read or
+transmitted).
 ```
 
 ### Data usage disclosure
@@ -314,7 +338,7 @@ authentication cookies (cookies only — never read or transmitted).
 | Personally identifiable information | **No** |
 | Health information | **No** |
 | Financial and payment information | **No** |
-| Authentication information | **No** |
+| Authentication information | **Yes** (since 1.7.0: opening a Launch Set hands the page's SAML response to AWS's sign-in endpoint, held in memory ≤ 5 min) |
 | Personal communications | **No** |
 | Location | **No** |
 | Web history | **No** |
@@ -340,19 +364,29 @@ https://github.com/tomekklas/console-hopper/blob/main/PRIVACY.md
 ### `storage`
 ```
 Persists user-configured org / environment / account-type / role-name
-filter definitions, favorites, recent sign-ins, service deep-link
-list, theme and keyboard preferences in chrome.storage.local so they
-survive across browser sessions. A small per-tab note of which AWS
-Region each console tab is working in is held in chrome.storage.session
-(in memory, discarded when the browser closes) so a tab returning from
-a region-less global console can be sent back to the Region it was in.
+filter definitions, favorites, recent sign-ins, role tags, saved jump
+destinations, Launch Sets (named lists of console tabs to open
+together: role, service and region per tab), the order of filter
+chips, the service deep-link list, theme and keyboard preferences in
+chrome.storage.local so they survive across browser sessions.
+chrome.storage.session (in memory, discarded when the browser closes)
+holds two short-lived things: a per-tab note of which AWS Region each
+console tab is working in, so a tab returning from an account-wide
+console can be sent back to its Region; and, while a Launch Set opens,
+one single-use hand-off per tab of the sign-in page's own SAML
+response, deleted when that tab takes it or after five minutes at
+most, and posted only to AWS's sign-in endpoint.
 ```
 
 ### `tabs`
 ```
-Reads the calling tab's id and window in the service worker so a
-newly opened AWS console tab can be placed into the right Chrome tab
-group. Tab URLs or content are not transmitted.
+Places each new AWS console tab into the right Chrome tab group; opens
+a Launch Set's tabs next to the role picker; lists the user's open AWS
+console tabs (address and tab group) when they click "Save open tabs",
+so the set can reopen the same consoles; and closes a console
+session's tabs when the user signs that session out. Tab addresses are
+read only for AWS console tabs, only for these actions, and are never
+transmitted.
 ```
 
 ### `tabGroups`
@@ -461,16 +495,22 @@ own Region. Page content is neither read nor transmitted.
       untouched; a region picked from AWS's own menu is kept; and two tabs
       pinned to different Regions each returned to their own after an IAM
       bounce — which AWS's single per-identity default cannot produce.
-- [ ] Re-run the 1.5.0 end-to-end pass on the 1.6.0 build before submitting
-      (jump rows, Source filter, Jump Destinations, sessions Sign out all;
-      footer reads v1.6.0).
-- [x] Five 1280×800 screenshots in `store-assets/`. Shots 1–4 are the 1.5.0
-      set (jump rows + Source filter, is: search, Jump Destinations grid,
-      sessions Sign-out-all); shot 5 was reshot for 1.6.0 as General Settings
-      open over the dark role picker, so it still carries the dark theme and
-      now shows the "Keep console tabs in their region" tick. Real UI,
-      placeholder account data (AWS-doc-style ids, acme/globex/initech names,
-      generic tags — no real vendor names).
+- [x] 1.7.0 verified against a live AWS org (mock-SAML → role picker):
+      Launch Set opened two tabs of one role into one multi-session, landed on
+      the saved pages and grouped by role; Save open tabs listed them, all
+      ticked; per-role tags; +N overflow, pop-out and chip drag; Launch Sets
+      panel edit / archive / restore / drag; session sign-out closed exactly
+      its tabs; Sign out idle signed out the tab-less session.
+- [ ] Reload the final build and re-check the post-review fixes (stale
+      sign-in page guard, Save-open-tabs naming, Esc on the open-set
+      confirmation); footer reads v1.7.0.
+- [x] Authentication information data-usage answer changed to **Yes** for
+      1.7.0 (Launch Sets hand the SAML response to AWS).
+- [x] Five 1280×800 screenshots in `store-assets/`, all reshot for 1.7.0
+      (main with Sets column + one-line rows, Launch Sets panel, Edit set,
+      sessions with Sign out idle, dark +N pop-out). Real UI, placeholder
+      account data (AWS-doc-style ids, acme/globex/initech names, generic
+      tags and ticket-style set names — no real vendor or service names).
 - [x] Promo tiles (440×280 and 1400×560) regenerated for 1.4.0.
 - [ ] Confirm the 128×128 icon renders cleanly (the current one is
       upscaled from a 64×64 source — a sharper 128×128 original is

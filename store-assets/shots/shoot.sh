@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Capture the staged role-picker scene and write a 1280x800 store screenshot.
 #
-#   shoot.sh <chrome-window-id> <out.png>
+#   shoot.sh <chrome-window-id> <out.png> [scene]
+#
+# scene: main (default) | sets | edit | sessions | dark — see stage.js.
 #
 # Everything that needs Chrome focused happens in ONE shell call: activating
 # Chrome from a separate call hands focus back to the terminal and you
@@ -13,6 +15,7 @@ set -euo pipefail
 
 WIN="$1"
 OUT="$2"
+SCENE="${3:-main}"
 SCRATCH="$(cd "$(dirname "$0")" && pwd)"
 VW=1280
 VH=802
@@ -36,7 +39,7 @@ cg.CGWarpMouseCursorPosition(P(640.0, 2100.0))
 PY
 
 out=$(osascript <<OSA
-set js to (read POSIX file "$SCRATCH/stage.js" as «class utf8»)
+set js to "var SCENE = \"$SCENE\";" & (read POSIX file "$SCRATCH/stage.js" as «class utf8»)
 set probe to "JSON.stringify({sx:window.screenX,sy:window.screenY,iw:innerWidth,ih:innerHeight,oh:outerHeight})"
 tell application "Google Chrome"
   activate
@@ -53,8 +56,13 @@ tell application "Google Chrome"
   set AppleScript's text item delimiters to {""}
   set bounds of w to {0, 120, $VW + ($VW - iw), 120 + $VH + 121 + ($VH - ih)}
   delay 0.4
+  -- Two passes: the first opens the scene (some of it — the sessions list,
+  -- the row refit — arrives asynchronously), the second rewrites whatever
+  -- appeared since and runs the leak check on the final frame.
+  execute (active tab of w) javascript js
+  delay 1.5
   set stageOut to execute (active tab of w) javascript js
-  delay 0.3
+  delay 0.5
   set geomOut to execute (active tab of w) javascript probe
   return geomOut & "@@" & stageOut
 end tell
