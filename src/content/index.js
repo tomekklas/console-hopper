@@ -3588,6 +3588,175 @@ import {
     });
   };
 
+  // --- Save open tabs as a set ---
+  // The service worker lists every open console tab with the role its AWS
+  // session belongs to, its region and its page. A tab saves as the role in
+  // today's list with that account id and role name.
+  const roleArnFor = (account, roleName) => {
+    if (!/^\d{12}$/.test(String(account || "")) || !roleName) return "";
+    const suffix = `/${roleName}`;
+    const radio = [...document.querySelectorAll('input[type="radio"][name="roleIndex"]')].find((r) =>
+      r.value.startsWith("arn:") && r.value.split(":")[4] === account &&
+      (r.value.endsWith(`:role${suffix}`) || r.value.endsWith(suffix)) && directRoleInfo(r.value));
+    return radio ? radio.value : "";
+  };
+
+  // The service's own home for a console path: a configured service with the
+  // same first segment, else "<segment>/home".
+  const serviceHomeFor = (path) => {
+    const seg = String(path || "").split(/[/?#]/)[0];
+    if (!seg) return "";
+    const known = ServicesManager.getServicesSync().find((sv) => sv && typeof sv.path === "string" && sv.path.split(/[/?#]/)[0] === seg);
+    return known ? known.path : `${seg}/home`;
+  };
+
+  const listOpenConsoleTabs = () =>
+    new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "hop_list_console_tabs", region: GeneralSettingsManager.region() },
+          (res) => resolve(chrome.runtime.lastError || !res || !res.ok ? null : res.tabs)
+        );
+      } catch (e) {
+        resolve(null);
+      }
+    });
+
+  const showSaveOpenTabsModal = async () => {
+    const tabs = await listOpenConsoleTabs();
+    if (!tabs) {
+      showToast("Couldn't list your console tabs.", "error", CONFIG.TOAST_DURATION_LONG);
+      return;
+    }
+    if (!tabs.length) {
+      showToast("No AWS console tabs are open.", "info", CONFIG.TOAST_DURATION_LONG);
+      return;
+    }
+    $("#tm_set_tabs_modal").remove();
+    const rows = tabs.map((t) => {
+      const roleArn = roleArnFor(t.account, t.role);
+      const info = roleArn ? directRoleInfo(roleArn) : null;
+      let why = "";
+      if (!t.role) why = "Can't tell which role this tab is (AWS multi-session off, or its session ended)";
+      else if (!roleArn) why = "This role isn't in today's role list (a ⤳ jump or switched role)";
+      return { ...t, roleArn, info, why };
+    });
+
+    // Tabs by Chrome tab group, groups first. The group holding the most
+    // savable tabs starts ticked — usually the ticket's own group.
+    const sections = new Map();
+    rows.forEach((r, i) => {
+      const key = r.groupId !== -1 ? `g${r.groupId}` : "none";
+      if (!sections.has(key)) sections.set(key, { title: r.group || (r.groupId !== -1 ? "Untitled group" : ""), grouped: r.groupId !== -1, idx: [] });
+      sections.get(key).idx.push(i);
+    });
+    const ordered = [...sections.values()].sort((a, b) => Number(b.grouped) - Number(a.grouped));
+    const savable = (sec) => sec.idx.filter((i) => rows[i].roleArn).length;
+    const best = ordered.filter((sec) => sec.grouped).sort((a, b) => savable(b) - savable(a))[0];
+    const preselect = best && savable(best) ? new Set(best.idx) : new Set(rows.map((_, i) => i));
+    const name = best && savable(best) ? best.title : "";
+
+    const rowHTML = (i) => {
+      const r = rows[i];
+      const on = r.roleArn && preselect.has(i) && [...preselect].indexOf(i) < LAUNCH_SET_MAX_TABS;
+      const color = r.info && r.info.env !== "default" ? EnvironmentsManager.colorFor(r.info.env) : "#ced4da";
+      const who = r.info
+        ? `${escapeHtml(r.info.accountName)} · ${escapeHtml(r.info.roleName)}`
+        : `${escapeHtml(r.account || "unknown account")}${r.role ? ` · ${escapeHtml(r.role)}` : ""}`;
+      return `
+        <label class="tm_set_pick tm_set_tabpick${r.roleArn ? "" : " tm_set_pick_off"}" title="${escapeHtml(r.why || r.title)}">
+          <input type="checkbox" data-row="${i}"${on ? " checked" : ""}${r.roleArn ? "" : " disabled"}>
+          <span class="tm_set_tabwho"><span class="tm_set_dot" style="background: ${escapeHtml(color)} !important;"></span>${who}</span>
+          <span class="tm_set_pick_where">${escapeHtml(serviceNameFor(r.path))}${r.region ? ` · ${escapeHtml(r.region)}` : ""}<small>${escapeHtml(r.why || r.path)}</small></span>
+        </label>`;
+    };
+    const listHTML = ordered.map((sec) => `
+      <div class="tm_set_tabsec">
+        <div class="tm_set_tabsec_head">
+          <span>${sec.grouped ? `Tab group · ${escapeHtml(sec.title)}` : "Not in a tab group"}</span>
+          ${ordered.length > 1 && savable(sec) ? `<a href="#" class="tm_set_only" data-rows="${sec.idx.join(",")}" data-title="${escapeHtml(sec.grouped ? sec.title : "")}">only these</a>` : ""}
+        </div>
+        ${sec.idx.map(rowHTML).join("")}
+      </div>`).join("");
+
+    const body = `
+      ${setNameFieldsHTML(name, name)}
+      <div class="tm_set_list_head"><span class="tm_set_count_label"></span></div>
+      <div class="tm_set_picklist">${listHTML}</div>
+      <div class="tm_set_reopen">
+        <span>Reopen each tab at</span>
+        <label><input type="radio" name="tm_set_reopen" value="page" checked> the exact page</label>
+        <label><input type="radio" name="tm_set_reopen" value="home"> the service's home</label>
+      </div>`;
+    const footer = `
+      <span></span>
+      <span><button type="button" class="tm_sv_btn" data-action="cancel">Cancel</button>
+      <button type="button" class="tm_sv_btn tm_set_primary" data-action="save">Save set</button></span>`;
+    $("body").append(modalShell(
+      "tm_set_tabs_modal",
+      "Save open tabs as a set",
+      "Your open AWS console tabs, each with its role, region and page. <strong>Open</strong> on the set brings the same tabs back.",
+      body,
+      footer,
+      760
+    ));
+    const $m = $("#tm_set_tabs_modal");
+    bindNameToGroup($m, true);
+    const refreshCount = () => {
+      const n = $m.find(".tm_set_pick input:checked").length;
+      $m.find(".tm_set_count_label").text(`${plural(n, "tab")} selected${n > LAUNCH_SET_MAX_TABS ? ` — a set holds at most ${LAUNCH_SET_MAX_TABS}` : ""}`);
+    };
+    refreshCount();
+    $m.on("change", ".tm_set_pick input", refreshCount);
+    $m.on("click", ".tm_set_only", function (e) {
+      e.preventDefault();
+      const keep = new Set(this.getAttribute("data-rows").split(",").map(Number));
+      $m.find(".tm_set_pick input").each(function () {
+        if (!this.disabled) this.checked = keep.has(Number(this.getAttribute("data-row")));
+      });
+      const title = this.getAttribute("data-title");
+      if (title && !$m.find(".tm_set_name_input").val()) {
+        $m.find(".tm_set_name_input").val(title);
+        $m.find(".tm_set_group_input").val(title);
+      }
+      refreshCount();
+    });
+    $m.on("click", function (e) { if (e.target === this) $m.remove(); });
+    $m.find('[data-action="cancel"]').on("click", () => $m.remove());
+    $m.find('[data-action="save"]').on("click", async () => {
+      const names = readSetNames($m);
+      if (names.error) return setModalError($m, names.error);
+      const picked = $m.find(".tm_set_pick input:checked").get().map((el) => rows[Number(el.getAttribute("data-row"))]);
+      if (!picked.length) return setModalError($m, "Tick at least one tab.");
+      if (picked.length > LAUNCH_SET_MAX_TABS) {
+        return setModalError($m, `A set holds at most ${LAUNCH_SET_MAX_TABS} tabs; untick ${picked.length - LAUNCH_SET_MAX_TABS}.`);
+      }
+      const exact = ($m.find('input[name="tm_set_reopen"]:checked').val() || "page") === "page";
+      let simplified = 0;
+      const setTabs = picked.map((r) => {
+        let service = exact ? r.path : serviceHomeFor(r.path);
+        // A page the sign-in URL can't carry safely falls back to its service home.
+        if (!isSafeServicePath(service)) {
+          service = serviceHomeFor(r.path);
+          simplified++;
+        }
+        if (!isSafeServicePath(service)) service = "";
+        return { roleArn: r.roleArn, service, region: r.region };
+      });
+      const set = { id: newLaunchSetId(), name: names.name, group: names.group, tabs: setTabs, lastUsed: 0 };
+      if (await LaunchSetsManager.upsert(set)) {
+        $m.remove();
+        showToast(
+          `Saved ${set.name} (${plural(set.tabs.length, "tab")})${simplified ? `; ${simplified} will open on the service home` : ""}.`,
+          "success",
+          CONFIG.TOAST_DURATION_LONG
+        );
+        startSetPreview(set.id);
+      }
+    });
+    $m.find(".tm_set_name_input").trigger("focus");
+  };
+
   // --- Sets column wiring ---
   const closeSetsMenu = () => $("#tm_sets_menu").css("display", "none");
 
@@ -3604,6 +3773,7 @@ import {
     closeSetsMenu();
     const act = this.getAttribute("data-act");
     if (act === "view") showSaveViewModal();
+    if (act === "tabs") showSaveOpenTabsModal();
   });
   // The search card's "save as set": the search is usually the ticket id, so
   // this is the shortest path from "find the ticket's accounts" to a set.
@@ -3695,6 +3865,7 @@ import {
                             <button type="button" id="tm_sets_new" title="Save a set of console tabs to open together">+ New set ▾</button>
                             <div id="tm_sets_menu" style="display: none;">
                                 <a href="#" data-act="view" title="Every role the listing shows now, with its service and region">Save current view…</a>
+                                <a href="#" data-act="tabs" title="Your open AWS console tabs, each with its role, region and page">Save open tabs…</a>
                             </div>
                         </div>
                     </div>
@@ -5657,7 +5828,24 @@ import {
             padding: 7px 10px !important; font-size: 13px !important; cursor: pointer !important;
         }
         .tm_set_pick + .tm_set_pick { border-top: 1px solid #f1f3f5 !important; }
-        .tm_set_pick_where { color: #6c757d !important; font-size: 12px !important; }
+        .tm_set_pick_where { color: #6c757d !important; font-size: 12px !important; text-align: right !important; min-width: 0 !important; }
+        .tm_set_pick_where small {
+            display: block !important; max-width: 300px !important; overflow: hidden !important; text-overflow: ellipsis !important;
+            white-space: nowrap !important; color: #adb5bd !important; font-size: 11px !important;
+        }
+        .tm_set_pick_off { color: #adb5bd !important; cursor: default !important; }
+        .tm_set_tabwho { display: flex !important; align-items: center !important; gap: 8px !important; min-width: 0 !important; }
+        .tm_set_dot { flex: none !important; width: 10px !important; height: 10px !important; border-radius: 3px !important; }
+        .tm_set_tabsec + .tm_set_tabsec { border-top: 1px solid #e1e4e8 !important; }
+        .tm_set_tabsec_head {
+            display: flex !important; justify-content: space-between !important; padding: 8px 10px 2px !important;
+            font-size: 11px !important; font-weight: 700 !important; text-transform: uppercase !important;
+            letter-spacing: 0.04em !important; color: #1a73e8 !important;
+        }
+        .tm_set_tabsec_head a { color: #0073bb !important; text-transform: none !important; letter-spacing: normal !important; font-weight: 400 !important; font-size: 12px !important; }
+        .tm_set_reopen { display: flex !important; flex-wrap: wrap !important; gap: 14px !important; align-items: center !important; margin-top: 12px !important; font-size: 13px !important; }
+        .tm_set_reopen > span { color: #6c757d !important; }
+        .tm_set_reopen label { display: inline-flex !important; gap: 5px !important; align-items: center !important; cursor: pointer !important; }
 
         .tm_set_grid {
             display: grid !important; grid-template-columns: 6px minmax(160px, 1.4fr) 170px 180px minmax(100px, 1fr) 26px !important;
@@ -8564,6 +8752,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             `Tag accounts with your own labels — <code>palo-alto</code>, <code>prod-network</code>, a ticket number — and organise by them. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Account Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
           ${sectionHTML("Save a search as a Shortcut",
             `Built a query and filter set you'll want again? Click <strong>☆ save as shortcut</strong> in the search card and name it — it becomes a chip in the <em>Shortcuts</em> row, and one click re-applies the whole view (search <em>and</em> filters). Remove one with its <strong>✕</strong> — click to arm, click again to confirm.`)}
+          ${sectionHTML("Launch Sets",
+            `Open every console a ticket needs in one click. Search for the ticket (or filter to its accounts) and click <strong>↗ save as set</strong> in the search card — or use <strong>+ New set</strong> in the <em>Sets</em> column, which can also save the <strong>console tabs you have open</strong>. Each tab keeps its own role, service and region, and one role can have several tabs (EC2 and IAM side by side): click a set's name, then <strong>Edit</strong>. <strong>Open</strong> signs every tab in at once, next to this page, gathered in a Chrome tab group named after the set. Sensitive roles, roles missing from today's list and AWS's five-session limit get one confirmation for the whole set.`)}
           ${sectionHTML("Start view",
             `Have the picker open on a view every load. Open <em>Start View</em> in the side menu and pick one chip — <strong>★ Favorites</strong>, <strong>↻ Recent</strong>, one of your saved <em>Shortcuts</em>, or a <em>Tag</em>. The active choice is highlighted; <strong>Save current filters</strong> snapshots whatever you have on right now, and <strong>Clear</strong> removes it (your favorites stay put).`)}
           ${sectionHTML("Reorder by drag",

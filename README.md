@@ -92,6 +92,12 @@ features.
   prefix, so ten open AWS consoles stay distinguishable.
 - **Tab groups** — cluster console tabs by role, by organisation, or by
   a per-ticket override tag using Chrome's native tab groups.
+- **Launch Sets** — save the console tabs a ticket needs (role, service and
+  region for each, several tabs per role if you like) under a name such as
+  the ticket id, then open them all in one click, gathered in one Chrome tab
+  group. Save one from a search (**↗ save as set** in the search card) or
+  from the console tabs you already have open; sensitive roles, missing
+  roles and the five-session limit get one confirmation for the whole set.
 - **Sensitive-sign-in confirmation** — pops a confirmation modal for
   configurable role-name keywords (default: `admin`) or account types.
 - **New-tab sign-in** — ⌘/Ctrl-click, middle-click, or ⌘+Enter opens the
@@ -143,15 +149,17 @@ console-hopper/
 │   ├── dom.js              #   minimal jQuery-subset DOM shim
 │   └── util.js             #   pure helpers (escaping, matchers, parsing)
 ├── src/shared/             # Modules shared with the service worker
-│   └── region-lock.js      #   pure region-lock decisions (unit-tested)
+│   ├── region-lock.js      #   pure region-lock decisions (unit-tested)
+│   └── launch.js           #   Launch Sets sign-in checks (unit-tested)
 ├── console-decorator.js    # Sets favicon + title on AWS console pages
+├── launch.html, launch.js  # Launch Sets: one per opened tab, posts its sign-in
 ├── background.js           # Service worker, ES module (tab grouping, region lock)
 ├── icons/                  # icon16/32/48/128.png
 ├── samples/                # Importable starter configs (e.g. AWS LZ)
 ├── store-assets/           # Screenshots + promo tiles (not in submission zip)
 ├── package.json            # Dev tooling (esbuild build, ESLint, vitest)
 ├── scripts/build.mjs       # Build the Chrome Web Store submission zip
-├── test/                   # vitest unit tests (util, dom shim, region lock)
+├── test/                   # vitest unit tests (util, dom shim, region lock, launch)
 ├── PRIVACY.md              # Privacy policy
 ├── STORE_LISTING.md        # Chrome Web Store form values + checklist
 └── README.md

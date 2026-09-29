@@ -38,6 +38,16 @@ device**, using Chrome's `chrome.storage.local` API:
   screen
 - An optional "tab group tag" you typed into the toolbar for the
   current session
+- Your Launch Sets: a name, a tab-group name, and for each tab the role
+  ARN, AWS region and console page (service path) to open
+
+When you open a Launch Set, the SAML response already on the AWS
+sign-in page is handed to the extension's background worker and held in
+Chrome's in-memory `chrome.storage.session` for at most five minutes,
+one single-use copy per tab, until each new tab posts it to AWS's own
+sign-in endpoint — the same post the sign-in page itself makes when you
+click Sign In. It is never written to disk, put in a URL, or sent
+anywhere but AWS.
 
 None of this data is transmitted to the extension's authors, to
 Google, to Amazon, or to any other third party. It is readable only
@@ -59,7 +69,9 @@ The extension does **not**:
 - Use cookies, fingerprinting, analytics, error reporting, or any
   third-party SDK
 - Read or transmit your AWS credentials, SAML assertions, session
-  tokens, or any authentication material. (The optional **Clear AWS
+  tokens, or any authentication material, except as above: opening a
+  Launch Set posts the sign-in page's own SAML response to AWS's sign-in
+  endpoint, once per tab. (The optional **Clear AWS
   Sessions** button deletes AWS session cookies on your device when you
   click it — to sign you out — but never reads or transmits them. The
   session list described above returns only metadata — account id, role
