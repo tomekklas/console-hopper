@@ -34,6 +34,10 @@ All notable changes to Console Hopper are listed here. Dates are in
   the same as in the Open-set dialog.
 - The set preview bar says when a set needs more free sessions than you
   have, and the Open-set dialog names the region of any tab that picks one.
+- **A set whose roles are all signed in opens from any role picker page**,
+  however long it has been open: nothing signs in, so AWS's five-minute limit
+  on the sign-in page doesn't apply. A set that does sign in still asks for
+  a fresh page.
 - ⌘-click (or middle-click) on the Jump popover's **Jump →** and on its
   recent jumps opens a new tab, like the listing's rows.
 - **Long account and role names fit.** The role picker used to stop at

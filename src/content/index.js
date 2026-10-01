@@ -4353,8 +4353,10 @@ import {
 
   let launchInFlight = false;
 
-  // AWS accepts a sign-in page for 5 minutes. Checked before the dialog too,
-  // so a page too old to use doesn't cost the user their sessions.
+  // AWS accepts a sign-in page for 5 minutes. Only a set with a tab that
+  // signs in needs it fresh — one whose roles are all live opens in their
+  // sessions — and it's checked before the dialog too, so a page too old to
+  // use doesn't cost the user their sessions.
   const samlTooOld = (set) => {
     const age = samlResponseAgeMs();
     if (age === null || age <= SAML_FRESH_MS) return false;
@@ -4376,7 +4378,6 @@ import {
       showToast(`None of ${set.name}'s roles are in today's role list.`, "error", CONFIG.TOAST_DURATION_LONG);
       return;
     }
-    if (samlTooOld(set)) return;
     // Held from the first click, through the session read and the dialog, so
     // a double click can't start a second launch.
     launchInFlight = true;
@@ -4387,14 +4388,22 @@ import {
         .filter((s) => s.reasons.length);
       let room = await sessionRoomFor(ready);
       let signedOut = 0;
+      // Whether any tab signs in, rather than opening in a live session. With
+      // no session count at all, every tab does.
+      const needsSignIn = () => {
+        const reuse = room ? reuseMapFor(room.plan) : new Map();
+        return ready.some((t) => !reuse.has(sessionRoleKey(t.roleArn)));
+      };
+      if (needsSignIn() && samlTooOld(set)) return;
       // Nothing to warn about: one click opens the set.
       if (sensitive.length || missing.length || (room && room.plan.deficit > 0)) {
         const choice = await confirmLaunchSet(set, ready, missing, sensitive, room);
         if (!choice) return;
         ({ room, signedOut } = choice);
       }
-      // Again after the dialog, which can sit open a while.
-      if (samlTooOld(set)) return;
+      // Again after the dialog, which can sit open a while — and whose Sign out
+      // all can end a session the set would have opened in.
+      if (needsSignIn() && samlTooOld(set)) return;
       if (room && room.plan.deficit > 0) {
         showToast(`Not enough free AWS sessions for ${set.name}. Sign some out and try again.`, "error", CONFIG.TOAST_DURATION_LONG);
         return;
