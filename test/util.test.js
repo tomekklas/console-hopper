@@ -3,6 +3,12 @@ import {
   LAUNCH_SET_MAX_TABS,
   launchSetRoleCount,
   normalizeLaunchSets,
+  groupSessions,
+  jumpHubs,
+  parsePageMaxWidth,
+  splitNameTail,
+  planSessionRoom,
+  sessionRoleKey,
   escapeHtml,
   sanitizeInput,
   parseAccountInfo,
@@ -770,6 +776,138 @@ describe("normalizeLaunchSets", () => {
   it("counts distinct roles, not tabs", () => {
     expect(launchSetRoleCount(good)).toBe(2);
     expect(launchSetRoleCount(null)).toBe(0);
+  });
+});
+
+describe("splitNameTail", () => {
+  it("keeps the words that tell same-prefix names apart", () => {
+    expect(splitNameTail("cutspace-landingzone-workload-payments-prod")).toEqual(["cutspace-landingzone-workload-", "payments-prod"]);
+    expect(splitNameTail("cutspace-landingzone-workload-ledger-staging")).toEqual(["cutspace-landingzone-workload-", "ledger-staging"]);
+    expect(splitNameTail("cutspace-landingzone-shared-network-hub")).toEqual(["cutspace-landingzone-shared-", "network-hub"]);
+  });
+
+  it("breaks words at case changes too", () => {
+    expect(splitNameTail("LandingZone-PlatformReadOnly")).toEqual(["LandingZone-", "PlatformReadOnly"]);
+    expect(splitNameTail("AWSReservedSSO_PlatformAdministrator_19c2")).toEqual(["AWSReservedSSO_Platform", "Administrator_19c2"]);
+  });
+
+  it("falls back to the last 12 characters", () => {
+    expect(splitNameTail("abcdefghijklmnopqrstuvwxyz")).toEqual(["abcdefghijklmn", "opqrstuvwxyz"]);
+    expect(splitNameTail("prefix-averyveryveryverylongfinalwordthatgoesonandon")[1]).toHaveLength(12);
+  });
+
+  it("leaves short names whole, and always splits losslessly", () => {
+    expect(splitNameTail("mgmt")).toEqual(["mgmt", ""]);
+    expect(splitNameTail("prod-payments-eu")).toEqual(["prod-payments-eu", ""]);
+    expect(splitNameTail(null)).toEqual(["", ""]);
+    for (const n of ["cutspace-landingzone-security-audit", "OrganizationAccountAccessRole", "a.b.c.d.e.f.g.h.i.j.k.l"]) {
+      expect(splitNameTail(n).join("")).toBe(n);
+    }
+  });
+});
+
+describe("parsePageMaxWidth", () => {
+  it("takes a share of the window or pixels", () => {
+    expect(parsePageMaxWidth("90%")).toEqual({ text: "90%", unit: "%", value: 90 });
+    expect(parsePageMaxWidth(" 75 % ")).toEqual({ text: "75%", unit: "%", value: 75 });
+    expect(parsePageMaxWidth("1600px")).toEqual({ text: "1600px", unit: "px", value: 1600 });
+    expect(parsePageMaxWidth("1600 PX")).toEqual({ text: "1600px", unit: "px", value: 1600 });
+  });
+
+  it("reads a bare number as a percentage up to 100, pixels above", () => {
+    expect(parsePageMaxWidth("85")).toEqual({ text: "85%", unit: "%", value: 85 });
+    expect(parsePageMaxWidth("1800")).toEqual({ text: "1800px", unit: "px", value: 1800 });
+  });
+
+  it("refuses widths that are too narrow, too wide or not widths", () => {
+    for (const bad of ["40%", "101%", "900px", "6000px", "wide", "", null, "90vw", "-90%", "1e3"]) {
+      expect(parsePageMaxWidth(bad)).toBeNull();
+    }
+  });
+});
+
+describe("sessionRoleKey", () => {
+  it("keys a role by account and bare role name, dropping any path", () => {
+    expect(sessionRoleKey("arn:aws:iam::123456789012:role/ReadOnly")).toBe("123456789012/ReadOnly");
+    expect(sessionRoleKey("arn:aws:iam::123456789012:role/team/ops/Admin")).toBe("123456789012/Admin");
+    expect(sessionRoleKey("arn:aws-us-gov:iam::123456789012:role/Dev")).toBe("123456789012/Dev");
+    expect(sessionRoleKey("nope")).toBe("");
+  });
+});
+
+describe("jump-aware sessions", () => {
+  const profiles = [{ name: "Acme", hub: "900000000001", hubRole: "OrgAdmin", role: "OrgAccess" }];
+  const hub = { differentiator: "900000000001-h", account: "900000000001", role: "OrgAdmin", tabs: 0, expiry: 5000, authTime: 100 };
+  const jumped = { differentiator: "300000000003-j", account: "300000000003", role: "OrgAccess", tabs: 2, expiry: 4000, authTime: 200 };
+  const other = { differentiator: "400000000004-o", account: "400000000004", role: "Auditor", tabs: 0, expiry: 3000, authTime: 50 };
+
+  it("pairs a jumped session with the hub it came through", () => {
+    const hubs = jumpHubs([hub, jumped, other], profiles);
+    expect(hubs.get(jumped)).toBe(hub);
+    expect(hubs.size).toBe(1);
+  });
+
+  it("only pairs with a hub session that started first, and the right hub role", () => {
+    expect(jumpHubs([{ ...hub, authTime: 300 }, jumped], profiles).size).toBe(0);
+    expect(jumpHubs([{ ...hub, role: "ReadOnly" }, jumped], profiles).size).toBe(0);
+    // No hub role in the profile: any session in the hub account will do.
+    expect(jumpHubs([{ ...hub, role: "ReadOnly" }, jumped], [{ ...profiles[0], hubRole: undefined }]).size).toBe(1);
+  });
+
+  it("never takes a session of a directly sign-in-able role for a jump", () => {
+    // ReadOnly in 300000000003 is also a direct role, so its session is direct.
+    const direct = { ...jumped, role: "OrgAccess" };
+    expect(jumpHubs([hub, direct], profiles, new Set(["300000000003/OrgAccess"])).size).toBe(0);
+    expect(jumpHubs([hub, direct], profiles, ["300000000003/OrgAccess"]).size).toBe(0);
+    const units = groupSessions([hub, direct], profiles, new Set(["300000000003/OrgAccess"]));
+    expect(units).toHaveLength(2);
+    expect(units.every((u) => !u.hub)).toBe(true);
+  });
+
+  it("groups a hub and its jumped session into one unit", () => {
+    const units = groupSessions([hub, jumped, other], profiles);
+    expect(units).toHaveLength(2);
+    const pair = units.find((u) => u.hub === hub);
+    expect(pair.ids).toEqual(["900000000001-h", "300000000003-j"]);
+    expect(pair.tabs).toBe(2);
+    expect(pair.expiry).toBe(4000);
+  });
+});
+
+describe("planSessionRoom", () => {
+  const sess = (n, role, extra = {}) => ({
+    differentiator: `11111111111${n}-s${n}`,
+    account: `11111111111${n}`,
+    role,
+    tabs: 0,
+    expiry: 1000 + n,
+    ...extra,
+  });
+  const keys = (...n) => n.map((i) => `22222222222${i}/Role`);
+
+  it("needs nothing when the set fits beside the live sessions", () => {
+    expect(planSessionRoom(keys(1, 2, 3), [sess(1, "A"), sess(2, "B")], 5)).toMatchObject({ free: 3, deficit: 0 });
+  });
+
+  it("2 live + 5 new: two sessions must go", () => {
+    expect(planSessionRoom(keys(1, 2, 3, 4, 5), [sess(1, "A"), sess(2, "B")], 5)).toMatchObject({ free: 3, deficit: 2 });
+  });
+
+  it("a role that's already live opens in its session and needs no slot", () => {
+    const mine = { differentiator: "222222222221-x", account: "222222222221", role: "Role", tabs: 2, expiry: 1 };
+    const plan = planSessionRoom(keys(1, 2, 3), [mine, sess(1, "A"), sess(2, "B"), sess(3, "C")], 5);
+    expect(plan).toMatchObject({ reused: keys(1), fresh: keys(2, 3), free: 1, deficit: 1 });
+    expect(plan.keep.get(keys(1)[0])).toBe(mine);
+  });
+
+  it("opens in the busiest of two sessions of one role", () => {
+    const busy = { differentiator: "222222222221-a", account: "222222222221", role: "Role", tabs: 3, expiry: 1 };
+    const dup = { differentiator: "222222222221-b", account: "222222222221", role: "Role", tabs: 0, expiry: 2 };
+    expect(planSessionRoom(keys(1), [dup, busy], 5).keep.get(keys(1)[0])).toBe(busy);
+  });
+
+  it("copes with a missing session list", () => {
+    expect(planSessionRoom(keys(1), null, 5)).toMatchObject({ free: 5, deficit: 0, reused: [], fresh: keys(1) });
   });
 });
 

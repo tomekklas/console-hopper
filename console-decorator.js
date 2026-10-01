@@ -423,6 +423,18 @@
         sessionStorage.setItem(SS_KEY, JSON.stringify(jumpLabel));
       } catch (e) { /* private mode or storage full; decoration is best-effort */ }
       decorate(jumpLabel);
+      // A jump opened in a new tab couldn't be grouped from the picker (it
+      // never learns the new tab's id), so it hands the group over here.
+      const g = hit.group;
+      if (g && typeof g.role === "string" && g.role) {
+        requestTabGrouping({
+          account: acct,
+          role: g.role.slice(0, 128),
+          tag: typeof g.tag === "string" ? g.tag.slice(0, 64) : "",
+          groupMode: typeof g.mode === "string" ? g.mode : "role",
+          org: typeof g.org === "string" ? g.org.slice(0, 64) : "",
+        });
+      }
     });
   }
 

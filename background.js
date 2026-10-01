@@ -16,7 +16,8 @@
 // and can't carry sessionStorage across the hop.
 
 import { nextTabState, parseConsolePage, planRegionLock } from "./src/shared/region-lock.js";
-import { LAUNCH_MAX_TABS, isSamlAction, sanitizeLaunchFields } from "./src/shared/launch.js";
+import { LAUNCH_MAX_TABS, isSamlAction, isSessionConsoleUrl, sanitizeLaunchFields, sessionRelayUrl } from "./src/shared/launch.js";
+import { groupSessions } from "./src/shared/sessions.js";
 
 const GROUP_COLORS = [
   "grey", "blue", "red", "yellow",
@@ -32,8 +33,15 @@ function hashString(s) {
   return Math.abs(hash);
 }
 
+// Grey is kept for groups whose session has ended (see ENDED SESSIONS), so a
+// live group never looks like one. A title that hashes to grey gets another
+// colour; every other title keeps the colour it always had.
+const LIVE_COLORS = GROUP_COLORS.filter((c) => c !== "grey");
+
 function colorFor(key) {
-  return GROUP_COLORS[hashString(key) % GROUP_COLORS.length];
+  const h = hashString(key);
+  const color = GROUP_COLORS[h % GROUP_COLORS.length];
+  return color === "grey" ? LIVE_COLORS[h % LIVE_COLORS.length] : color;
 }
 
 function titleFor(account, role) {
@@ -83,6 +91,7 @@ async function groupTab(tabId, account, role, tag, mode, org) {
 
   if (groups.length > 0) {
     await chrome.tabs.group({ tabIds: [tabId], groupId: groups[0].id });
+    await rememberOwnGroup(groups[0].id);
     return;
   }
 
@@ -91,6 +100,29 @@ async function groupTab(tabId, account, role, tag, mode, org) {
   try {
     await chrome.tabGroups.update(groupId, { title, color });
   } catch (err) { /* ignore */ }
+  await rememberOwnGroup(groupId);
+}
+
+// The tab groups Console Hopper made (or added a console tab to), so only
+// those are ever marked "Ended" — never one you made yourself. Group ids last
+// as long as the browser session, like chrome.storage.session.
+const OWN_GROUPS_KEY = "hop_own_groups";
+const OWN_GROUPS_MAX = 200;
+async function readOwnGroups() {
+  try {
+    const res = await chrome.storage.session.get(OWN_GROUPS_KEY);
+    return Array.isArray(res && res[OWN_GROUPS_KEY]) ? res[OWN_GROUPS_KEY] : [];
+  } catch {
+    return [];
+  }
+}
+async function rememberOwnGroup(groupId) {
+  const own = await readOwnGroups();
+  if (own.includes(groupId)) return;
+  own.push(groupId);
+  try {
+    await chrome.storage.session.set({ [OWN_GROUPS_KEY]: own.slice(-OWN_GROUPS_MAX) });
+  } catch { /* cosmetic only: an unremembered group just isn't marked */ }
 }
 
 // Grouping runs one tab at a time. A Launch Set opens several tabs that all
@@ -166,71 +198,123 @@ function withTickets(fn) {
 }
 
 async function launchTabs(action, tabs, sender) {
-  if (!isSamlAction(action)) throw new Error("not an AWS SAML sign-in endpoint");
   if (!Array.isArray(tabs) || tabs.length === 0 || tabs.length > LAUNCH_MAX_TABS) {
     throw new Error("nothing to open");
   }
-  const cleaned = tabs.map((t) => sanitizeLaunchFields(t && t.fields));
-  if (cleaned.some((f) => !f)) throw new Error("a tab's sign-in fields were rejected");
+  // Each tab is either a sign-in (the role picker's form fields) or, for a
+  // role that already has a live session, that session's own console URL —
+  // signing in again would replace the session and sign its open tabs out.
+  const entries = tabs.map((t) => {
+    if (t && typeof t.url === "string") return isSessionConsoleUrl(t.url) ? { url: t.url } : null;
+    const fields = sanitizeLaunchFields(t && t.fields);
+    return fields ? { fields, role: (fields.find(([name]) => name === "roleIndex") || [])[1] } : null;
+  });
+  if (entries.some((e) => !e)) throw new Error("a tab's sign-in fields were rejected");
+  const signins = entries.filter((e) => e.fields);
+  if (signins.length && !isSamlAction(action)) throw new Error("not an AWS SAML sign-in endpoint");
 
-  const tickets = await withTickets((all) => {
+  await withTickets((all) => {
     const ts = Date.now();
-    return cleaned.map((fields) => {
-      const id = newTicket();
-      all[id] = { action, fields, ts };
-      return id;
-    });
+    for (const e of signins) {
+      e.ticket = newTicket();
+      all[e.ticket] = { action, fields: e.fields, ts };
+    }
   });
 
-  // New tabs go right after the picker, in order, without taking focus from it.
-  // AWS starts a NEW console session for every sign-in it receives before the
-  // role's session cookie exists, so two tabs of one role posted together can
-  // cost two of the five session slots. Open each role's first tab now; its
-  // other tabs follow once that one has reached the console (its session is
-  // set), placed right after it.
+  // New tabs go right after the picker, in set order, without taking focus
+  // from it. AWS starts a NEW console session for every sign-in it receives
+  // before the role's session cookie exists, so two tabs of one role posted
+  // together can cost two of the five session slots. Open each role's first
+  // sign-in now; its other tabs follow once that one has reached the console,
+  // straight into the session it landed in (see below), placed right after it.
   const pickerTab = sender.tab;
-  const byRole = new Map();
-  cleaned.forEach((fields, i) => {
-    const role = (fields.find(([name]) => name === "roleIndex") || [])[1];
-    if (!byRole.has(role)) byRole.set(role, []);
-    byRole.get(role).push(tickets[i]);
-  });
-  const openTab = (ticket, index) =>
-    chrome.tabs.create({
-      url: chrome.runtime.getURL(`launch.html#${ticket}`),
-      windowId: pickerTab.windowId,
-      index,
-      active: false,
-    });
+  const openTab = (url, index) =>
+    chrome.tabs.create({ url, windowId: pickerTab.windowId, index, active: false });
+  const launchUrl = (ticket) => chrome.runtime.getURL(`launch.html#${ticket}`);
   let index = pickerTab.index + 1;
   let first = true;
+  const byRole = new Map();
   const leaders = [];
-  for (const [, roleTickets] of byRole) {
+  for (const e of entries) {
+    if (e.fields && byRole.has(e.role)) {
+      byRole.get(e.role).rest.push(e);
+      continue;
+    }
     if (!first) await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
     first = false;
-    leaders.push({ tab: await openTab(roleTickets[0], index++), rest: roleTickets.slice(1) });
+    const tab = await openTab(e.url || launchUrl(e.ticket), index++);
+    if (e.fields) {
+      const leader = { tab, rest: [], roleArn: e.role };
+      byRole.set(e.role, leader);
+      leaders.push(leader);
+    }
   }
   // The rest open in the background; the picker has its answer already.
-  for (const { tab, rest } of leaders) {
+  for (const { tab, rest, roleArn } of leaders) {
     if (!rest.length) continue;
-    waitForConsole(tab.id, LAUNCH_FOLLOW_TIMEOUT_MS).then(async () => {
+    waitForConsole(tab.id, LAUNCH_FOLLOW_TIMEOUT_MS).then(async (landed) => {
+      // A first tab that never reached the console (AWS's session limit, an
+      // expired sign-in, closed) has no session for the rest to share: each
+      // would start a session of its own or stop on the same page. Drop them,
+      // tickets and all, and tell the picker why they didn't appear.
+      if (!landed) {
+        await withTickets((all) => rest.forEach((f) => delete all[f.ticket])).catch(() => {});
+        chrome.tabs
+          .sendMessage(pickerTab.id, { type: "hop_launch_skipped", roleArn, count: rest.length })
+          .catch(() => {});
+        return;
+      }
+      // The rest open straight in the session the first tab landed in, with
+      // no sign-in of their own: AWS turns a second sign-in away when all five
+      // sessions are in use (even though it would only have reused this one),
+      // and one that goes through replaces the session. Without a session
+      // host to go to (multi-session off), they sign in as before.
+      const session = await sessionOfTab(tab.id, SESSION_HOST_WAIT_MS);
       let at;
       try {
         at = (await chrome.tabs.get(tab.id)).index + 1;
       } catch {
         at = undefined; // leader closed: append at the end of the window
       }
-      for (const ticket of rest) {
+      for (const f of rest) {
         await new Promise((r) => setTimeout(r, LAUNCH_STAGGER_MS));
+        const relay = (f.fields.find(([name]) => name === "RelayState") || [])[1];
+        const direct = session ? sessionRelayUrl(relay, session) : "";
         try {
-          await openTab(ticket, at === undefined ? undefined : at++);
+          if (direct) {
+            await withTickets((all) => { delete all[f.ticket]; }).catch(() => {});
+            await openTab(direct, at === undefined ? undefined : at++);
+          } else {
+            await openTab(launchUrl(f.ticket), at === undefined ? undefined : at++);
+          }
         } catch (err) {
           console.warn("[hop] launch: couldn't open a tab:", err);
         }
       }
     });
   }
-  return tickets.length;
+  return entries.length;
+}
+
+// The session a tab landed in: the differentiator of its multi-session
+// console host, or "" when it has none (multi-session off) or doesn't get one
+// in time. AWS can land on the plain regional host and move to the session's
+// own host a moment later, so this waits a little for it.
+const SESSION_HOST_WAIT_MS = 5000;
+async function sessionOfTab(tabId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let url = "";
+    try {
+      url = String((await chrome.tabs.get(tabId)).url || "");
+    } catch {
+      return ""; // closed
+    }
+    const page = CONSOLE_URL_RE.test(url) ? consolePageOf(url) : null;
+    if (page && page.differentiator) return page.differentiator.toLowerCase();
+    if (Date.now() >= deadline) return "";
+    await new Promise((r) => setTimeout(r, 300));
+  }
 }
 
 // Resolves once the tab is on an AWS console page (true), or on close or
@@ -274,6 +358,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   launchTabs(message.action, message.tabs, sender)
     .then((opened) => sendResponse({ ok: true, opened }))
     .catch((err) => sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }));
+  return true;
+});
+
+// A new-tab jump into a session that's already live: open its console next to
+// the picker. Only the role picker may ask, and only for a live session's own
+// console host.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_open_session_tab") return;
+  if (!sender || !sender.tab || !PICKER_URL_RE.test(String(sender.url || "")) ||
+      !isSessionConsoleUrl(message.url)) {
+    sendResponse({ ok: false });
+    return;
+  }
+  chrome.tabs
+    .create({ url: message.url, windowId: sender.tab.windowId, index: sender.tab.index + 1, active: true })
+    .then(() => sendResponse({ ok: true }), (err) => sendResponse({ ok: false, error: String(err) }));
   return true;
 });
 
@@ -419,7 +519,7 @@ async function listAwsSessions(region) {
   const data = await res.json();
   const raw = Array.isArray(data && data.sessions) ? data.sessions : [];
   const tabInfo = await collectTabInfo();
-  return raw.map((s) => {
+  const sessions = raw.map((s) => {
     // arn:aws:sts::123456789012:assumed-role/RoleName/session-name
     const m = String(s.principal_arn || "").match(
       /^arn:aws:sts::(\d{12}):assumed-role\/([^/]+)\/(.*)$/
@@ -442,6 +542,8 @@ async function listAwsSessions(region) {
       group: t.group,
     };
   });
+  markEndedGroupsSoon(sessions);
+  return sessions;
 }
 
 // Sign a single session out. Same URL family as the per-session authorize link
@@ -471,6 +573,159 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // "unknown" and stay silent rather than guessing a count.
     .catch((err) => sendResponse({ ok: false, error: String(err) }));
   return true;
+});
+
+// === ENDED SESSIONS ===
+// A console tab outlives its session: AWS ends the session (it expires — a
+// jumped role lasts at most an hour — or is signed out elsewhere) and the tab
+// stays open on a console that can no longer do anything. A tab group made
+// only of such tabs is turned grey and titled "Ended · …", so the tab strip
+// matches the live session count. Nothing is closed. The group's own title
+// and colour are kept and come back if a live tab joins it.
+const ENDED_PREFIX = "Ended · ";
+// { marked: { groupId: { title, color } }, seen: { groupId: first seen ended (ms) } }
+const ENDED_STATE_KEY = "hop_ended_groups";
+// Tab switches re-check at most this often (each check is one list read).
+const ENDED_CHECK_MIN_MS = 30 * 1000;
+// A group has to look ended on two reads this far apart before it's marked: a
+// tab that reaches the console while a read is in flight looks ended on that
+// one read only (its session is newer than the list).
+const ENDED_CONFIRM_MS = 10 * 1000;
+// "account · role" — the title By-role grouping gives; a group with it is
+// Console Hopper's even if it was made before the extension last reloaded.
+const ROLE_GROUP_TITLE_RE = /^\d{12} · \S/;
+
+async function readEndedState() {
+  try {
+    const res = await chrome.storage.session.get(ENDED_STATE_KEY);
+    const v = (res && res[ENDED_STATE_KEY]) || {};
+    return { marked: v.marked || {}, seen: v.seen || {} };
+  } catch {
+    return { marked: {}, seen: {} };
+  }
+}
+
+// Each tab of a group is "live" (its session is in AWS's list), "ended" (a
+// multi-session console tab whose session isn't), or "other" — anything else,
+// including a tab mid sign-in or jump. Only an all-ended group is marked.
+function sessionStateOf(tab, live) {
+  if (tab.incognito) return "other"; // its cookie jar isn't the one we read
+  const url = String(tab.url || tab.pendingUrl || "");
+  if (!CONSOLE_URL_RE.test(url)) return "other";
+  const page = consolePageOf(url);
+  if (!page || !page.differentiator) return "other";
+  return live.has(page.differentiator.toLowerCase()) ? "live" : "ended";
+}
+
+async function markEndedGroups(sessions) {
+  const live = new Set(sessions.map((s) => String(s.differentiator).toLowerCase()));
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  const byGroup = new Map();
+  for (const t of tabs) {
+    if (t.groupId == null || t.groupId === -1) continue;
+    if (!byGroup.has(t.groupId)) byGroup.set(t.groupId, []);
+    byGroup.get(t.groupId).push(sessionStateOf(t, live));
+  }
+  const state = await readEndedState();
+  const hasState = Object.keys(state.marked).length || Object.keys(state.seen).length;
+  // Nothing grouped and nothing remembered: no work, and no storage write.
+  if (!byGroup.size && !hasState) return;
+  const own = new Set(await readOwnGroups());
+  const now = Date.now();
+  let changed = false;
+  for (const [groupId, states] of byGroup) {
+    try {
+      const orig = state.marked[groupId];
+      if (orig) {
+        // A signed-in tab joined it: give the group back its name and colour.
+        if (states.includes("live")) {
+          delete state.marked[groupId];
+          changed = true;
+          await chrome.tabGroups.update(groupId, { title: orig.title, color: orig.color });
+        }
+        continue;
+      }
+      if (!states.every((st) => st === "ended")) {
+        if (state.seen[groupId]) {
+          delete state.seen[groupId];
+          changed = true;
+        }
+        continue;
+      }
+      const first = state.seen[groupId];
+      if (!first) {
+        state.seen[groupId] = now;
+        changed = true;
+        continue;
+      }
+      if (now - first < ENDED_CONFIRM_MS) continue;
+      const g = await chrome.tabGroups.get(groupId);
+      const title = String(g.title || "");
+      // Only groups Console Hopper made; one you made yourself is yours.
+      if (!own.has(groupId) && !ROLE_GROUP_TITLE_RE.test(title)) continue;
+      delete state.seen[groupId];
+      state.marked[groupId] = {
+        title: title.startsWith(ENDED_PREFIX) ? title.slice(ENDED_PREFIX.length) : title,
+        color: g.color,
+      };
+      changed = true;
+      await chrome.tabGroups.update(groupId, { title: ENDED_PREFIX + state.marked[groupId].title, color: "grey" });
+    } catch (err) {
+      console.warn("[hop] ended-session group:", err);
+    }
+  }
+  // Forget groups that are gone.
+  for (const bucket of [state.marked, state.seen]) {
+    for (const id of Object.keys(bucket)) {
+      if (!byGroup.has(Number(id))) {
+        delete bucket[id];
+        changed = true;
+      }
+    }
+  }
+  if (!changed) return;
+  try {
+    await chrome.storage.session.set({ [ENDED_STATE_KEY]: state });
+  } catch { /* the marks are cosmetic; the next pass rebuilds what it can */ }
+}
+
+// One pass at a time, so two list reads close together can't both prefix
+// the same group.
+let endedQueue = Promise.resolve();
+function markEndedGroupsSoon(sessions) {
+  endedQueue = endedQueue
+    .then(() => markEndedGroups(sessions))
+    .catch((err) => console.warn("[hop] ended-session check failed:", err));
+}
+
+// Sessions end on AWS's side without any event here, so switching tabs asks
+// AWS again (throttled). A failed read — signed out of AWS's endpoint, or no
+// network — changes nothing.
+let endedCheckAt = 0;
+async function checkEndedSessions() {
+  if (Date.now() - endedCheckAt < ENDED_CHECK_MIN_MS) return;
+  // No grouped console tab, nothing to mark: don't ask AWS at all.
+  let consoleTabs = [];
+  try {
+    consoleTabs = await chrome.tabs.query({ url: "https://*.console.aws.amazon.com/*" });
+  } catch {
+    return;
+  }
+  if (!consoleTabs.some((t) => !t.incognito && t.groupId != null && t.groupId !== -1)) return;
+  endedCheckAt = Date.now();
+  try {
+    const res = await chrome.storage.local.get(DEFAULT_REGION_SETTING);
+    await listAwsSessions((res && res[DEFAULT_REGION_SETTING]) || "");
+  } catch { /* signed out of AWS's endpoint, or offline: change nothing */ }
+}
+
+chrome.tabs.onActivated.addListener(() => {
+  checkEndedSessions();
 });
 
 // === SAVE OPEN TABS AS A LAUNCH SET ===
@@ -585,15 +840,6 @@ async function closeSessionTabs(differentiators) {
   return ids.length;
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "hop_signout_session") return;
-  signOutAwsSession(message.region, message.differentiator)
-    .then(() => closeSessionTabs([message.differentiator]))
-    .then((closed) => sendResponse({ ok: true, closed }))
-    .catch((err) => sendResponse({ ok: false, error: String(err) }));
-  return true;
-});
-
 // Sign out of EVERY live session — the sessions panel's "Sign out all" button.
 // The list is re-read here rather than trusted from the page, so the button
 // acts on the server's truth even if the panel was stale; one failing session
@@ -616,25 +862,75 @@ async function signOutAllAwsSessions(region) {
   return { done: signedOut.length, total: sessions.length, closed };
 }
 
-// Sign out every session with no open console tab — the sessions panel's
-// "Sign out idle" button. Re-reads the sessions (and their tab counts) here,
-// so a tab opened since the panel was drawn keeps its session.
-async function signOutIdleAwsSessions(region) {
-  const idle = (await listAwsSessions(region)).filter((s) => !s.tabs);
-  const results = await Promise.allSettled(
-    idle.map((s) => signOutAwsSession(region, s.differentiator))
-  );
-  for (const r of results) {
-    if (r.status === "rejected") {
-      console.warn("[hop] sign-out-idle: one session failed:", r.reason);
-    }
+// The Jump Profiles, for pairing a jumped session with its hub.
+const ASSUME_PROFILES_KEY = "aws_assume_profiles";
+async function readJumpProfiles() {
+  try {
+    const res = await chrome.storage.local.get(ASSUME_PROFILES_KEY);
+    return Array.isArray(res && res[ASSUME_PROFILES_KEY]) ? res[ASSUME_PROFILES_KEY] : [];
+  } catch {
+    return [];
   }
-  return { done: results.filter((r) => r.status === "fulfilled").length, total: idle.length };
+}
+
+// Sign out every session nothing is using — the sessions panel's "Sign out
+// idle". Re-reads the sessions (and their tab counts) here, so a tab opened
+// since the panel was drawn keeps its session. A jump counts as one: its hub
+// has no tab of its own (the tab moved on to the destination), but it isn't
+// idle while the jumped session has tabs open.
+async function signOutIdleAwsSessions(region, directKeys) {
+  const sessions = await listAwsSessions(region);
+  const idle = groupSessions(sessions, await readJumpProfiles(), directKeys)
+    .filter((u) => !u.tabs)
+    .flatMap((u) => u.ids);
+  if (!idle.length) return { done: 0, total: 0 };
+  const r = await signOutAwsSessions(region, idle);
+  return { done: r.done, total: idle.length };
+}
+
+// Sign out the sessions the picker chose (to make room for a Launch Set, or a
+// row in the sessions panel), close their tabs, and return the live list once
+// AWS agrees they're gone — the picker counts free slots from it, and a list
+// read the instant the logouts answer can still show them.
+const SIGNOUT_SETTLE_TRIES = 8;
+const SIGNOUT_SETTLE_MS = 400;
+
+async function signOutAwsSessions(region, differentiators) {
+  const wanted = [...new Set(Array.isArray(differentiators) ? differentiators : [])]
+    .map(String)
+    .filter((d) => DIFFERENTIATOR_RE.test(d))
+    .slice(0, AWS_SESSION_LIMIT * 2);
+  const results = await Promise.allSettled(wanted.map((d) => signOutAwsSession(region, d)));
+  const done = wanted.filter((d, i) => {
+    if (results[i].status === "fulfilled") return true;
+    console.warn("[hop] sign-out: one session failed:", results[i].reason);
+    return false;
+  });
+  const closed = await closeSessionTabs(done);
+  let sessions = await listAwsSessions(region);
+  for (let i = 1; i < SIGNOUT_SETTLE_TRIES && sessions.some((s) => done.includes(s.differentiator)); i++) {
+    await new Promise((r) => setTimeout(r, SIGNOUT_SETTLE_MS));
+    sessions = await listAwsSessions(region);
+  }
+  return { done: done.length, total: wanted.length, closed, sessions };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "hop_signout_sessions") return;
+  signOutAwsSessions(message.region, message.differentiators)
+    .then((r) => sendResponse({ ok: true, ...r, limit: AWS_SESSION_LIMIT }))
+    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "hop_signout_idle") return;
-  signOutIdleAwsSessions(message.region)
+  // The roles the picker can sign in to directly ("account/Role"), so a
+  // direct session isn't taken for a jump and signed out with a hub.
+  const directKeys = (Array.isArray(message.directKeys) ? message.directKeys : [])
+    .filter((k) => typeof k === "string" && /^\d{12}\/[\w+=,.@-]{1,128}$/.test(k))
+    .slice(0, 2000);
+  signOutIdleAwsSessions(message.region, directKeys)
     .then((r) => sendResponse({ ok: true, done: r.done, total: r.total }))
     .catch((err) => sendResponse({ ok: false, error: String(err) }));
   return true;

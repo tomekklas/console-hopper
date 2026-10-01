@@ -3,6 +3,88 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.7.1 — 2026-09-30
+
+### Changed
+
+- **Opening a set that won't fit in AWS's five sessions.** The confirmation
+  lists your live sessions, each with its own **Sign out** button, plus
+  **Sign out all**. A session with open tabs asks once more ("Close 2
+  tabs?"). A row that makes enough room on its own is marked **Frees
+  enough**, and a session the set itself opens in has no Sign out (signing it
+  out frees nothing). **Open** stays disabled until there's room for the
+  whole set, and says how many sessions to sign out first. A set with more roles than AWS
+  allows sessions says so and asks you to split it. This replaces *Manage
+  sessions…* and *Open anyway*, which opened tabs that couldn't sign in.
+- **Jumps count as one session pair.** A jump signs in to its hub and
+  switches from there, so the hub and the sessions jumped through it are one
+  row in that list and sign out together. The pair is recognised from your
+  Jump Profiles.
+- The session count behind all this is read fresh from AWS when you click
+  **Open**, not taken from the sessions chip, which could lag behind.
+- **A role you're already signed in to opens, rather than signing in
+  again.** Its button reads **Open** instead of Sign In (or Jump), and opens
+  that live session — here, or in a new tab — instead of starting a new
+  sign-in, which signed its open tabs out.
+- **The sessions panel shows a jump as one row** (hub → destination) and
+  signs it out as one. **Sign out idle** no longer counts a jump's hub as
+  idle: it has no tab of its own, but ending it would end the jump you're
+  working in. A session of a role you can sign in to directly is never taken
+  for a jump, even when a Jump Profile switches into a role of the same name. A row's ✕ now asks twice only when the session has tabs open,
+  the same as in the Open-set dialog.
+- The set preview bar says when a set needs more free sessions than you
+  have, and the Open-set dialog names the region of any tab that picks one.
+- ⌘-click (or middle-click) on the Jump popover's **Jump →** and on its
+  recent jumps opens a new tab, like the listing's rows.
+- **Long account and role names fit.** The role picker used to stop at
+  1100px wide, leaving each name column about 190px however big the window,
+  so names sharing a prefix all looked the same. The page now grows to fit
+  your longest account and role names, up to 90% of the window, and never
+  below 1100px; the two name columns share the room in proportion to what
+  they need. **General Settings → Maximum page width** changes the cap
+  (a share of the window, like `90%`, or pixels, like `1600px`).
+- A name that still doesn't fit is shortened in the middle, not at the end:
+  its last word or two stay visible ("cutspace-landi… payments-prod"), so
+  names that share a prefix stay tellable apart.
+- A name that's still cut off shows in full as soon as you hover it, with the
+  account ID and AWS's own name for it, and a pointer to *Account Names* to
+  give it a shorter one.
+- **Tab groups of ended sessions turn grey.** When a session ends on AWS's
+  side (a jumped role lasts at most an hour), its tabs stay open but can't
+  do anything. A tab group Console Hopper made, holding only such tabs, now
+  turns grey and is titled "Ended · …" (after two checks a few seconds apart,
+  so a tab still signing in isn't caught), and the tab strip matches the
+  session count. Groups you made yourself are left alone, nothing is closed,
+  and a signed-in tab joining the group restores it. Grey is kept for this: a
+  new group that would have been grey gets another colour.
+
+### Fixed
+
+- **Opening a set no longer signs out sessions you already have.** A role
+  in the set that's already signed in opens its tabs in that session,
+  instead of signing in again (AWS replaces the session and signs its open
+  tabs out). It also costs no new session. A session with under ten
+  minutes left is still signed in afresh.
+- **A jump no longer signs out its hub's tabs.** When the hub is already
+  signed in, the jump switches role from that session instead of signing in
+  to the hub again; when the destination is already signed in, it just
+  opens it.
+- **⌘-click on a ⤳ jump row opens a new tab**, like it does on a direct role
+  (middle-click and the *Sign-in: New tab* setting too). Jumps used to take
+  over the role picker's tab whatever you clicked with. The jumped tab still
+  lands in its tab group.
+- Dark theme: the Open-set dialog's role list was unreadable, and dialog
+  buttons such as Cancel stayed white.
+- Edit set no longer offers **+ Add tab** for a role that isn't in today's
+  role list, the sessions panel's *Started* column no longer cuts off "1h 30m
+  ago", and the Sign In / Jump / Open buttons share one width so the rows'
+  columns line up.
+- **A role's extra tabs in a set open in the session its first tab signed
+  in to**, with no sign-in of their own. They used to post a second sign-in,
+  which AWS turns away once all five sessions are in use, so a set that
+  filled the last slots lost those tabs. If the first tab never reaches the
+  console, the rest are dropped and the picker says so.
+
 ## 1.7.0 — 2026-09-29
 
 ### Added

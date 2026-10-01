@@ -40,8 +40,14 @@ import {
   isRoleArn,
   normalizeLaunchSets,
   launchSetRoleCount,
+  groupSessions,
+  planSessionRoom,
+  sessionRoleKey,
   LAUNCH_SET_MAX_TABS,
   LAUNCH_SETS_MAX,
+  PAGE_MAX_WIDTH_DEFAULT,
+  parsePageMaxWidth,
+  splitNameTail,
 } from "./util.js";
 
 (async function () {
@@ -87,6 +93,7 @@ import {
       ACCOUNT_TAGS: "aws_account_tags",
       CHIP_ORDER: "aws_filter_chip_order",
       HOMEPAGE_URL: "aws_homepage_url",
+      PAGE_MAX_WIDTH: "aws_page_max_width",
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
       WELCOME_SEEN: "hop_welcome_seen",
@@ -365,6 +372,14 @@ import {
   let rememberRegionCache = true;
   let regionLockCache = true;
   let homepageUrlCache = "";
+  let pageMaxWidthCache = PAGE_MAX_WIDTH_DEFAULT;
+  // AWS's live console sessions, from the service worker (refreshSessions).
+  let sessionsCache = [];
+  let sessionsLimit = 5;
+  // Whether sessionsCache reflects a successful read — nothing that depends
+  // on the count acts on it otherwise.
+  let sessionsKnown = false;
+  let sessionsPopoverOpen = false;
   let signinConfirmRoleKeywordsCache = ["admin"];
   let signinConfirmTypeIdsCache = [];
   // Recently signed-in roles (newest first); max length controlled by recentLimit.
@@ -870,6 +885,20 @@ import {
     async saveHomepageUrl(url) {
       return await safeStorageOperation(async () => {
         await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.HOMEPAGE_URL]: url });
+        return true;
+      }, false);
+    },
+
+    async getPageMaxWidth() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.PAGE_MAX_WIDTH);
+        const parsed = parsePageMaxWidth(result[CONFIG.STORAGE_KEYS.PAGE_MAX_WIDTH]);
+        return parsed ? parsed.text : PAGE_MAX_WIDTH_DEFAULT;
+      }, PAGE_MAX_WIDTH_DEFAULT);
+    },
+    async savePageMaxWidth(text) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.PAGE_MAX_WIDTH]: text });
         return true;
       }, false);
     },
@@ -2137,6 +2166,7 @@ import {
       rememberRegionCache = await StorageManager.getRememberRegion();
       regionLockCache = await StorageManager.getRegionLock();
       homepageUrlCache = await StorageManager.getHomepageUrl();
+      pageMaxWidthCache = await StorageManager.getPageMaxWidth();
       signinConfirmRoleKeywordsCache = await StorageManager.getSigninConfirmRoleKeywords();
       signinConfirmTypeIdsCache = await StorageManager.getSigninConfirmTypeIds();
       debug("General settings cache loaded:", {
@@ -2152,15 +2182,18 @@ import {
     rememberRegion()      { return rememberRegionCache; },
     regionLock()          { return regionLockCache; },
     homepage()            { return homepageUrlCache; },
+    pageMaxWidth()        { return pageMaxWidthCache; },
     signinRoleKeywords()  { return signinConfirmRoleKeywordsCache; },
     signinTypeIds()       { return signinConfirmTypeIdsCache; },
-    async save({ region, rememberRegion, regionLock, homepage, signinRoleKeywords, signinTypeIds }) {
+    async save({ region, rememberRegion, regionLock, homepage, pageMaxWidth, signinRoleKeywords, signinTypeIds }) {
       const r = (region || "").trim();
       awsRegionCache = r || CONFIG.DEFAULT_AWS_REGION;
       rememberRegionCache = !!rememberRegion;
       regionLockCache = !!regionLock;
       const home = (homepage || "").trim();
       homepageUrlCache = !home || isSafeHttpUrl(home) ? home : "";
+      const width = parsePageMaxWidth(pageMaxWidth);
+      pageMaxWidthCache = width ? width.text : PAGE_MAX_WIDTH_DEFAULT;
       signinConfirmRoleKeywordsCache = Array.isArray(signinRoleKeywords)
         ? signinRoleKeywords.map((s) => (s || "").trim()).filter(Boolean)
         : [];
@@ -2172,11 +2205,194 @@ import {
         StorageManager.saveRememberRegion(rememberRegionCache),
         StorageManager.saveRegionLock(regionLockCache),
         StorageManager.saveHomepageUrl(homepageUrlCache),
+        StorageManager.savePageMaxWidth(pageMaxWidthCache),
         StorageManager.saveSigninConfirmRoleKeywords(signinConfirmRoleKeywordsCache),
         StorageManager.saveSigninConfirmTypeIds(signinConfirmTypeIdsCache),
       ]);
       return true;
     },
+  };
+
+  // === LISTING WIDTH ===
+  // The page is as wide as the longest account and role names need, so none
+  // is cut, within the General Settings cap and never below 1100px (see
+  // #saml_form in the CSS). Names are measured from their text rather than
+  // the cells, so rows a filter has hidden count too and the page doesn't
+  // jump as you filter.
+  let measureCanvas = null;
+  const textWidth = (cell, text) => {
+    measureCanvas = measureCanvas || document.createElement("canvas");
+    const ctx = measureCanvas.getContext("2d");
+    const cs = getComputedStyle(cell);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return ctx.measureText(text).width;
+  };
+
+  // A long name is drawn as a head and a tail side by side, and only the head
+  // shortens when the column runs out ("cutspace-landi…payments-prod"), so
+  // names sharing a prefix stay tellable apart. The cell's text is unchanged
+  // — everything that reads a name reads the same string. Re-split when the
+  // text was rewritten (an account rename sets textContent).
+  const splitNameCell = (el) => {
+    const text = el.textContent || "";
+    const done = el.querySelector(".tm_mid");
+    if (done && el.dataset.tmSplit === text) return;
+    const [head, tail] = splitNameTail(text);
+    el.dataset.tmSplit = text;
+    if (!tail) {
+      if (done) el.textContent = text;
+      return;
+    }
+    el.innerHTML =
+      `<span class="tm_mid"><span class="tm_mid_h">${escapeHtml(head)}</span>` +
+      `<span class="tm_mid_t">${escapeHtml(tail)}</span></span>`;
+  };
+
+  // The cap as a pixel max-width for the form. A share is of the visible
+  // width (clientWidth leaves out a classic scrollbar, which 100vw would
+  // count), and the form's own side padding comes off, so 100% fills the
+  // window exactly instead of scrolling sideways.
+  const FORM_SIDE_PADDING_PX = 40;
+  const applyPageWidthCap = () => {
+    const width = parsePageMaxWidth(pageMaxWidthCache) || parsePageMaxWidth(PAGE_MAX_WIDTH_DEFAULT);
+    const outer = width.unit === "%"
+      ? Math.floor((document.documentElement.clientWidth * width.value) / 100)
+      : width.value;
+    document.documentElement.style.setProperty("--tm-page-cap", `${outer - FORM_SIDE_PADDING_PX}px`);
+  };
+  // A share of the window follows the window.
+  let capResizeFrame = 0;
+  window.addEventListener("resize", () => {
+    cancelAnimationFrame(capResizeFrame);
+    capResizeFrame = requestAnimationFrame(applyPageWidthCap);
+  });
+
+  const fitListingWidth = () => {
+    const form = document.getElementById("saml_form");
+    const list = document.getElementById("tm_role_list");
+    if (!form || !list) return;
+    const rows = [...list.querySelectorAll(".saml-role")];
+    list.querySelectorAll(".tm_account_name, .tm_role_name").forEach(splitNameCell);
+    // A row on screen to take the layout from: its font, and how much of the
+    // form the name columns get today.
+    const shown = rows.find((r) => r.offsetParent !== null);
+    const acctCell = shown && shown.querySelector(".tm_account_name");
+    const roleCell = shown && shown.querySelector(".tm_role_name");
+    if (!acctCell || !roleCell) return;
+    const widest = (selector, cell) =>
+      Math.ceil(Math.max(0, ...rows.map((r) => {
+        const el = r.querySelector(selector);
+        return el ? textWidth(cell, el.textContent || "") : 0;
+      })));
+    const needAcct = widest(".tm_account_name", acctCell);
+    const needRole = widest(".tm_role_name", roleCell);
+    // Everything that isn't a name — padding, star, tag, ID, pickers, button,
+    // gaps — is the form's width (as max-width measures it) less the two
+    // name columns as they are now.
+    const cs = getComputedStyle(form);
+    const formWidth = cs.boxSizing === "border-box"
+      ? form.getBoundingClientRect().width
+      : form.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const rest = formWidth - acctCell.getBoundingClientRect().width - roleCell.getBoundingClientRect().width;
+    // A few px of slack for sub-pixel rounding, so a name that fits isn't
+    // given an ellipsis.
+    document.documentElement.style.setProperty("--tm-page-need", `${Math.ceil(rest + needAcct + needRole + 6)}px`);
+    // The name columns share their room in proportion to need, so a long
+    // account name isn't cut while a short role name sits on spare space.
+    list.style.setProperty("--tm-acct-col", `minmax(0, ${Math.max(1, needAcct)}fr)`);
+    list.style.setProperty("--tm-role-col", `minmax(0, ${Math.max(1, needRole)}fr)`);
+  };
+
+  // A name the listing still had to cut shows in full on hover: at once (the
+  // browser's own tooltip takes a second or more), and only for cut names,
+  // so short ones stay quiet. An account also says which account it is and
+  // where to give it a shorter name.
+  let nameTip = null;
+  let nameTipTimer = null;
+  const hideNameTip = () => {
+    clearTimeout(nameTipTimer);
+    if (nameTip) nameTip.style.setProperty("display", "none", "important");
+  };
+  const showNameTip = (el) => {
+    if (!nameTip) {
+      nameTip = document.createElement("div");
+      nameTip.id = "tm_name_tip";
+      document.body.appendChild(nameTip);
+    }
+    const full = (el.textContent || "").trim();
+    const lines = [`<div class="tm_name_tip_main">${escapeHtml(full)}</div>`];
+    if (el.classList.contains("tm_account_name")) {
+      const id = el.getAttribute("data-account-id") || "";
+      const awsName = el.getAttribute("data-aws-name") || "";
+      const meta = [id, awsName && awsName !== full ? `AWS name: ${awsName}` : ""].filter(Boolean).join(" · ");
+      if (meta) lines.push(`<div class="tm_name_tip_meta">${escapeHtml(meta)}</div>`);
+      const jump = !!el.closest('.saml-role[data-jump="1"]');
+      lines.push(
+        `<div class="tm_name_tip_hint">Too long to show in full. Give it a shorter name in ` +
+        `<em>${jump ? "Jump Destinations" : "Account Names"}</em> (side menu).</div>`
+      );
+    }
+    nameTip.innerHTML = lines.join("");
+    const r = el.getBoundingClientRect();
+    nameTip.style.setProperty("left", `${Math.max(8, r.left + window.scrollX - 4)}px`, "important");
+    nameTip.style.setProperty("top", `${r.bottom + window.scrollY + 8}px`, "important");
+    nameTip.style.setProperty("display", "block", "important");
+  };
+  const isCut = (el) => el.scrollWidth > el.clientWidth + 1;
+  $("body").on("mouseover", ".tm_account_name, .tm_role_name", function (e) {
+    // Moving between the parts of a split name isn't entering it afresh.
+    if (e.relatedTarget && this.contains(e.relatedTarget)) return;
+    hideNameTip();
+    const head = this.querySelector(".tm_mid_h");
+    if (!isCut(this) && !(head && isCut(head))) return; // shown in full
+    const el = this;
+    nameTipTimer = setTimeout(() => showNameTip(el), 150);
+  });
+  $("body").on("mouseout", ".tm_account_name, .tm_role_name", function (e) {
+    if (e.relatedTarget && this.contains(e.relatedTarget)) return;
+    hideNameTip();
+  });
+  window.addEventListener("scroll", hideNameTip, { passive: true });
+  document.addEventListener("pointerdown", hideNameTip, true);
+
+  // A row whose role has a live session: its button reads "Open" rather than
+  // Sign In / Jump, because that's what the click does — it opens the live
+  // session instead of signing in again, which would sign its open tabs out.
+  // Only a hint kept fresh with the session count; the click checks with AWS.
+  const markLiveRows = () => {
+    const live = new Set(sessionsCache.filter(isReusable).map((s) => `${s.account}/${s.role}`));
+    $("#tm_role_list .saml-role").each(function () {
+      const btn = this.querySelector(".tm_signin_button");
+      if (!btn) return;
+      const acct = $(this).find(".tm_account_id").text().trim();
+      const role = $(this).find(".tm_role_name").text().trim();
+      const on = live.has(`${acct}/${role}`);
+      if (on === btn.classList.contains("tm_signin_live")) return;
+      if (on) {
+        btn.dataset.tmLabel = btn.textContent;
+        btn.dataset.tmTitle = btn.getAttribute("title") || "";
+        btn.textContent = "Open";
+        btn.setAttribute("title", "You're signed in to this role — opens that session (⌘/Ctrl-click or middle-click toggles new tab)");
+      } else {
+        btn.textContent = btn.dataset.tmLabel || btn.textContent;
+        btn.setAttribute("title", btn.dataset.tmTitle || "");
+      }
+      btn.classList.toggle("tm_signin_live", on);
+    });
+  };
+
+  // Every role you can sign in to directly ("account/Role"). A session of one
+  // of these is never taken for a jump (see jumpHubs), even when a Jump
+  // Profile switches into a role of the same name.
+  const directRoleKeys = () => {
+    const out = new Set();
+    document
+      .querySelectorAll('#tm_role_list .saml-role:not([data-jump="1"]) input[type="radio"][name="roleIndex"]')
+      .forEach((r) => {
+        const key = sessionRoleKey(r.value);
+        if (key) out.add(key);
+      });
+    return out;
   };
 
   // === RECENT ROLES MANAGEMENT ===
@@ -2873,13 +3089,17 @@ import {
     return token;
   };
 
-  const buildDestination = (servicePath, labelPayload, region) => {
+  // `session` (a live session's differentiator, "123456789012-abcd1234") aims
+  // the URL at that session's own console host instead, for opening a tab in a
+  // session that's already signed in.
+  const buildDestination = (servicePath, labelPayload, region, session = "") => {
     // This value becomes the origin of the post-SAML redirect, so validate it
     // here as well as at the edges — a region that reached storage from an
     // imported settings file must never be able to bend the host.
     const candidate = region || GeneralSettingsManager.region() || CONFIG.DEFAULT_AWS_REGION;
     const r = isValidRegionCode(candidate) ? candidate : CONFIG.DEFAULT_AWS_REGION;
-    const host = `https://${r}.console.aws.amazon.com`;
+    const prefix = /^\d{12}-[a-z0-9]+$/.test(String(session)) ? `${session}.` : "";
+    const host = `https://${prefix}${r}.console.aws.amazon.com`;
     const path = (servicePath || "").replace(/\{region\}/g, r);
     const base = path ? `${host}/${path}` : `${host}/`;
     if (!labelPayload) return base;
@@ -3058,7 +3278,10 @@ import {
   };
   const SAML_FRESH_MS = 4.5 * 60 * 1000;
 
-  const launchSigninTabs = async (tabs, { tag = "" } = {}) => {
+  // `reuse` maps a role key (sessionRoleKey) to the live session its tabs
+  // should open in: those go straight to the session's console, with no new
+  // sign-in, which would replace that session and sign its open tabs out.
+  const launchSigninTabs = async (tabs, { tag = "", reuse = new Map() } = {}) => {
     const form = document.getElementById("saml_form");
     if (!form) throw new Error("the role picker's sign-in form is missing");
 
@@ -3071,8 +3294,15 @@ import {
       // Awaited: the token must be in storage before the tab lands, or the
       // decorator will (correctly) refuse to trust the payload.
       labelPayload.tok = await mintSigninToken();
-      const relay = buildDestination(t.service || "", labelPayload, t.region || "");
-      prepared.push({ fields: samlFormFields(form, t.roleArn, relay) });
+      const session = reuse.get(sessionRoleKey(t.roleArn)) || "";
+      const url = buildDestination(t.service || "", labelPayload, t.region || "", session);
+      // A tab in a live session keeps its #hop fragment (no sign-in redirect
+      // drops it), so it decorates from that and needs no pending hand-off.
+      if (session) {
+        prepared.push({ url });
+        continue;
+      }
+      prepared.push({ fields: samlFormFields(form, t.roleArn, url) });
       const acct = perAccount.get(info.accountId) || { info, tabs: 0 };
       acct.tabs++;
       perAccount.set(info.accountId, acct);
@@ -3752,6 +3982,14 @@ import {
       setGroupingNote(set),
     ];
     if (missing) bits.push(`<span class="tm_set_bar_warn">${missing} not in today's role list</span>`);
+    // Whether it fits beside the live sessions (from the sessions chip's
+    // count, so it can lag; Open checks again with AWS).
+    if (sessionsKnown && ready.length) {
+      const { plan } = planRoom(ready, { sessions: sessionsCache, limit: sessionsLimit || 5 });
+      if (plan.deficit) {
+        bits.push(`<span class="tm_set_bar_warn">needs ${plural(plan.deficit, "more free session")} — Open lets you sign some out</span>`);
+      }
+    }
     const bar = `
       <div id="tm_set_bar">
         <strong>Set: ${escapeHtml(set.name)}</strong>
@@ -3793,17 +4031,108 @@ import {
 
   // --- Opening a set ---
   // What opening would cost in AWS sessions: tabs of one role share a session,
-  // and a role that already has one live costs nothing more.
-  const setSessionBudget = (infos) => {
-    const roleNameOf = (arn) => String(arn).split("/").pop();
-    const live = new Set(sessionsCache.map((s) => `${s.account}/${s.role}`));
-    const needed = infos.filter((i) => !live.has(`${i.accountId}/${roleNameOf(i.roleArn)}`)).length;
-    return { known: sessionsKnown, inUse: sessionsCache.length, needed, limit: sessionsLimit || 5 };
+  // and a role that already has one live opens in it. Counted against a fresh
+  // read of AWS's list, not the chip's cache — that is only as new as the last
+  // console-tab event, and this is where a stale count opens tabs that can't
+  // sign in. Null when the count can't be known: then nothing is gated, and
+  // every tab signs in as it always has.
+  // Gives up after a couple of seconds (null), so a slow or silent worker
+  // can't hold a click hostage — callers then sign in as they always have.
+  const LIVE_READ_TIMEOUT_MS = 2500;
+  const readLiveSessions = () =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), LIVE_READ_TIMEOUT_MS);
+      const done = (v) => { clearTimeout(timer); resolve(v); };
+      try {
+        chrome.runtime.sendMessage(
+          { type: "hop_list_sessions", region: GeneralSettingsManager.region() },
+          (r) => done(
+            !chrome.runtime.lastError && r && r.ok
+              ? { sessions: Array.isArray(r.sessions) ? r.sessions : [], limit: r.limit || 5 }
+              : null
+          )
+        );
+      } catch (e) {
+        done(null);
+      }
+    });
+
+  // A console URL in a live session needs no sign-in, so it just loads — in
+  // this tab, or in a new one the service worker opens (a page's own new
+  // window this long after the click would meet the popup blocker).
+  const openLiveUrl = (url, newTab) => {
+    if (!newTab) {
+      window.location.assign(url);
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage({ type: "hop_open_session_tab", url }, (r) => {
+        if (chrome.runtime.lastError || !r || !r.ok) {
+          showToast("Couldn't open a new tab for that session.", "error", CONFIG.TOAST_DURATION_LONG);
+        }
+      });
+    } catch (e) {
+      showToast("Couldn't open a new tab for that session.", "error", CONFIG.TOAST_DURATION_LONG);
+    }
   };
 
-  const confirmLaunchSet = (set, ready, missing, sensitive, budget) =>
+  const planRoom = (ready, live) => {
+    const keys = ready.map((t) => sessionRoleKey(t.roleArn));
+    return { ...live, keys, plan: planSessionRoom(keys, live.sessions, live.limit) };
+  };
+
+  const sessionRoomFor = async (ready) => {
+    const live = (await readLiveSessions()) ||
+      (sessionsKnown ? { sessions: sessionsCache, limit: sessionsLimit || 5 } : null);
+    return live ? planRoom(ready, live) : null;
+  };
+
+  // A live session is worth opening a tab in only while it has a while left;
+  // one about to expire is better replaced by a fresh sign-in.
+  const REUSE_MIN_LEFT_S = 10 * 60;
+  const isReusable = (s) => !!s && (s.expiry || 0) - Date.now() / 1000 > REUSE_MIN_LEFT_S;
+  // The live, reusable session for each role key ("account/Role"), or null.
+  // Answers from the sessions chip's cache when that has none of them, so an
+  // ordinary sign-in doesn't wait on AWS; when the cache says one is signed
+  // in, a fresh read confirms it (the cache stands in if that read fails).
+  const liveSessionsFor = async (keys) => {
+    const pick = (list) =>
+      keys.map((k) => list.find((s) => `${s.account}/${s.role}` === k && isReusable(s)) || null);
+    const cached = sessionsKnown ? pick(sessionsCache) : keys.map(() => null);
+    if (!cached.some(Boolean)) return cached;
+    const fresh = await readLiveSessions();
+    return fresh ? pick(fresh.sessions) : cached;
+  };
+
+  const reuseMapFor = (plan) => {
+    const out = new Map();
+    for (const [key, s] of plan.keep) if (isReusable(s)) out.set(key, s.differentiator);
+    return out;
+  };
+  const sessionWho = (s) => {
+    const name = AccountNamesManager.nameFor(s.account) || s.alias || s.account || "unknown";
+    return s.role ? `${name} · ${s.role}` : name;
+  };
+  // A jump reads "hub → destination", the way it was made.
+  const unitWho = (u) =>
+    u.hub
+      ? `${sessionWho(u.hub)} → ${u.sessions.filter((m) => m !== u.hub).map(sessionWho).join(", ")}`
+      : sessionWho(u.sessions[0]);
+  const timeLeft = (expiry) => {
+    const r = describeRemaining(expiry);
+    return r === "—" || r === "expired" ? r : `${r} left`;
+  };
+
+  // Resolves null on cancel, else { room, signedOut }: the latest session
+  // count (signing sessions out from the list changes it) and how many were
+  // signed out. With too few free sessions, the dialog lists the live ones to
+  // sign out, and Open stays off until the whole set fits.
+  const confirmLaunchSet = (set, ready, missing, sensitive, initialRoom) =>
     new Promise((resolve) => {
-      const over = budget.known && budget.inUse + budget.needed > budget.limit;
+      let room = initialRoom;
+      let signedOut = 0;
+      let busy = false;
+      let listUnits = [];
       const danger = sensitive.length > 0;
       const accent = danger ? "#dc3545" : "#d69e2e";
       const byRole = new Map();
@@ -3812,40 +4141,98 @@ import {
         byRole.get(t.roleArn).push(t);
       });
       const flagged = new Map(sensitive.map((s) => [s.info.roleArn, s.reasons]));
-      const lineHTML = (label, where, badge, muted) => `
-        <div style="display: flex !important; align-items: center !important; gap: 10px !important; padding: 5px 0 !important; border-bottom: 1px solid #eef0f2 !important;${muted ? " color: #adb5bd !important;" : ""}">
-          <span style="flex: 1 !important; min-width: 0 !important;">${label}</span>
-          <span style="color: ${muted ? "#adb5bd" : "#6c757d"} !important; font-size: 12.5px !important; text-align: right !important;">${where}</span>
-          ${badge || ""}
+
+      const short = () => !!room && room.plan.deficit > 0;
+      // More roles than AWS allows sessions: no amount of signing out helps.
+      const tooBig = () => !!room && room.keys.length && new Set(room.keys).size > room.limit;
+      // Once the list has been used, it stays up even after there's room.
+      const roomShown = () => !!room && (short() || signedOut > 0);
+
+      const lineHTML = (label, where, badges, muted) => `
+        <div class="tm_setopen_role${muted ? " tm_setopen_muted" : ""}">
+          <span class="tm_setopen_role_who">${label}</span>
+          <span class="tm_setopen_role_where">${where}</span>
+          ${badges || ""}
         </div>`;
-      const badge = (text, bg, fg) =>
-        `<span style="background: ${bg} !important; color: ${fg} !important; font-size: 11px !important; font-weight: 700 !important; border-radius: 3px !important; padding: 1px 6px !important; white-space: nowrap !important;">${escapeHtml(text)}</span>`;
-      const readyHTML = [...byRole].map(([roleArn, tabs]) => {
+      const badge = (text, kind) => `<span class="tm_setopen_badge tm_setopen_badge_${kind}">${escapeHtml(text)}</span>`;
+      const missingHTML = [...new Set(missing.map((t) => t.roleArn))].map((roleArn) => {
         const l = roleLabelFor(roleArn);
-        const reasons = flagged.get(roleArn);
-        const label = `${reasons ? "<strong>" : ""}${escapeHtml(l.account)} · ${escapeHtml(l.role)}${reasons ? "</strong>" : ""}`;
-        const where = tabs.map((t) => escapeHtml(serviceNameFor(t.service))).join(", ") +
-          (tabs.length > 1 ? ` (${tabs.length} tabs)` : "");
-        return lineHTML(label, where, reasons ? badge(reasons.join(" · "), "#fdecee", "#b02a37") : "");
+        return lineHTML(`${escapeHtml(l.account)} · ${escapeHtml(l.role)}`, "", badge("Not in today's role list — skipped", "off"), true);
       }).join("");
-      const missingRoles = [...new Set(missing.map((t) => t.roleArn))];
-      const missingHTML = missingRoles.map((roleArn) => {
-        const l = roleLabelFor(roleArn);
-        return lineHTML(`${escapeHtml(l.account)} · ${escapeHtml(l.role)}`, "", badge("Not in today's role list — skipped", "#f1f3f5", "#6c757d"), true);
-      }).join("");
+
+      const rolesHTML = () => {
+        const reuse = room ? reuseMapFor(room.plan) : new Map();
+        return [...byRole].map(([roleArn, tabs]) => {
+          const l = roleLabelFor(roleArn);
+          const reasons = flagged.get(roleArn);
+          const label = `${reasons ? "<strong>" : ""}${escapeHtml(l.account)} · ${escapeHtml(l.role)}${reasons ? "</strong>" : ""}`;
+          const where = tabs
+            .map((t) => escapeHtml(serviceNameFor(t.service)) + (t.region ? ` · ${escapeHtml(t.region)}` : ""))
+            .join(", ") + (tabs.length > 1 ? ` (${tabs.length} tabs)` : "");
+          let badges = reasons ? badge(reasons.join(" · "), "danger") : "";
+          if (reuse.has(sessionRoleKey(roleArn))) badges += badge("Opens in its live session", "live");
+          return lineHTML(label, where, badges, false);
+        }).join("") + missingHTML;
+      };
+
+      // Every live session, a jump shown as one row, each with its own
+      // Sign out.
+      const sessionsListHTML = () => {
+        const kept = new Set(room.plan.keep.values());
+        listUnits = groupSessions(room.sessions, AssumeProfilesManager.all(), directRoleKeys());
+        if (!listUnits.length) return `<div class="tm_setopen_sess_empty">No live sessions.</div>`;
+        const rows = listUnits.map((u, i) => {
+          const inSet = u.sessions.some((m) => kept.has(m));
+          // What signing this row out actually frees. A session the set opens
+          // in frees nothing: its role would just need a new one instead.
+          const frees = u.sessions.filter((m) => !kept.has(m)).length;
+          const meta = [
+            u.hub ? `jump · ${plural(u.sessions.length, "session")}` : "",
+            u.tabs ? plural(u.tabs, "tab") : "idle",
+            timeLeft(u.expiry),
+            inSet ? `${set.name} opens in it` : "",
+          ].filter(Boolean).join(" · ");
+          const enough = short() && frees >= room.plan.deficit
+            ? ` ${badge("Frees enough", "enough")}`
+            : "";
+          const button = frees
+            ? `<button type="button" class="tm_setopen_so" data-unit="${i}">Sign out</button>`
+            : "";
+          return `
+            <div class="tm_setopen_sess">
+              <span class="tm_setopen_sess_who">${u.hub ? "⤳ " : ""}${escapeHtml(unitWho(u))}${enough}</span>
+              <span class="tm_setopen_sess_meta">${escapeHtml(meta)}</span>
+              ${button}
+            </div>`;
+        }).join("");
+        const all = room.sessions.length > 1
+          ? `<button type="button" class="tm_setopen_soall">Sign out all</button>`
+          : "";
+        return `
+          <div class="tm_setopen_sess_head"><span>Your sessions · ${room.sessions.length} of ${room.limit}</span>${all}</div>
+          <div class="tm_setopen_sess_list">${rows}</div>`;
+      };
+
+      const roomHTML = () => {
+        if (!room) return "";
+        const { plan, limit } = room;
+        const name = escapeHtml(set.name);
+        if (tooBig()) {
+          return `<div class="tm_setopen_room"><div class="tm_setopen_room_head"><strong>This set is bigger than AWS allows.</strong> ${name} signs in to ${new Set(room.keys).size} roles, and AWS allows ${limit} sessions at once. Split it into smaller sets to open it.</div></div>`;
+        }
+        if (!roomShown()) return "";
+        const head = short()
+          ? `<strong>Not enough free AWS sessions.</strong> ${name} needs ${plural(plan.fresh.length, "new session")} and ${plan.free} ${plan.free === 1 ? "is" : "are"} free. Sign out ${plural(plan.deficit, "session")} to open it.`
+          : `<strong>Room for every role now.</strong>`;
+        return `<div class="tm_setopen_room${short() ? "" : " tm_setopen_room_ok"}"><div class="tm_setopen_room_head">${head}</div>${sessionsListHTML()}</div>`;
+      };
+
+      const canOpen = () => !busy && !short() && !tooBig();
 
       const headline = danger
         ? `<div style="background: #dc3545 !important; color: #fff !important; padding: 12px 20px !important; border-radius: 6px !important; font-size: 18px !important; font-weight: 700 !important; text-align: center !important; margin-bottom: 14px !important; box-shadow: 0 2px 6px rgba(220,53,69,0.25) !important;">Includes ${plural(sensitive.length, "sensitive role")}</div>`
         : "";
-      const sessionsHTML = over
-        ? `<div style="border: 1px solid #f0c64b !important; background: #fff8e1 !important; border-radius: 4px !important; padding: 9px 12px !important; margin: 0 0 18px 0 !important; font-size: 13px !important; color: #16191f !important;">
-             <strong>AWS sessions: ${budget.inUse} in use + ${budget.needed} new = ${budget.inUse + budget.needed} of ${budget.limit}.</strong>
-             AWS allows ${budget.limit} console sessions at once, so some of these tabs won't sign in. Sign a session out first, or open anyway.
-           </div>`
-        : "";
-      const n = ready.length;
-
-      const modalHTML = `
+      $("body").append(`
         <div id="tm_set_open_modal" style="
             position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
             background: rgba(0,0,0,0.55) !important; z-index: 10001 !important;
@@ -3853,41 +4240,131 @@ import {
         ">
           <div style="
               background: white !important; border-radius: 8px !important; padding: 22px 24px !important;
-              max-width: 560px !important; width: 90% !important; max-height: 84vh !important; overflow-y: auto !important;
+              max-width: 600px !important; width: 90% !important; max-height: 88vh !important; overflow-y: auto !important;
               border-top: 6px solid ${accent} !important; box-shadow: 0 8px 32px rgba(0,0,0,0.25) !important;
               font-size: 13.5px !important; color: #16191f !important;
           ">
             <div style="font-size: 12px !important; font-weight: 600 !important; letter-spacing: 1px !important; text-transform: uppercase !important; color: ${accent} !important; margin-bottom: 8px !important;">Open set · ${escapeHtml(set.name)}</div>
             ${headline}
-            <div style="background: #f8f9fa !important; border: 1px solid #e1e4e8 !important; border-radius: 4px !important; padding: 6px 12px !important; margin: 0 0 14px 0 !important;">
-              ${readyHTML}${missingHTML}
-            </div>
-            ${sessionsHTML}
+            <div class="tm_setopen_roles"></div>
+            <div class="tm_setopen_roombox"></div>
             <div style="text-align: right !important;">
               <button type="button" data-action="cancel" class="tm_sv_btn" style="margin-right: 8px !important;">Cancel</button>
-              ${over ? `<button type="button" data-action="sessions" class="tm_sv_btn" style="margin-right: 8px !important;">Manage sessions…</button>` : ""}
               <button type="button" data-action="confirm" style="
                   padding: 7px 14px !important; border: 1px solid ${danger ? "#dc3545" : "#0073bb"} !important;
                   background: ${danger ? "#dc3545" : "#0073bb"} !important; color: white !important; border-radius: 4px !important;
                   cursor: pointer !important; font-weight: 600 !important; font-size: 13px !important;
-              ">${over ? "Open anyway" : `Open ${plural(n, "tab")}`}</button>
+              ">Open ${plural(ready.length, "tab")}</button>
             </div>
           </div>
-        </div>`;
-      $("body").append(modalHTML);
+        </div>`);
       const $m = $("#tm_set_open_modal");
+      const $confirm = $m.find('[data-action="confirm"]');
+
+      const paint = () => {
+        $m.find(".tm_setopen_roles").html(rolesHTML());
+        $m.find(".tm_setopen_roombox").html(roomHTML());
+        const ok = canOpen();
+        $confirm.prop("disabled", !ok).css("opacity", ok ? "" : "0.5")
+          .attr("title", short() ? `Sign out ${plural(room.plan.deficit, "session")} first` : "");
+        $m.find('[data-action="cancel"]').prop("disabled", busy);
+      };
+      paint();
+
       const close = (result) => { $m.remove(); resolve(result); };
-      $m.on("click", function (e) { if (e.target === this) close(false); });
-      $m.find('[data-action="cancel"]').on("click", () => close(false));
-      $m.find('[data-action="confirm"]').on("click", () => close(true));
-      $m.find('[data-action="sessions"]').on("click", () => {
-        close(false);
-        const pill = document.getElementById("tm_sessions_pill");
-        if (pill) pill.click();
+
+      // Sign sessions out right away, then recount from what AWS says is left.
+      const signOutNow = async (ids, btn) => {
+        busy = true;
+        btn.textContent = "Signing out…";
+        $m.find(".tm_setopen_so, .tm_setopen_soall").prop("disabled", true);
+        $m.find('[data-action="cancel"]').prop("disabled", true);
+        $confirm.prop("disabled", true).css("opacity", "0.5");
+        const res = await signOutToMakeRoom(ids);
+        busy = false;
+        if (!res || !res.ok) {
+          showToast("Couldn't sign that out. Try again, or use the sessions panel.", "error", CONFIG.TOAST_DURATION_LONG);
+          paint();
+          return;
+        }
+        signedOut += res.done;
+        sessionsFullToastShown = false;
+        room = planRoom(ready, { sessions: res.sessions || [], limit: res.limit || room.limit });
+        refreshSessions({ keepOpen: sessionsPopoverOpen });
+        paint();
+      };
+      // Idle sessions sign out on one click. One with tabs open asks once
+      // more ("Close 2 tabs?"), like the sessions panel's ✕; so does "all".
+      // Like every click-again confirmation here, it lapses after a few
+      // seconds, so a stray click later can't sign anything out.
+      let armTimer = null;
+      const disarm = () => {
+        clearTimeout(armTimer);
+        $m.find(".tm_setopen_armed").each(function () {
+          this.classList.remove("tm_setopen_armed");
+          this.textContent = this.classList.contains("tm_setopen_soall") ? "Sign out all" : "Sign out";
+        });
+      };
+      const arm = (btn, text) => {
+        disarm();
+        btn.classList.add("tm_setopen_armed");
+        btn.textContent = text;
+        armTimer = setTimeout(disarm, 3500);
+      };
+      $m.on("click", ".tm_setopen_so", function () {
+        if (busy) return;
+        const u = listUnits[Number(this.getAttribute("data-unit"))];
+        if (!u) return;
+        if (u.tabs && !this.classList.contains("tm_setopen_armed")) {
+          arm(this, `Close ${plural(u.tabs, "tab")}?`);
+          return;
+        }
+        clearTimeout(armTimer);
+        signOutNow(u.ids, this);
+      });
+      $m.on("click", ".tm_setopen_soall", function () {
+        if (busy || !room) return;
+        if (!this.classList.contains("tm_setopen_armed")) {
+          const tabs = room.sessions.reduce((n, s) => n + (s.tabs || 0), 0);
+          arm(this, tabs ? `Sign out all, close ${plural(tabs, "tab")}?` : "Sign out all?");
+          return;
+        }
+        clearTimeout(armTimer);
+        signOutNow(room.sessions.map((s) => s.differentiator), this);
+      });
+      $m.on("click", function (e) { if (e.target === this && !busy) close(null); });
+      $m.find('[data-action="cancel"]').on("click", () => { if (!busy) close(null); });
+      $confirm.on("click", () => {
+        if (canOpen()) close({ room, signedOut });
       });
     });
 
+  const signOutToMakeRoom = (differentiators) =>
+    new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "hop_signout_sessions", region: GeneralSettingsManager.region(), differentiators },
+          (r) => resolve(chrome.runtime.lastError ? null : r)
+        );
+      } catch (e) {
+        resolve(null);
+      }
+    });
+
   let launchInFlight = false;
+
+  // AWS accepts a sign-in page for 5 minutes. Checked before the dialog too,
+  // so a page too old to use doesn't cost the user their sessions.
+  const samlTooOld = (set) => {
+    const age = samlResponseAgeMs();
+    if (age === null || age <= SAML_FRESH_MS) return false;
+    showToast(
+      `This sign-in page is ${Math.floor(age / 60000)} minutes old, and AWS only accepts it for 5. Sign in again through your identity provider, then open ${set.name}.`,
+      "error",
+      8000
+    );
+    return true;
+  };
 
   const openLaunchSet = async (id) => {
     const set = LaunchSetsManager.find(id);
@@ -3899,31 +4376,41 @@ import {
       showToast(`None of ${set.name}'s roles are in today's role list.`, "error", CONFIG.TOAST_DURATION_LONG);
       return;
     }
-    const infos = [...new Set(ready.map((t) => t.roleArn))].map(directRoleInfo);
-    const sensitive = infos
-      .map((info) => ({ info, reasons: sensitiveSignInReasons(info.roleName, info.accountName, info.accountId) }))
-      .filter((s) => s.reasons.length);
-    const budget = setSessionBudget(infos);
-    const over = budget.known && budget.inUse + budget.needed > budget.limit;
-    // Nothing to warn about: one click opens the set.
-    if (sensitive.length || missing.length || over) {
-      const ok = await confirmLaunchSet(set, ready, missing, sensitive, budget);
-      if (!ok) return;
-    }
-    // Checked after the confirmation too, since that can sit open a while.
-    const age = samlResponseAgeMs();
-    if (age !== null && age > SAML_FRESH_MS) {
-      showToast(
-        `This sign-in page is ${Math.floor(age / 60000)} minutes old, and AWS only accepts it for 5. Sign in again through your identity provider, then open ${set.name}.`,
-        "error",
-        8000
-      );
-      return;
-    }
+    if (samlTooOld(set)) return;
+    // Held from the first click, through the session read and the dialog, so
+    // a double click can't start a second launch.
     launchInFlight = true;
     try {
-      const opened = await launchSigninTabs(ready, { tag: setGroupTag(set) });
-      showToast(`Opening ${plural(opened, "tab")} for ${set.name}…`, "info", CONFIG.TOAST_DURATION_LONG);
+      const infos = [...new Set(ready.map((t) => t.roleArn))].map(directRoleInfo);
+      const sensitive = infos
+        .map((info) => ({ info, reasons: sensitiveSignInReasons(info.roleName, info.accountName, info.accountId) }))
+        .filter((s) => s.reasons.length);
+      let room = await sessionRoomFor(ready);
+      let signedOut = 0;
+      // Nothing to warn about: one click opens the set.
+      if (sensitive.length || missing.length || (room && room.plan.deficit > 0)) {
+        const choice = await confirmLaunchSet(set, ready, missing, sensitive, room);
+        if (!choice) return;
+        ({ room, signedOut } = choice);
+      }
+      // Again after the dialog, which can sit open a while.
+      if (samlTooOld(set)) return;
+      if (room && room.plan.deficit > 0) {
+        showToast(`Not enough free AWS sessions for ${set.name}. Sign some out and try again.`, "error", CONFIG.TOAST_DURATION_LONG);
+        return;
+      }
+      const reuse = room ? reuseMapFor(room.plan) : new Map();
+      const opened = await launchSigninTabs(ready, { tag: setGroupTag(set), reuse });
+      const inLive = ready.filter((t) => reuse.has(sessionRoleKey(t.roleArn))).length;
+      const notes = [
+        inLive ? `${inLive} in sessions you already had` : "",
+        signedOut ? `signed out ${plural(signedOut, "session")}` : "",
+      ].filter(Boolean);
+      showToast(
+        `Opening ${plural(opened, "tab")} for ${set.name}…${notes.length ? ` (${notes.join("; ")})` : ""}`,
+        "info",
+        CONFIG.TOAST_DURATION_LONG
+      );
       await LaunchSetsManager.touch(id);
     } catch (err) {
       showToast(`Couldn't open ${set.name}: ${err && err.message ? err.message : err}`, "error", CONFIG.TOAST_DURATION_LONG);
@@ -3931,6 +4418,25 @@ import {
       launchInFlight = false;
     }
   };
+
+  // The service worker drops a role's extra tabs when its first tab never
+  // reached the console (they'd each need a session of their own) — say so,
+  // or they just silently don't appear.
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg || msg.type !== "hop_launch_skipped") return;
+      const n = Number(msg.count) || 0;
+      if (!n || !isRoleArn(msg.roleArn)) return;
+      const l = roleLabelFor(msg.roleArn);
+      showToast(
+        `${plural(n, "more tab")} for ${l.account} · ${l.role} didn't open — its first tab didn't reach the AWS console.`,
+        "error",
+        CONFIG.TOAST_DURATION_LONG
+      );
+    });
+  } catch (e) {
+    /* no extension context */
+  }
 
   // --- Save current view as a set ---
   // The visible direct rows, each with the service and region its dropdowns
@@ -4130,6 +4636,8 @@ import {
               <button type="button" class="tm_set_remove" data-tab="${i}" title="Remove this tab">✕</button>
             </div>`;
         }).join("");
+        // A role missing from today's list can't open, so it gets no more tabs.
+        if (!directRoleInfo(roleArn)) return lines;
         return `${lines}<div class="tm_set_grid tm_set_addrow"><span></span><a href="#" class="tm_set_addtab" data-role="${escapeHtml(roleArn)}">+ Add tab for this role</a></div>`;
       }).join("");
       const inSet = new Set(tabs.map((t) => t.roleArn));
@@ -4703,8 +5211,12 @@ import {
             transition: background-color 0.3s ease, color 0.3s ease !important;
         }
 
+        /* The page grows to fit the longest account and role names
+           (--tm-page-need, measured by fitListingWidth), up to the General
+           Settings cap (--tm-page-cap), and never below 1100px. A narrower
+           window still wins: the form just fills it. */
         #saml_form {
-            max-width: 1100px !important;
+            max-width: max(1100px, min(var(--tm-page-need, 1100px), var(--tm-page-cap, 1100px))) !important;
             margin: 20px auto 20px auto !important;
             padding: 0 20px !important;
         }
@@ -4947,7 +5459,7 @@ import {
                "47m", "1") — their headers are the widest thing in them, so any
                extra width there is dead space stolen from the two columns that
                actually truncate. */
-            grid-template-columns: 1fr 2fr 100px 230px 68px 60px 40px 28px !important;
+            grid-template-columns: 1fr 2fr 100px 214px 84px 60px 40px 28px !important;
             gap: 16px !important; align-items: center !important;
         }
         /* Horizontal padding on the rows (matched by the header so columns stay
@@ -5570,7 +6082,7 @@ import {
             /* fav | account name | tags | role name | account id | service | region | sign in
                The two name columns flex (1fr) so long names get room and ellipsis;
                the fixed tag column keeps every tag chip aligned in one vertical strip. */
-            grid-template-columns: auto minmax(0, 1fr) 56px minmax(0, 1fr) auto auto auto auto !important;
+            grid-template-columns: auto var(--tm-acct-col, minmax(0, 1fr)) 56px var(--tm-role-col, minmax(0, 1fr)) auto auto auto auto !important;
             align-items: center !important;
             column-gap: 12px !important;
             transition: all 0.2s ease !important;
@@ -5886,6 +6398,26 @@ import {
             white-space: nowrap !important;
         }
 
+        /* A split name: the head shortens with an ellipsis, the tail stays whole.
+           Shown side by side they read as one name when there's room. */
+        .tm_mid { display: flex !important; min-width: 0 !important; }
+        .tm_mid_h {
+            flex: 0 1 auto !important; min-width: 1.2em !important;
+            overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important;
+        }
+        .tm_mid_t { flex: none !important; white-space: nowrap !important; }
+
+        #tm_name_tip {
+            display: none; position: absolute !important; z-index: 10002 !important; pointer-events: none !important;
+            max-width: 560px !important; padding: 7px 10px !important; border-radius: 6px !important;
+            background: #16191f !important; color: #fff !important; font-size: 12.5px !important; line-height: 1.45 !important;
+            box-shadow: 0 6px 18px rgba(0,0,0,.2) !important; overflow-wrap: anywhere !important;
+        }
+        .tm_name_tip_main { font-weight: 600 !important; }
+        .tm_name_tip_meta { color: #b6beca !important; font-size: 11.5px !important; }
+        .tm_name_tip_hint { color: #f6d58b !important; font-size: 11.5px !important; margin-top: 4px !important; }
+        .tm_name_tip_hint em { font-style: normal !important; font-weight: 600 !important; }
+
         /* Account tags: on-demand chip in the name cell + an expandable inline
            editor that spans the whole row (grid-column: 1 / -1). */
         .tm_tag_cell {
@@ -6066,6 +6598,9 @@ import {
             font-family: inherit !important;
         }
         .tm_sv_btn:hover:not(:disabled) { border-color: #0073bb !important; color: #0073bb !important; }
+        body.tm_theme_dark .tm_sv_btn { background: #1a202c !important; color: #e9ecef !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_sv_btn:hover:not(:disabled) { border-color: #63b3ed !important; color: #63b3ed !important; }
+
         .tm_sv_btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
 
         body.tm_theme_dark .tm_account_id {
@@ -6114,6 +6649,9 @@ import {
             transform: translateY(-1px) !important;
         }
 
+        /* Sign In, Jump and Open share one width, so the row's columns line up
+           whichever label a row shows. */
+        .tm_signin_button { min-width: 66px !important; justify-content: center !important; text-align: center !important; }
         .tm_role_button.primary:hover {
             background: #005a94 !important;
         }
@@ -6627,6 +7165,54 @@ import {
         body.tm_theme_dark .tm_set_page { color: #cbd5e0 !important; }
 
         body.tm_compact_mode .tm_sets_column { flex-basis: 200px !important; }
+
+        /* Open-set dialog: roles, and making room in AWS's session cap. It
+           stays light like the other confirmations, so no dark overrides. */
+        .tm_setopen_roles { background: #f8f9fa !important; border: 1px solid #e1e4e8 !important; border-radius: 4px !important; padding: 6px 12px !important; margin: 0 0 14px 0 !important; }
+        .tm_setopen_role { display: flex !important; align-items: center !important; gap: 10px !important; padding: 5px 0 !important; border-bottom: 1px solid #eef0f2 !important; }
+        .tm_setopen_role:last-child { border-bottom: 0 !important; }
+        .tm_setopen_role_who { flex: 1 !important; min-width: 0 !important; }
+        .tm_setopen_role_where { color: #6c757d !important; font-size: 12.5px !important; text-align: right !important; }
+        .tm_setopen_muted, .tm_setopen_muted .tm_setopen_role_where { color: #adb5bd !important; }
+        .tm_setopen_badge { font-size: 11px !important; font-weight: 700 !important; border-radius: 3px !important; padding: 1px 6px !important; white-space: nowrap !important; }
+        .tm_setopen_badge_danger { background: #fdecee !important; color: #b02a37 !important; }
+        .tm_setopen_badge_off { background: #f1f3f5 !important; color: #6c757d !important; }
+        .tm_setopen_badge_live { background: #e5f1fa !important; color: #0a5d94 !important; }
+        .tm_setopen_badge_enough { background: #e3f4ea !important; color: #1d7a45 !important; margin-left: 4px !important; vertical-align: 1px !important; }
+        .tm_setopen_room { border: 1px solid #f0c64b !important; background: #fff8e1 !important; border-radius: 4px !important; padding: 10px 12px !important; margin: 0 0 18px 0 !important; font-size: 13px !important; color: #16191f !important; display: grid !important; gap: 10px !important; }
+        .tm_setopen_room_ok { border-color: #9fd3b4 !important; background: #eef8f2 !important; }
+        .tm_setopen_sess_head { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 8px !important; font-size: 11.5px !important; font-weight: 700 !important; letter-spacing: .04em !important; text-transform: uppercase !important; color: #6b5a1e !important; }
+        .tm_setopen_room_ok .tm_setopen_sess_head { color: #1d5e39 !important; }
+        .tm_setopen_sess_list { background: #fff !important; border: 1px solid #e8dcb4 !important; border-radius: 5px !important; }
+        .tm_setopen_room_ok .tm_setopen_sess_list { border-color: #cfe7d8 !important; }
+        .tm_setopen_sess { display: grid !important; grid-template-columns: 1fr auto !important; gap: 1px 10px !important; align-items: center !important; padding: 6px 10px !important; }
+        .tm_setopen_sess + .tm_setopen_sess { border-top: 1px solid #f1ecdb !important; }
+        .tm_setopen_sess_who { font-weight: 600 !important; min-width: 0 !important; overflow-wrap: anywhere !important; }
+        .tm_setopen_sess_meta { grid-column: 1 !important; color: #6c757d !important; font-size: 12px !important; }
+        .tm_setopen_sess_empty { color: #6c757d !important; font-size: 12.5px !important; }
+        .tm_setopen_so { grid-column: 2 !important; grid-row: 1 / span 2 !important; }
+        .tm_setopen_so, .tm_setopen_soall { padding: 4px 10px !important; border: 1px solid #c9ced6 !important; background: #fff !important; color: #16191f !important; border-radius: 4px !important; cursor: pointer !important; font-size: 12px !important; font-weight: 600 !important; font-family: inherit !important; text-transform: none !important; letter-spacing: 0 !important; white-space: nowrap !important; }
+        .tm_setopen_so:hover, .tm_setopen_soall:hover { border-color: #b02a37 !important; color: #b02a37 !important; }
+        .tm_setopen_armed, .tm_setopen_armed:hover { background: #dc3545 !important; border-color: #dc3545 !important; color: #fff !important; }
+        .tm_setopen_so:disabled, .tm_setopen_soall:disabled { opacity: .5 !important; cursor: default !important; }
+        body.tm_theme_dark .tm_setopen_roles { background: #3a4252 !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_setopen_role { border-bottom-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_setopen_role_where { color: #a0aec0 !important; }
+        body.tm_theme_dark .tm_setopen_muted, body.tm_theme_dark .tm_setopen_muted .tm_setopen_role_where { color: #718096 !important; }
+        body.tm_theme_dark .tm_setopen_badge_danger { background: #4a2328 !important; color: #feb2b2 !important; }
+        body.tm_theme_dark .tm_setopen_badge_off { background: #2d3748 !important; color: #a0aec0 !important; }
+        body.tm_theme_dark .tm_setopen_badge_live { background: #1e3a5f !important; color: #90cdf4 !important; }
+        body.tm_theme_dark .tm_setopen_badge_enough { background: #1c3d2b !important; color: #9ae6b4 !important; }
+        body.tm_theme_dark .tm_setopen_room { background: #3a3220 !important; border-color: #b7791f !important; color: #e9ecef !important; }
+        body.tm_theme_dark .tm_setopen_room_ok { background: #1c3d2b !important; border-color: #2f855a !important; }
+        body.tm_theme_dark .tm_setopen_sess_head { color: #f6e05e !important; }
+        body.tm_theme_dark .tm_setopen_room_ok .tm_setopen_sess_head { color: #9ae6b4 !important; }
+        body.tm_theme_dark .tm_setopen_sess_list { background: #2d3748 !important; border-color: #4a5568 !important; }
+        body.tm_theme_dark .tm_setopen_sess + .tm_setopen_sess { border-top-color: #3a4148 !important; }
+        body.tm_theme_dark .tm_setopen_sess_meta, body.tm_theme_dark .tm_setopen_sess_empty { color: #a0aec0 !important; }
+        body.tm_theme_dark .tm_setopen_so, body.tm_theme_dark .tm_setopen_soall { background: #1a202c !important; border-color: #4a5568 !important; color: #e9ecef !important; }
+        body.tm_theme_dark .tm_setopen_so:hover, body.tm_theme_dark .tm_setopen_soall:hover { border-color: #fc8181 !important; color: #fc8181 !important; }
+        body.tm_theme_dark .tm_setopen_armed, body.tm_theme_dark .tm_setopen_armed:hover { background: #c53030 !important; border-color: #c53030 !important; color: #fff !important; }
   `;
 
   const styleEl = document.createElement("style");
@@ -6652,6 +7238,7 @@ import {
   await AccountTypesManager.loadCache();
   await RolesManager.loadCache();
   await GeneralSettingsManager.loadCache();
+  applyPageWidthCap();
   await RecentRolesManager.loadCache();
   await RoleOrderManager.loadCache();
   // Now that all caches are populated, paint the configurable filter rows
@@ -6776,8 +7363,8 @@ import {
     const roleArn = $button.data("role-arn");
     const $role = $button.closest(".saml-role");
     // ⤳ jump rows share the button slot but run the chained-jump engine,
-    // honouring the row's Service/Region picks. Same-tab by design — the jump
-    // navigates through the hub sign-in, so a new tab has nothing to keep.
+    // honouring the row's Service/Region picks — and the same new-tab choice
+    // (⌘/Ctrl or middle-click, or the Sign-in setting) as a direct role.
     if ($button.attr("data-jump") === "1") {
       if ($role.hasClass("tm_jump_unavailable")) {
         showToast(
@@ -6798,6 +7385,7 @@ import {
         region: rowRegion,
         service: rowService,
         fromRow: true,
+        newTab,
       });
       return;
     }
@@ -6816,19 +7404,30 @@ import {
     }
 
     if (region) await RegionsManager.saveLastRegion(roleArn, region);
+    if (servicePath) await ServicesManager.saveLastService(roleArn, servicePath);
 
-    if (servicePath) {
-      await ServicesManager.saveLastService(roleArn, servicePath);
-      showToast(`Signing in to ${roleName}${newTab ? " (new tab)" : ""}…`, "info", 2000);
-    } else {
-      showToast(`Signing in to ${roleName} (console${newTab ? ", new tab" : ""})…`, "info", 2000);
-    }
+    // Signing in again to a role that already has a live session replaces it
+    // and signs its open tabs out (such a row's button reads "Open"), so a live one
+    // just opens — here, or in a new tab, as the click asked.
+    const [liveSession] = await liveSessionsFor([sessionRoleKey(roleArn)]);
 
     const labelPayload = buildSigninLabel({ accountName, accountId, roleName, env });
     await RecentRolesManager.recordSignIn(roleArn);
     // Awaited: the token must be in storage before the form navigates away,
     // or the decorator will (correctly) refuse to trust the payload.
     labelPayload.tok = await mintSigninToken();
+    if (liveSession) {
+      showToast(`Opening your live ${roleName} session${newTab ? " (new tab)" : ""}…`, "info", 2000);
+      openLiveUrl(buildDestination(servicePath, labelPayload, region, liveSession.differentiator), newTab);
+      return;
+    }
+    showToast(
+      servicePath
+        ? `Signing in to ${roleName}${newTab ? " (new tab)" : ""}…`
+        : `Signing in to ${roleName} (console${newTab ? ", new tab" : ""})…`,
+      "info",
+      2000
+    );
     // No region here: a direct sign-in already lands in the right region, so
     // there is nothing for the decorator to correct.
     await stashPendingLabel(accountId, accountName, labelPayload.envColor, labelPayload.envLetter, "");
@@ -7007,8 +7606,14 @@ import {
     showAssumeProfilesModal();
   });
 
-  const doJump = () =>
-    jumpToAccount($("#tm_jump_org").val(), $("#tm_jump_account").val(), $("#tm_jump_label").val());
+  // ⌘/Ctrl (or a middle-click) inverts the Sign-in setting's default, the
+  // same rule as a row's Sign In or Jump button.
+  const newTabFor = (e) =>
+    signinNewTab !== !!(e && (e.metaKey || e.ctrlKey || (e.type === "auxclick" && e.button === 1)));
+  const doJump = (e) =>
+    jumpToAccount($("#tm_jump_org").val(), $("#tm_jump_account").val(), $("#tm_jump_label").val(), {
+      newTab: newTabFor(e),
+    });
 
   $("body").on("click", "#tm_jump_pill", function (e) {
     e.preventDefault();
@@ -7016,9 +7621,10 @@ import {
     else openJumpPopover();
   });
 
-  $("body").on("click", "#tm_jump_go", function (e) {
+  $("body").on("click auxclick", "#tm_jump_go", function (e) {
+    if (e.type === "auxclick" && e.button !== 1) return;
     e.preventDefault();
-    doJump();
+    doJump(e);
   });
 
   // Switching org retargets the region to that profile's landing region, so a
@@ -7054,29 +7660,39 @@ import {
     e.stopPropagation();
     const el = this;
     const $row = $(el).closest(".tm_sess_tr");
-    const diff = $row.attr("data-diff");
-    if (!diff) return;
-    twoStepDelete($(el), el, async () => {
-      showToast("Signing out that session…", "info", CONFIG.TOAST_DURATION);
+    const ids = String($row.attr("data-ids") || "").split(",").filter(Boolean);
+    if (!ids.length) return;
+    const run = () => {
+      showToast(ids.length > 1 ? "Signing out that jump…" : "Signing out that session…", "info", CONFIG.TOAST_DURATION);
       chrome.runtime.sendMessage(
         {
-          type: "hop_signout_session",
+          type: "hop_signout_sessions",
           region: GeneralSettingsManager.region(),
-          differentiator: diff,
+          differentiators: ids,
         },
         (res) => {
-          if (chrome.runtime.lastError || !res || !res.ok) {
+          if (chrome.runtime.lastError || !res || !res.ok || !res.done) {
             showToast("Could not sign that session out.", "error", CONFIG.TOAST_DURATION);
             return;
           }
           // A freed slot means the cap warning is worth showing again.
           sessionsFullToastShown = false;
-          const closed = res.closed ? `, ${res.closed} tab${res.closed === 1 ? "" : "s"} closed` : "";
-          showToast(`Session signed out${closed} — a slot is free.`, "success", CONFIG.TOAST_DURATION);
+          const closed = res.closed ? `, ${plural(res.closed, "tab")} closed` : "";
+          showToast(
+            res.done === 1
+              ? `Session signed out${closed} — a slot is free.`
+              : `${res.done} sessions signed out${closed} — ${res.done} slots are free.`,
+            "success",
+            CONFIG.TOAST_DURATION
+          );
           refreshSessions({ keepOpen: sessionsPopoverOpen });
         }
       );
-    });
+    };
+    // Same rule as the Open-set dialog: an idle session signs out on one
+    // click; one with tabs open asks once more.
+    if (Number($row.attr("data-tabs")) > 0) twoStepDelete($(el), el, run);
+    else run();
   });
 
   // Clicks on the scrim close the panel and go NO further — the scrim's whole
@@ -7094,11 +7710,11 @@ import {
   $("body").on("click", "#tm_sess_signout_idle", function (e) {
     e.preventDefault();
     e.stopPropagation();
-    if (!sessionsCache.some((s) => !s.tabs)) return;
+    if (!groupSessions(sessionsCache, AssumeProfilesManager.all(), directRoleKeys()).some((u) => !u.tabs)) return;
     twoStepDelete($(this), this, () => {
       showToast("Signing out of sessions with no open tabs…", "info", CONFIG.TOAST_DURATION);
       chrome.runtime.sendMessage(
-        { type: "hop_signout_idle", region: GeneralSettingsManager.region() },
+        { type: "hop_signout_idle", region: GeneralSettingsManager.region(), directKeys: [...directRoleKeys()] },
         (res) => {
           if (chrome.runtime.lastError || !res || !res.ok) {
             showToast("Could not sign the idle sessions out.", "error", CONFIG.TOAST_DURATION);
@@ -7151,7 +7767,7 @@ import {
   $("body").on("keydown", "#tm_jump_account, #tm_jump_label", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
-      doJump();
+      doJump(e);
     }
   });
 
@@ -7183,7 +7799,8 @@ import {
     syncFieldClear("tm_jump_label", "tm_jump_label_wrap");
   });
 
-  $("body").on("click", ".tm_jump_recent", function (e) {
+  $("body").on("click auxclick", ".tm_jump_recent", function (e) {
+    if (e.type === "auxclick" && e.button !== 1) return;
     // The ✕ action sits inside the row; leave its clicks to its handler.
     if (e.target.closest && e.target.closest(".tm_jump_action")) return;
     e.preventDefault();
@@ -7191,7 +7808,7 @@ import {
       $(this).attr("data-org"),
       $(this).attr("data-account"),
       $(this).attr("data-label"),
-      { fromRecent: true }
+      { fromRecent: true, newTab: newTabFor(e) }
     );
   });
 
@@ -7706,6 +8323,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
   // and an unfinished storage write dies with it, leaving the decorator with no
   // pending entry (no region pin, no tab decoration).
   const jumpToAccount = async (profileName, accountRaw, labelRaw, opts = {}) => {
+    const newTab = !!(opts && opts.newTab);
     const profile = AssumeProfilesManager.byName(profileName);
     if (!profile) {
       showToast("Pick an org first.", "error", CONFIG.TOAST_DURATION);
@@ -7806,19 +8424,41 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         if (!cur[k] || !cur[k].ts || now - cur[k].ts > 5 * 60 * 1000) delete cur[k];
       }
       cur[dest] = { label: displayName, envColor, envLetter, region, service: svc, ts: now };
+      // The tab group the jumped tab belongs in. A same-tab jump is grouped
+      // up front (below); a new-tab one is grouped by the decorator from this
+      // once it lands, since the picker never learns the new tab's id.
+      if (newTab) {
+        cur[dest].group = {
+          role: profile.role,
+          tag: tabGroupTagCache || "",
+          mode: tabGroupModeCache || "role",
+          org: profile.name || "",
+        };
+      }
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
+
+    // Signing in again to an identity that already has a session replaces it
+    // and signs its open tabs out, so a jump uses live sessions where it can:
+    // a destination that's already live just opens, and a live hub switches
+    // role without signing in again. Otherwise the jump signs in to the hub
+    // as it always has.
+    const hubRoleName = String(hubArn).split("/").pop() || "";
+    const [destLive, hubLive] = await liveSessionsFor([`${dest}/${profile.role}`, `${profile.hub}/${hubRoleName}`]);
+    const destSession = destLive;
+    const hubSession = destSession ? null : hubLive;
 
     // If several console sessions are live, AWS interrupts the switch-role with
     // its "Choose your session" picker. Leave a short-lived note saying which
     // identity this jump signs in as — the hub, not the destination — so
     // session-selector.js can pick that card and skip the wall.
-    const hubRoleName = String(hubArn).split("/").pop() || "";
-    await safeStorageOperation(async () => {
-      await chrome.storage.local.set({
-        hop_pending_hub: { account: profile.hub, role: hubRoleName, ts: Date.now() },
+    if (!destSession) {
+      await safeStorageOperation(async () => {
+        await chrome.storage.local.set({
+          hop_pending_hub: { account: profile.hub, role: hubRoleName, ts: Date.now() },
+        });
       });
-    });
+    }
     await recordJump(profileName, dest, label, profile.role);
 
     const labelPayload = { chain: { account: dest, role: profile.role, displayName, region } };
@@ -7828,8 +8468,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     // navigations, so the group persists through the hub sign-in, the Switch
     // Role page, and the destination console — the jumped session is grouped
     // just like a normal sign-in (the SW ignores this when mode is "off").
+    // Not for a new-tab jump: this tab stays the role picker.
     try {
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+      if (!newTab && chrome && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({
           type: "hop_group_tab",
           account: dest,
@@ -7844,13 +8485,28 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     }
 
     closeJumpPopover();
+    const where = newTab ? " (new tab)" : "";
+    // Already live: open that session. The pending hand-off stashed above
+    // labels the tab and lands it on the chosen region and service.
+    if (destSession) {
+      showToast(`Opening your live session in ${dest}${where}…`, "info", CONFIG.TOAST_DURATION);
+      openLiveUrl(buildDestination("", null, region, destSession.differentiator), newTab);
+      return;
+    }
+    labelPayload.tok = await mintSigninToken();
+    // Hub live: land in it with the chain payload, which sends the decorator
+    // straight on to Switch Role — no second hub sign-in.
+    if (hubSession) {
+      showToast(`Switching into ${dest} from your live ${profile.name} hub session${where}…`, "info", CONFIG.TOAST_DURATION);
+      openLiveUrl(buildDestination("", labelPayload, region, hubSession.differentiator), newTab);
+      return;
+    }
     showToast(
-      `Signing in to the ${profile.name} hub, then switching into ${dest}…`,
+      `Signing in to the ${profile.name} hub, then switching into ${dest}${where}…`,
       "info",
       CONFIG.TOAST_DURATION
     );
-    labelPayload.tok = await mintSigninToken();
-    signInToRole(hubArn, buildDestination("", labelPayload, region), { newTab: false });
+    signInToRole(hubArn, buildDestination("", labelPayload, region), { newTab });
   };
 
   const refreshJumpOrgs = () => {
@@ -7897,6 +8553,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     // which walks every row on the page.
     if (!dests.length && !hadRows) {
       updateFilterRowVisibility("source");
+      // Still refit: an account rename lands here too.
+      fitListingWidth();
+      markLiveRows();
       return;
     }
     for (const dest of dests) {
@@ -7966,6 +8625,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     if (document.body.classList.contains("tm_filters_active")) {
       FilterManager.applyFilters(true);
     }
+    fitListingWidth();
+    markLiveRows();
   };
   // One-time graduation: popover ★ pins predate Jump Destinations and were
   // the same idea in embryo — fold them in (label kept, name left for the
@@ -8033,13 +8694,6 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     return (hit && hit.label) || "";
   };
 
-  let sessionsCache = [];
-  let sessionsLimit = 5;
-  // Whether sessionsCache reflects a successful read — Launch Sets only warns
-  // about the session limit when the count is real.
-  let sessionsKnown = false;
-  let sessionsPopoverOpen = false;
-
   const closeSessionsPopover = () => {
     $("#tm_sessions_popover").css("display", "none");
     $("#tm_sessions_scrim").css("display", "none");
@@ -8064,56 +8718,70 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $("#tm_sess_signout_all")
       .text(`Sign out all sessions (${sessionsCache.length})`)
       .show();
-    const idleCount = sessionsCache.filter((s) => !s.tabs).length;
+    // A jump is one row: its hub has no tab of its own (the tab moved on to
+    // the destination) but isn't idle while the jumped session has tabs, and
+    // the two sign out together — as in the Open-set dialog.
+    const units = groupSessions(sessionsCache, AssumeProfilesManager.all(), directRoleKeys());
+    const idleCount = units.filter((u) => !u.tabs).reduce((n, u) => n + u.ids.length, 0);
     if (idleCount) $("#tm_sess_signout_idle").text(`Sign out idle (${idleCount})`).show();
     else $("#tm_sess_signout_idle").hide();
     const header =
       `<div class="tm_sess_th"><span>Label</span><span>Account &middot; role</span>` +
       `<span>Region</span><span>Tab group</span><span>Started</span><span>Expires</span><span>Tabs</span><span></span></div>`;
+    const startedOf = (u) => Math.min(...u.sessions.map((m) => m.authTime || Infinity));
     // Oldest first: the session you're most likely done with sits at the top.
-    const body = sessionsCache
+    const body = units
       .slice()
-      .sort((a, b) => (a.authTime || 0) - (b.authTime || 0))
-      .map((s) => {
-        const accountName =
-          AccountNamesManager.nameFor(s.account) || s.alias || s.account || "unknown";
-        const who = s.role ? `${accountName} · ${s.role}` : accountName;
+      .sort((a, b) => startedOf(a) - startedOf(b))
+      .map((u) => {
+        // A jump's destination carries its label, region and tab group; the
+        // hub has no tab of its own.
+        const main = (u.hub && u.sessions.find((m) => m !== u.hub)) || u.sessions[0];
         // AWS has no per-session label of its own — the ARN's session name is
         // just the SAML RoleSessionName (your email), identical on every row and
         // so worth nothing as a column. Show only the label you gave the jump
         // that created this session; the session name stays in the row tooltip.
-        const label = jumpLabelFor(s.account, s.role);
-        const session = label || "—";
-        const regions = (s.regions || []).join(", ") || "—";
+        const label = jumpLabelFor(main.account, main.role);
+        const who = `${u.hub ? "⤳ " : ""}${unitWho(u)}`;
+        const regions = [...new Set(u.sessions.flatMap((m) => m.regions || []))].join(", ") || "—";
+        const groupTitle = (u.sessions.find((m) => m !== u.hub && m.group) || {}).group || "";
         // Chrome tab-group titles often start with an emoji run straight into
         // the first word ("✅Claude"); space it so it reads as a label.
-        const group = (s.group || "").replace(/^(\p{Extended_Pictographic}+)(?=\S)/u, "$1 ") || "—";
+        const group = groupTitle.replace(/^(\p{Extended_Pictographic}+)(?=\S)/u, "$1 ") || "—";
+        const started = startedOf(u);
         // Every session is signable-out from here: the picker page is not itself
         // inside a console session, so there is no "current" one to protect —
         // and no row is singled out, which would only imply otherwise.
-        const action = `<span class="tm_sess_del" role="button" tabindex="-1" title="Sign this session out and close its tabs" aria-label="Sign out and close its tabs">&#10005;</span>`;
+        const what = u.hub ? "Sign out this jump" : "Sign this session out";
+        const action = `<span class="tm_sess_del" role="button" tabindex="-1" title="${u.tabs ? `${what} and close its ${plural(u.tabs, "tab")}` : what}" aria-label="${what}">&#10005;</span>`;
         // Title on the ROW, not just the truncating cells, so hovering anywhere
         // along it shows the full detail — the columns that never truncate
         // (started, expires, tabs) would otherwise be dead to the pointer.
         const rowTitle = [
           label ? `Session: ${label}` : "",
-          `Account: ${s.account}${accountName && accountName !== s.account ? ` (${accountName})` : ""}`,
-          s.role ? `Role: ${s.role}` : "",
-          s.sessionName ? `Signed in as: ${s.sessionName}` : "",
-          (s.regions || []).length ? `Region: ${(s.regions || []).join(", ")}` : "",
-          s.group ? `Tab group: ${s.group}` : "",
+          u.hub ? `Jump through ${sessionWho(u.hub)}` : "",
+          ...u.sessions.filter((m) => m !== u.hub).map((m) => {
+            const name = AccountNamesManager.nameFor(m.account) || m.alias || "";
+            return [
+              `Account: ${m.account}${name && name !== m.account ? ` (${name})` : ""}`,
+              m.role ? `Role: ${m.role}` : "",
+            ].filter(Boolean).join("\n");
+          }),
+          main.sessionName ? `Signed in as: ${main.sessionName}` : "",
+          regions !== "—" ? `Region: ${regions}` : "",
+          groupTitle ? `Tab group: ${groupTitle}` : "",
         ]
           .filter(Boolean)
           .join("\n");
         return (
-          `<div class="tm_sess_tr" data-diff="${escapeHtml(s.differentiator)}" title="${escapeHtml(rowTitle)}">` +
-            `<span class="tm_sess_name">${escapeHtml(session)}</span>` +
+          `<div class="tm_sess_tr" data-ids="${escapeHtml(u.ids.join(","))}" data-tabs="${u.tabs}" title="${escapeHtml(rowTitle)}">` +
+            `<span class="tm_sess_name">${escapeHtml(label || "—")}</span>` +
             `<span class="tm_sess_name">${escapeHtml(who)}</span>` +
             `<span class="tm_sess_meta">${escapeHtml(regions)}</span>` +
             `<span class="tm_sess_meta">${escapeHtml(group)}</span>` +
-            `<span class="tm_sess_meta">${escapeHtml(describeAge(s.authTime))} ago</span>` +
-            `<span class="tm_sess_meta">${escapeHtml(describeRemaining(s.expiry))}</span>` +
-            `<span class="tm_sess_meta">${escapeHtml(String(s.tabs || 0))}</span>` +
+            `<span class="tm_sess_meta">${Number.isFinite(started) ? `${escapeHtml(describeAge(started))} ago` : "—"}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(describeRemaining(u.expiry))}</span>` +
+            `<span class="tm_sess_meta">${escapeHtml(String(u.tabs || 0))}</span>` +
             action +
           `</div>`
         );
@@ -8142,6 +8810,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
           sessionsLimit = res.limit || 5;
           sessionsKnown = true;
+          markLiveRows();
+          if (setPreview) renderSetBar(LaunchSetsManager.find(setPreview.id));
           if (!sessionsCache.length && !sessionsPopoverOpen) {
             $section.hide();
             return;
@@ -9573,7 +10243,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Save a search as a Shortcut",
             `Built a query and filter set you'll want again? Click <strong>☆ save as shortcut</strong> in the search card and name it — it becomes a chip in the <em>Shortcuts</em> row, and one click re-applies the whole view (search <em>and</em> filters). Remove one with its <strong>✕</strong> — click to arm, click again to confirm.`)}
           ${sectionHTML("Launch Sets",
-            `Open every console a ticket needs in one click. Search for the ticket (or filter to its accounts) and click <strong>↗ save as set</strong> in the search card — or use <strong>+ New set</strong> in the <em>Sets</em> column, which can also save the <strong>console tabs you have open</strong>. Each tab keeps its own role, service and region, and one role can have several tabs (EC2 and IAM side by side): click a set's name, then <strong>Edit</strong>, or manage every set from <strong>Launch Sets</strong> in the side menu, where you can also <strong>archive</strong> a set you're done with (it leaves the column but stays saved, ready to restore). Drag them into order there; the column shows them in that order, as many as fit beside the filters; <strong>All sets</strong> lists the rest. <strong>Open</strong> signs every tab in at once, next to this page, grouped the way your <strong>Tabs</strong> setting says (by role, by org or off); in <em>Custom tag</em> mode they gather in one group named after the set. Sensitive roles, roles missing from today's list and AWS's five-session limit get one confirmation for the whole set.`)}
+            `Open every console a ticket needs in one click. Search for the ticket (or filter to its accounts) and click <strong>↗ save as set</strong> in the search card — or use <strong>+ New set</strong> in the <em>Sets</em> column, which can also save the <strong>console tabs you have open</strong>. Each tab keeps its own role, service and region, and one role can have several tabs (EC2 and IAM side by side): click a set's name, then <strong>Edit</strong>, or manage every set from <strong>Launch Sets</strong> in the side menu, where you can also <strong>archive</strong> a set you're done with (it leaves the column but stays saved, ready to restore). Drag them into order there; the column shows them in that order, as many as fit beside the filters; <strong>All sets</strong> lists the rest. <strong>Open</strong> signs every tab in at once, next to this page, grouped the way your <strong>Tabs</strong> setting says (by role, by org or off); in <em>Custom tag</em> mode they gather in one group named after the set. Sensitive roles, roles missing from today's list and AWS's five-session limit get one confirmation for the whole set — when a set needs more sessions than are free, it lists your live sessions to sign out and opens the set once there's room. Roles you're already signed in to open in that session instead of signing in again.`)}
           ${sectionHTML("Start view",
             `Have the picker open on a view every load. Open <em>Start View</em> in the side menu and pick one chip — <strong>★ Favorites</strong>, <strong>↻ Recent</strong>, one of your saved <em>Shortcuts</em>, or a <em>Tag</em>. The active choice is highlighted; <strong>Save current filters</strong> snapshots whatever you have on right now, and <strong>Clear</strong> removes it (your favorites stay put).`)}
           ${sectionHTML("Reorder by drag",
@@ -10422,6 +11092,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.TAB_GROUP_TAG]: (v) => typeof v === "string" && v.length <= 64,
         [SK.TAB_GROUP_MODE]: (v) => CONFIG.TAB_GROUP_MODES.includes(v),
         [SK.AWS_REGION]:   (v) => typeof v === "string" && isValidRegionCode(v),
+        [SK.PAGE_MAX_WIDTH]: (v) => typeof v === "string" && !!parsePageMaxWidth(v),
         [SK.HOMEPAGE_URL]: (v) =>
                               typeof v === "string" && v.length <= 512 &&
                               (v.trim() === "" || isSafeHttpUrl(v)),
@@ -10785,6 +11456,20 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
             " />
           </label>
 
+          <label style="display: block !important; margin-bottom: 14px !important;">
+            <span style="display: block !important; font-weight: 600 !important; color: #16191f !important; margin-bottom: 4px !important; font-size: 13px !important;">Maximum page width</span>
+            <input type="text" id="tm_gs_page_width" value="${sanitizeInput(pageMaxWidthCache)}" placeholder="${PAGE_MAX_WIDTH_DEFAULT}" style="
+                width: 140px !important; height: 32px !important; padding: 4px 8px !important;
+                border: 1px solid #ccc !important; border-radius: 4px !important;
+                font-size: 13px !important; box-sizing: border-box !important;
+            " />
+            <span id="tm_gs_page_width_err" style="display: none !important; color: #b02a37 !important; font-size: 12px !important; margin-top: 4px !important;">Enter a share of the window from 50% to 100%, or a width from 1100px to 5000px.</span>
+            <span style="display: block !important; color: #6c757d !important; font-size: 12px !important; margin-top: 4px !important;">
+              The page grows to fit your longest account and role names, up to this: a share
+              of the window (<code>90%</code>) or pixels (<code>1600px</code>). It's never narrower than 1100px.
+            </span>
+          </label>
+
           <div style="margin-bottom: 14px !important;">
             <div style="font-weight: 600 !important; color: #16191f !important; margin-bottom: 4px !important; font-size: 13px !important;">Sensitive-sign-in role keywords</div>
             <input type="text" id="tm_gs_signin_keywords" value="${sanitizeInput(signinConfirmRoleKeywordsCache.join(', '))}" placeholder="admin, root, breakglass" style="
@@ -10837,6 +11522,12 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       const rememberRegion = !!$m.find("#tm_gs_remember_region").prop("checked");
       const regionLock = !!$m.find("#tm_gs_region_lock").prop("checked");
       const homepage = ($("#tm_gs_homepage").val() || "").trim();
+      const pageMaxWidth = ($("#tm_gs_page_width").val() || "").trim() || PAGE_MAX_WIDTH_DEFAULT;
+      if (!parsePageMaxWidth(pageMaxWidth)) {
+        document.getElementById("tm_gs_page_width_err").style.setProperty("display", "block", "important");
+        document.getElementById("tm_gs_page_width").focus();
+        return;
+      }
       const keywordsRaw = ($("#tm_gs_signin_keywords").val() || "").trim();
       const signinRoleKeywords = keywordsRaw
         ? keywordsRaw.split(",").map((s) => s.trim()).filter(Boolean)
@@ -10846,8 +11537,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
       const prevRegion = awsRegionCache;
       const prevRemember = rememberRegionCache;
-      await GeneralSettingsManager.save({ region, rememberRegion, regionLock, homepage, signinRoleKeywords, signinTypeIds });
+      await GeneralSettingsManager.save({ region, rememberRegion, regionLock, homepage, pageMaxWidth, signinRoleKeywords, signinTypeIds });
       updateHomepageFooter();
+      applyPageWidthCap();
       close();
       // This changes what every row's region dropdown opens on, so the list has
       // to re-render — same reload path as a region change.
@@ -11368,6 +12060,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
 
   // Apply initial environment-based styling
   applyEnvironmentStyling();
+
+  fitListingWidth();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitListingWidth).catch(() => {});
 
   debug(`Added buttons to ${$(".tm_role_buttons").length} roles`);
 

@@ -614,6 +614,50 @@ export const normalizeLaunchSets = (raw) => {
 export const launchSetRoleCount = (set) =>
   new Set(((set && set.tabs) || []).map((t) => t.roleArn)).size;
 
+// The role picker's maximum page width, as typed in General Settings: a share
+// of the window ("90%") or pixels ("1600px"; a bare number over 100 means
+// pixels). The page grows to fit the longest names, up to this. Returns the
+// tidy text to show with its unit and value, or null when it isn't a usable
+// width (under half the window, or under the 1100px the page never goes
+// below).
+export const PAGE_MAX_WIDTH_DEFAULT = "90%";
+export const parsePageMaxWidth = (raw) => {
+  const m = String(raw ?? "").trim().toLowerCase().match(/^(\d{1,4})\s*(%|px)?$/);
+  if (!m) return null;
+  const value = Number(m[1]);
+  const unit = m[2] || (value <= 100 ? "%" : "px");
+  const ok = unit === "%" ? value >= 50 && value <= 100 : value >= 1100 && value <= 5000;
+  return ok ? { text: `${value}${unit}`, unit, value } : null;
+};
+
+// Where to cut a long name so its end stays visible: the listing keeps the
+// tail whole and shortens only the head ("cutspace-landi…payments-prod"),
+// because names that share a prefix differ at the end. The tail is the last
+// word or two — words break at - _ . / : spaces and at a lower-to-upper case
+// change — between 10 and 24 characters, else the last 12 characters. Names
+// of 18 characters or fewer aren't split ([name, ""]).
+const NAME_TAIL_MIN = 10;
+const NAME_TAIL_MAX = 24;
+export const splitNameTail = (name) => {
+  const s = String(name ?? "");
+  if (s.length <= 18) return [s, ""];
+  const sep = /[-_./:\s]/;
+  for (let i = s.length - 1; i > 0; i--) {
+    const wordStart =
+      (sep.test(s[i - 1]) && !sep.test(s[i])) || (/[a-z0-9]/.test(s[i - 1]) && /[A-Z]/.test(s[i]));
+    if (!wordStart) continue;
+    const tail = s.length - i;
+    if (tail < NAME_TAIL_MIN) continue;
+    if (tail <= NAME_TAIL_MAX) return [s.slice(0, i), s.slice(i)];
+    break;
+  }
+  return [s.slice(0, -12), s.slice(-12)];
+};
+
+// The session helpers live in src/shared/sessions.js, which the service
+// worker shares; re-exported here so the picker imports them like the rest.
+export { sessionRoleKey, jumpHubs, groupSessions, planSessionRoom } from "../shared/sessions.js";
+
 // Filter-row chip order: { group -> [chip id, ...] }, set by dragging in a
 // row's "show all" list. Only the order the user placed is stored; chips it
 // doesn't mention keep their natural place (orderByIds).

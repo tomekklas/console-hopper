@@ -32,6 +32,37 @@ export const isConsoleRelay = (url) => {
   }
 };
 
+// A tab reopened in a session that's already live goes straight to that
+// session's own console host — "{account}-{id}.{region}.console.aws.amazon.com"
+// (or the global "{account}-{id}.console…") — with no sign-in at all.
+const SESSION_HOST_RE = /^\d{12}-[a-z0-9]+\.(?:[a-z0-9-]+\.)?console\.aws\.amazon\.com$/;
+
+export const isSessionConsoleUrl = (url) => {
+  try {
+    const u = new URL(String(url || ""));
+    return u.protocol === "https:" && !u.username && !u.password && !u.port && SESSION_HOST_RE.test(u.hostname);
+  } catch (e) {
+    return false;
+  }
+};
+
+// A sign-in's landing URL (its RelayState, on a plain console host) moved onto
+// a live session's own host — how a role's extra tabs open in the session its
+// first tab signed in to, with no second sign-in. "" when it can't be.
+export const sessionRelayUrl = (relayUrl, differentiator) => {
+  if (!/^\d{12}-[a-z0-9]+$/.test(String(differentiator || ""))) return "";
+  try {
+    const u = new URL(String(relayUrl || ""));
+    if (u.protocol !== "https:" || !/^(?:[a-z0-9-]+\.)?console\.aws\.amazon\.com$/.test(u.hostname)) return "";
+    if (/^\d{12}-/.test(u.hostname)) return ""; // already on a session's host
+    u.hostname = `${differentiator}.${u.hostname}`;
+    const out = u.toString();
+    return isSessionConsoleUrl(out) ? out : "";
+  } catch (e) {
+    return "";
+  }
+};
+
 // Returns the cleaned [name, value] pairs for one tab, or null if the tab
 // can't be launched safely: it must carry a SAML response, exactly one role and
 // a RelayState that lands on an AWS console.

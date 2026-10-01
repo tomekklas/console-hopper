@@ -98,17 +98,30 @@ features.
   setting like any sign-in. Save one from a search (**↗ save as set** in the search card) or
   from the console tabs you already have open; sensitive roles, missing
   roles and the five-session limit get one confirmation for the whole set.
+  When a set needs more sessions than are free, that confirmation lists your
+  live sessions to sign out, and opens the set once there's room. Roles
+  you're already signed in to open in their live session rather than
+  signing in again.
 - **Sensitive-sign-in confirmation** — pops a confirmation modal for
   configurable role-name keywords (default: `admin`) or account types.
+- **Room for long names** — the page grows to fit your longest account and
+  role names, up to 90% of the window (General Settings → *Maximum page
+  width*). A name that still doesn't fit is shortened in the middle, keeping
+  the end that tells similar names apart, and shows in full on hover.
 - **New-tab sign-in** — ⌘/Ctrl-click, middle-click, or ⌘+Enter opens the
-  console in a new tab. A `Sign-in` side-menu option sets the default,
-  and the modifier inverts it.
+  console in a new tab, for ⤳ jumps too. A `Sign-in` side-menu option
+  sets the default, and the modifier inverts it.
 - **Active AWS sessions** — AWS allows five concurrent console sessions
   per browser profile and normally only tells you once you're stuck. A
   counter at the foot of the right column turns amber with one slot left
   and red when full; open it for every session's account, role, region,
   tab group, age, time left and open tabs — and sign any one of them out
-  (closing its console tabs) to free a slot. Session metadata only; cookie contents are never read.
+  (closing its console tabs) to free a slot; a jump's hub and the session
+  jumped through it are one row. A role you're already signed in to shows
+  **Open** instead of Sign In and opens that session rather than signing in
+  again (which would sign its tabs out). When a session ends on AWS's
+  side while its tabs are still open, their tab group turns grey and reads
+  "Ended · …". Session metadata only; cookie contents are never read.
 - **Clear AWS Sessions** — one click signs you out of all open AWS
   consoles by clearing AWS auth cookies (your console favourites and
   settings are kept).

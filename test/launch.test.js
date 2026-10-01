@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   isConsoleRelay,
   isSamlAction,
+  isSessionConsoleUrl,
   sanitizeLaunchFields,
+  sessionRelayUrl,
 } from "../src/shared/launch.js";
 
 const ARN = "arn:aws:iam::123456789012:role/ReadOnly";
@@ -75,5 +77,39 @@ describe("sanitizeLaunchFields", () => {
     expect(sanitizeLaunchFields([...fields(), ["a", 1]])).toBeNull();
     expect(sanitizeLaunchFields([...fields(), ["bad name", "x"]])).toBeNull();
     expect(sanitizeLaunchFields([...fields(), ["only-one"]])).toBeNull();
+  });
+});
+
+describe("isSessionConsoleUrl", () => {
+  it("accepts a live session's own console host", () => {
+    expect(isSessionConsoleUrl("https://123456789012-abcd1234.eu-central-1.console.aws.amazon.com/ec2/home#hop=x")).toBe(true);
+    expect(isSessionConsoleUrl("https://123456789012-abcd1234.console.aws.amazon.com/iam/home")).toBe(true);
+  });
+
+  it("rejects plain console hosts and anything that isn't AWS", () => {
+    expect(isSessionConsoleUrl("https://eu-central-1.console.aws.amazon.com/")).toBe(false);
+    expect(isSessionConsoleUrl("http://123456789012-abcd1234.eu-central-1.console.aws.amazon.com/")).toBe(false);
+    expect(isSessionConsoleUrl("https://123456789012-abcd1234.console.aws.amazon.com.evil.example/")).toBe(false);
+    expect(isSessionConsoleUrl("https://user@123456789012-abcd1234.console.aws.amazon.com/")).toBe(false);
+    expect(isSessionConsoleUrl("javascript:alert(1)")).toBe(false);
+    expect(isSessionConsoleUrl("")).toBe(false);
+  });
+});
+
+describe("sessionRelayUrl", () => {
+  const D = "858656722607-uampgezi";
+  it("moves a landing URL onto the session's host, keeping path and fragment", () => {
+    expect(sessionRelayUrl("https://us-east-1.console.aws.amazon.com/costmanagement/home#hop=abc", D))
+      .toBe("https://858656722607-uampgezi.us-east-1.console.aws.amazon.com/costmanagement/home#hop=abc");
+    expect(sessionRelayUrl("https://console.aws.amazon.com/iam/home", D))
+      .toBe("https://858656722607-uampgezi.console.aws.amazon.com/iam/home");
+  });
+
+  it("refuses anything that isn't a plain console URL or a session id", () => {
+    expect(sessionRelayUrl("https://evil.example/console.aws.amazon.com", D)).toBe("");
+    expect(sessionRelayUrl("http://us-east-1.console.aws.amazon.com/", D)).toBe("");
+    expect(sessionRelayUrl("https://111122223333-abcd.us-east-1.console.aws.amazon.com/", D)).toBe("");
+    expect(sessionRelayUrl("https://us-east-1.console.aws.amazon.com/", "not-a-session")).toBe("");
+    expect(sessionRelayUrl("", D)).toBe("");
   });
 });
