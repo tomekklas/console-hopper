@@ -3,7 +3,7 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
-## 1.7.1 — 2026-09-30
+## 1.8.0 — 2026-10-02
 
 ### Changed
 

@@ -1,7 +1,7 @@
 # Privacy Policy — Console Hopper
 
 **Effective date:** 19 May 2026
-**Last updated:** 29 September 2026
+**Last updated:** 2 October 2026
 
 This page explains what Console Hopper (the "extension") does and does
 not do with your data. The short version: **the extension does not
@@ -31,9 +31,9 @@ device**, using Chrome's `chrome.storage.local` API:
 - Your custom search shortcuts, organisations, environments, account
   types, role-name filters, and AWS service deep-links
 - A per-role memory of the last service dropdown you picked
-- Your AWS region preference, optional homepage link, and which
-  role-name keywords / account-type IDs should trigger the
-  sensitive-sign-in confirmation modal
+- Your AWS region preference, optional homepage link, maximum page
+  width, and which role-name keywords / account-type IDs should trigger
+  the sensitive-sign-in confirmation modal
 - A one-time flag indicating you've dismissed the first-run welcome
   screen
 - An optional "tab group tag" you typed into the toolbar for the
@@ -51,6 +51,17 @@ to show them to you; only the tabs you keep are saved, as above. When
 you sign a console session out from the sessions panel, the extension
 closes that session's AWS console tabs, matched by the session id in
 their address.
+
+To notice an AWS session that has ended while its tabs are still open,
+the extension compares the session id in your open AWS console tabs'
+addresses with the list of sessions AWS reports (see below) — when the
+role picker refreshes its count, or when you switch tabs while a grouped
+AWS console tab is open — and turns a tab group it made grey, with
+"Ended" in front of its name. In Chrome's in-memory
+`chrome.storage.session` store it keeps the ids of the tab groups it
+made and the original name and colour of any it marked, all discarded
+when the browser closes. When you open a role you're already signed in
+to, it opens a console tab in that session instead of signing in again.
 
 None of this data is transmitted to the extension's authors, to
 Google, to Amazon, or to any other third party. It is readable only
@@ -72,8 +83,10 @@ information, and only when you use **Launch Sets**. It is declared as
   feature leave it untouched.
 - **Why:** Chrome lets one click open one new window, so the sign-in
   page can't post itself into several new tabs. To open every tab of a
-  set at once, each new tab needs its own copy of the response to post
-  to AWS.
+  set at once, each new tab that signs in needs its own copy of the
+  response to post to AWS. Since version 1.8.0, a tab for a role you're
+  already signed in to, and a role's second and later tabs, open in the
+  existing session and are given no copy at all.
 - **How it's handled:** the response is passed to the extension's
   background worker and held in Chrome's in-memory
   `chrome.storage.session` store — one single-use copy per tab, readable
@@ -95,8 +108,8 @@ The extension does **not**:
   controlled by the authors, or to any third party. The extension talks
   only to AWS itself, and only for two things: reading the list of AWS
   console sessions open in your browser (so it can show you how many of
-  AWS's five slots are in use), and signing a session out when you click
-  the ✕ next to it. Both are ordinary AWS endpoints, sent from your
+  AWS's five slots are in use, and notice one that has ended), and
+  signing a session out when you ask it to. Both are ordinary AWS endpoints, sent from your
   browser with your existing AWS cookies, exactly as the AWS console
   itself would
 - Use cookies, fingerprinting, analytics, error reporting, or any
@@ -122,10 +135,10 @@ The extension does **not**:
 | Permission | Why it's requested |
 |---|---|
 | `storage` | To persist your settings (themes, favourites, filters …) locally in `chrome.storage.local`. |
-| `tabs` | To place a newly opened AWS console tab into the correct Chrome tab group; to open a Launch Set's tabs next to the role picker; to list your open AWS console tabs when you click **Save open tabs**; and to close a console session's tabs when you sign that session out. Only AWS console tab addresses are read, and never transmitted. |
-| `tabGroups` | To create and update Chrome tab groups that visually cluster AWS console tabs by account, role, or organisation. |
+| `tabs` | To place a newly opened AWS console tab into the correct Chrome tab group; to open a Launch Set's tabs next to the role picker; to open a console tab in a session you're already signed in to; to list your open AWS console tabs when you click **Save open tabs**; to notice a tab group whose AWS session has ended; and to close a console session's tabs when you sign that session out. Only AWS console tab addresses are read, and never transmitted. |
+| `tabGroups` | To create and update Chrome tab groups that visually cluster AWS console tabs by account, role, or organisation, and to grey out (and put "Ended" in front of the name of) a group it made whose AWS session has ended. |
 | `cookies` | To delete AWS authentication cookies when you click **Clear AWS Sessions**, signing you out of all AWS consoles at once. The extension only deletes these cookies — it never reads their contents or sends them anywhere. |
-| Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, clear AWS session cookies, and call AWS's own session endpoints on `signin.aws.amazon.com` — one to list the console sessions open in your browser, one to sign a single session out when you ask. Requests go only to AWS, from your browser, with the cookies you already have. |
+| Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, clear AWS session cookies, and call AWS's own session endpoints on `signin.aws.amazon.com` — one to list the console sessions open in your browser (and notice ones that have ended), one to sign a session out when you ask. Requests go only to AWS, from your browser, with the cookies you already have. |
 
 ## Sharing
 
