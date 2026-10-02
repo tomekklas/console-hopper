@@ -2255,16 +2255,27 @@ import {
   const FORM_SIDE_PADDING_PX = 40;
   const applyPageWidthCap = () => {
     const width = parsePageMaxWidth(pageMaxWidthCache) || parsePageMaxWidth(PAGE_MAX_WIDTH_DEFAULT);
-    const outer = width.unit === "%"
-      ? Math.floor((document.documentElement.clientWidth * width.value) / 100)
-      : width.value;
+    // A page laid out while it isn't shown (a hidden pane, a prerender) reads
+    // a width of 0: leave the cap alone until there's a real one.
+    const viewport = document.documentElement.clientWidth || window.innerWidth;
+    if (width.unit === "%" && !viewport) return;
+    const outer = width.unit === "%" ? Math.floor((viewport * width.value) / 100) : width.value;
     document.documentElement.style.setProperty("--tm-page-cap", `${outer - FORM_SIDE_PADDING_PX}px`);
   };
-  // A share of the window follows the window.
-  let capResizeFrame = 0;
-  window.addEventListener("resize", () => {
-    cancelAnimationFrame(capResizeFrame);
-    capResizeFrame = requestAnimationFrame(applyPageWidthCap);
+  // A share of the window follows the window, and a page first laid out
+  // while hidden is measured again once it's shown (fitListingWidth, below,
+  // needs a row on screen to measure from).
+  let refitFrame = 0;
+  const refitLayout = () => {
+    cancelAnimationFrame(refitFrame);
+    refitFrame = requestAnimationFrame(() => {
+      applyPageWidthCap();
+      fitListingWidth();
+    });
+  };
+  window.addEventListener("resize", refitLayout);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refitLayout();
   });
 
   const fitListingWidth = () => {
