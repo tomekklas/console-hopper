@@ -3,7 +3,7 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
-## 1.9.0 — 2026-10-03
+## 1.8.0 — 2026-10-03
 
 ### Added
 
@@ -29,44 +29,13 @@ All notable changes to Console Hopper are listed here. Dates are in
   **Open** on a signed-in role, making room for a set) need AWS
   multi-session support.
 
-### Fixed
-
-- Picking a landing service on a row shows its "… selected — click Sign
-  In" note again; the lookup behind it used a selector the picker's DOM
-  helper doesn't support, so it failed quietly.
-- Toasts that appear together stack instead of overlapping.
-- **Keep console tabs in their region** works in the first five minutes
-  after a sign-in too. Every sign-in and Launch Set leaves a hand-off for
-  the tab label, and the region lock mistook it for a jump steering its own
-  landing, so it stood aside: a tab that went to IAM and back in that time
-  stayed in the region AWS picked. Only a jump's hand-off (which carries
-  the region it asked for) holds the lock off now.
-- A jump destination saved from the Jump popover ("Save as a named
-  destination") shows as a ⤳ row straight away, not after the next reload.
-- A console tab's title keeps the account prefix once. Billing and Cost
-  Management builds its title from the previous one, so the prefix used to
-  show up twice ("[123…] Billing … | [123…] Billing …").
-- **Account Names** and **Tags** say which lines they can't read (say,
-  `123456789012=Name`, or a full role ARN) and save nothing until they're
-  fixed or removed. Those lines used to vanish on Save, under a "saved"
-  toast.
-- The open-set dialog marks **Frees enough** only when it tells the rows
-  apart — not on every row when any one sign-out would do.
-- Example tags in the Tags dialog and the help no longer use vendor names.
-- Help & About: the Active AWS sessions section describes the panel as it
-  is (Sign out idle / all, Open on a signed-in role, a jump as one row)
-  and the multi-session requirement, and no longer mentions a "you"
-  marker the panel doesn't have.
-
-## 1.8.0 — 2026-10-02
-
 ### Changed
 
 - **Opening a set that won't fit in AWS's five sessions.** The confirmation
   lists your live sessions, each with its own **Sign out** button, plus
   **Sign out all**. A session with open tabs asks once more ("Close 2
   tabs?"). A row that makes enough room on its own is marked **Frees
-  enough**, and a session the set itself opens in has no Sign out (signing it
+  enough** (unless every row would), and a session the set itself opens in has no Sign out (signing it
   out frees nothing). **Open** stays disabled until there's room for the
   whole set, and says how many sessions to sign out first. A set with more roles than AWS
   allows sessions says so and asks you to split it. This replaces *Manage
@@ -143,6 +112,30 @@ All notable changes to Console Hopper are listed here. Dates are in
   which AWS turns away once all five sessions are in use, so a set that
   filled the last slots lost those tabs. If the first tab never reaches the
   console, the rest are dropped and the picker says so.
+- Picking a landing service on a row shows its "… selected — click Sign
+  In" note again; the lookup behind it used a selector the picker's DOM
+  helper doesn't support, so it failed quietly.
+- Toasts that appear together stack instead of overlapping.
+- **Keep console tabs in their region** works in the first five minutes
+  after a sign-in too. Every sign-in and Launch Set leaves a hand-off for
+  the tab label, and the region lock mistook it for a jump steering its own
+  landing, so it stood aside: a tab that went to IAM and back in that time
+  stayed in the region AWS picked. Only a jump's hand-off (which carries
+  the region it asked for) holds the lock off now.
+- A jump destination saved from the Jump popover ("Save as a named
+  destination") shows as a ⤳ row straight away, not after the next reload.
+- A console tab's title keeps the account prefix once. Billing and Cost
+  Management builds its title from the previous one, so the prefix used to
+  show up twice ("[123…] Billing … | [123…] Billing …").
+- **Account Names** and **Tags** say which lines they can't read (say,
+  `123456789012=Name`, or a full role ARN) and save nothing until they're
+  fixed or removed. Those lines used to vanish on Save, under a "saved"
+  toast.
+- Example tags in the Tags dialog and the help no longer use vendor names.
+- Help & About: the Active AWS sessions section describes the panel as it
+  is (Sign out idle / all, Open on a signed-in role, a jump as one row)
+  and the multi-session requirement, and no longer mentions a "you"
+  marker the panel doesn't have.
 
 ## 1.7.0 — 2026-09-29
 

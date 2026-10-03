@@ -40,23 +40,6 @@ gives every row a star, a service deep-link, and a one-click sign-in,
 and gives every open console tab a colour-coded favicon plus an
 account name in the title.
 
-NEW IN 1.9.0
-
-• Room before you sign in — signing in to a role, or jumping to an
-account, when all five AWS sessions are in use now lists your sessions
-to sign out first (a hub a jump goes through is kept), instead of
-AWS's "Session limit reached" page in the new tab.
-• Multi-session off? It says so — Console Hopper's session features
-(the session counter, Open on a role you're already signed in to,
-making room for a Launch Set) need AWS multi-session support, which
-AWS leaves off until you turn it on. When it's off, the counter reads
-"Multi-session is off" and shows how to turn it on, instead of showing
-nothing.
-• Fixes — console tabs stay in their region in the first minutes after
-a sign-in too; Account Names and Tags point out lines they can't read
-instead of dropping them; a tab title keeps its account prefix once;
-toasts stack instead of overlapping.
-
 NEW IN 1.8.0
 
 • Already signed in? It opens instead — a role you're already signed
@@ -72,6 +55,10 @@ on its own; a hub and the sessions jumped through it are one row), and
 Open stays off until the whole set fits. A set whose roles are all
 signed in opens from any role picker page, however long it has been
 open.
+• Room before you sign in — signing in to a role, or jumping to an
+account, when all five AWS sessions are in use now lists your sessions
+to sign out first (a hub a jump goes through is kept), instead of
+AWS's "Session limit reached" page in the new tab.
 • Long names fit — the role picker grows to fit your longest account
 and role names, up to 90% of the window (General Settings → Maximum
 page width). A name that still doesn't fit is shortened in the middle,
@@ -80,11 +67,21 @@ you hover it.
 • Ended sessions — when an AWS session ends while its tabs are still
 open, the tab group Console Hopper made for it turns grey and reads
 "Ended · …", so the tab strip matches what's really signed in.
+• Multi-session off? It says so — Console Hopper's session features
+(the session counter, Open on a role you're already signed in to,
+making room for a Launch Set) need AWS multi-session support, which
+AWS leaves off until you turn it on. When it's off, the counter reads
+"Multi-session is off" and shows how to turn it on, instead of showing
+nothing.
 • Jumps follow the new-tab rule — ⌘/Ctrl-click or middle-click on a
 jump opens it in a new tab, like any role.
 • The sessions panel shows a jump and its hub as one row and signs
 them out together; "Sign out idle" no longer counts a hub as idle
 while its jumps are in use.
+• Fixes — console tabs stay in their region in the first minutes after
+a sign-in too; Account Names and Tags point out lines they can't read
+instead of dropping them; a tab title keeps its account prefix once;
+toasts stack instead of overlapping.
 
 NEW IN 1.7.0
 
@@ -583,7 +580,7 @@ own Region. Page content is neither read nor transmitted.
       for the new uses (open in a live session, mark ended groups, session
       list read on tab switch); PRIVACY.md updated 2 October 2026.
 - [ ] Reload the final 1.8.0 build; footer reads v1.8.0.
-- [x] 1.9.0: the sessions chip reads "Multi-session is off" (with how to
+- [x] 1.8.0: the sessions chip reads "Multi-session is off" (with how to
       turn it on, and Don't show again) when AWS lists no sessions while
       console tabs are on plain hosts; checked on the harness in light and
       dark, through each transition (sessions appear, read fails, hidden).
@@ -594,16 +591,17 @@ own Region. Page content is neither read nor transmitted.
       and the chip reads "Multi-session is off". The menu item is "Turn on
       multi-session support"; turning it on moves the live session onto a
       session host and the chip goes back to "1 of 5 sessions".
-- [x] 1.9.0 verified live (mock-SAML, real Chrome, 2026-10-03): v1.9.0
-      footer; ⌘-click sign-in with service + region; jump through a hub
-      that wasn't live; set at 4/5 → dialog, two sign-outs, 4 tabs, a
-      role's second tab in its session, hub and jump never restarted;
-      Open at 5/5 (role and jump); a single sign-in at 5/5 → the new room
-      dialog → one sign-out → signed in; region lock corrects IAM → EC2
-      within a minute of a sign-in; Cost Management title has one prefix;
-      ended group greyed; Save open tabs lists real tabs; ✕ closed 3 tabs;
-      Clear AWS sessions signed everything out and left multi-session on.
-- [x] Reload the final 1.9.0 build; footer reads v1.9.0.
+- [x] 1.8.0 verified live (mock-SAML, real Chrome, 2026-10-03, built as
+      1.9.0 before the store-version rename); ⌘-click sign-in with
+      service + region; jump through a hub that wasn't live; set at 4/5
+      → dialog, two sign-outs, 4 tabs, a role's second tab in its
+      session, hub and jump never restarted; Open at 5/5 (role and
+      jump); a single sign-in at 5/5 → the new room dialog → one
+      sign-out → signed in; region lock corrects IAM → EC2 within a
+      minute of a sign-in; Cost Management title has one prefix; ended
+      group greyed; Save open tabs lists real tabs; ✕ closed 3 tabs;
+      Clear AWS sessions signed everything out and left multi-session
+      on.
 - [x] Five 1280×800 screenshots in `store-assets/`, still current for 1.8.0
       (it adds to the UI rather than changing what they show); reshot for 1.7.0
       (main with Sets column + one-line rows, Launch Sets panel, Edit set,
