@@ -1,9 +1,9 @@
-CONSOLE HOPPER 1.8.1 — CHROME WEB STORE SUBMISSION
+CONSOLE HOPPER 1.9.0 — CHROME WEB STORE SUBMISSION
 Paste-ready plain text. One block per dashboard field, de-wrapped, no
 markdown. The Detailed description field is the separate, already
 paste-ready file in this folder: detailed-description.txt
 
-Changed from 1.8.0: the detailed description (NEW IN 1.8.1 section and
+Changed from 1.8.0: the detailed description (NEW IN 1.9.0 section and
 one sentence under Active AWS sessions) and the tabs justification (one
 clause about multi-session). Every other field is unchanged.
 

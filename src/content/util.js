@@ -133,6 +133,20 @@ export const parseAccountNameLines = (text) => {
   return out;
 };
 
+// 1-based numbers of the lines the parser above would drop: no colon, or not
+// a 12-digit id before it. A valid id with nothing after the colon is fine —
+// it just sets no name.
+export const badAccountNameLines = (text) => {
+  const bad = [];
+  String(text || "").split("\n").forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (!line) return;
+    const sep = line.indexOf(":");
+    if (sep === -1 || !/^\d{12}$/.test(line.slice(0, sep).trim())) bad.push(i + 1);
+  });
+  return bad;
+};
+
 export const formatAccountNameLines = (map) =>
   Object.entries(map && typeof map === "object" ? map : {})
     .map(([id, name]) => `${id}: ${name}`)
@@ -194,6 +208,19 @@ export const parseAccountTagLines = (text) => {
     if (tags.length) out[id] = normalizeTagList([...(out[id] || []), ...tags]);
   }
   return out;
+};
+
+// 1-based numbers of the lines parseAccountTagLines would drop: no colon, or
+// no valid account (or account/Role) key before it.
+export const badAccountTagLines = (text) => {
+  const bad = [];
+  String(text || "").split("\n").forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (!line) return;
+    const sep = line.indexOf(":");
+    if (sep === -1 || !isTagKey(line.slice(0, sep).trim())) bad.push(i + 1);
+  });
+  return bad;
 };
 
 export const formatAccountTagLines = (map) =>

@@ -14,9 +14,11 @@ import {
   normalizeRegionList,
   isValidRegionCode,
   parseAccountNameLines,
+  badAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
   parseAccountTagLines,
+  badAccountTagLines,
   formatAccountTagLines,
   normalizeAccountTags,
   migrateAccountTags,
@@ -1859,7 +1861,7 @@ import {
   };
 
   // Tags: free-text labels attached to one account + role combination
-  // ("123456789012/Admin") so it can be found by concept (e.g. "palo alto" or a
+  // ("123456789012/Admin") so it can be found by concept (e.g. "firewall team" or a
   // ticket id), not just by name. A tag shows on — and edits from — only that
   // role's row(s).
   const AccountTagsManager = {
@@ -2713,7 +2715,7 @@ import {
     const accountName = $role.find(".tm_account_name").text().toLowerCase();
     const accountId = $role.find(".tm_account_id").text().toLowerCase();
     const roleName = $role.find(".tm_role_name").text().toLowerCase();
-    // Tags join the searchable text, so "palo alto" finds a tagged role even
+    // Tags join the searchable text, so "firewall team" finds a tagged role even
     // when the name/id/role don't contain it. Tags belong to the account + role.
     const tagKey = $role.find(".tm_tag_chip").attr("data-tag-key") || "";
     const rowTagList = AccountTagsManager.tagsFor(tagKey);
@@ -4165,7 +4167,12 @@ import {
   // count (signing sessions out from the list changes it) and how many were
   // signed out. With too few free sessions, the dialog lists the live ones to
   // sign out, and Open stays off until the whole set fits.
-  const confirmLaunchSet = (set, ready, missing, sensitive, initialRoom) =>
+  //
+  // A single sign-in or jump that won't fit reuses it (see makeRoomFor), so
+  // `opts` can replace the set's wording: kicker (the small heading), subject
+  // (HTML in place of the role list), confirmText, goal ("Sign out 1 session
+  // to <goal>") and keptNote (a kept session's "<set> opens in it").
+  const confirmLaunchSet = (set, ready, missing, sensitive, initialRoom, opts = {}) =>
     new Promise((resolve) => {
       let room = initialRoom;
       let signedOut = 0;
@@ -4199,6 +4206,7 @@ import {
       }).join("");
 
       const rolesHTML = () => {
+        if (opts.subject) return opts.subject;
         const reuse = room ? reuseMapFor(room.plan) : new Map();
         return [...byRole].map(([roleArn, tabs]) => {
           const l = roleLabelFor(roleArn);
@@ -4219,18 +4227,22 @@ import {
         const kept = new Set(room.plan.keep.values());
         listUnits = groupSessions(room.sessions, AssumeProfilesManager.all(), directRoleKeys());
         if (!listUnits.length) return `<div class="tm_setopen_sess_empty">No live sessions.</div>`;
+        // What signing each row out actually frees. A session the set opens
+        // in frees nothing: its role would just need a new one instead.
+        const freesOf = listUnits.map((u) => u.sessions.filter((m) => !kept.has(m)).length);
+        // "Frees enough" singles out the rows that make room on their own —
+        // noise when every row with a Sign out does.
+        const markEnough = short() && freesOf.some((f) => f > 0 && f < room.plan.deficit);
         const rows = listUnits.map((u, i) => {
           const inSet = u.sessions.some((m) => kept.has(m));
-          // What signing this row out actually frees. A session the set opens
-          // in frees nothing: its role would just need a new one instead.
-          const frees = u.sessions.filter((m) => !kept.has(m)).length;
+          const frees = freesOf[i];
           const meta = [
             u.hub ? `jump · ${plural(u.sessions.length, "session")}` : "",
             u.tabs ? plural(u.tabs, "tab") : "idle",
             timeLeft(u.expiry),
-            inSet ? `${set.name} opens in it` : "",
+            inSet ? opts.keptNote || `${set.name} opens in it` : "",
           ].filter(Boolean).join(" · ");
-          const enough = short() && frees >= room.plan.deficit
+          const enough = markEnough && frees >= room.plan.deficit
             ? ` ${badge("Frees enough", "enough")}`
             : "";
           const button = frees
@@ -4260,8 +4272,8 @@ import {
         }
         if (!roomShown()) return "";
         const head = short()
-          ? `<strong>Not enough free AWS sessions.</strong> ${name} needs ${plural(plan.fresh.length, "new session")} and ${plan.free} ${plan.free === 1 ? "is" : "are"} free. Sign out ${plural(plan.deficit, "session")} to open it.`
-          : `<strong>Room for every role now.</strong>`;
+          ? `<strong>Not enough free AWS sessions.</strong> ${name} needs ${plural(plan.fresh.length, "new session")} and ${plan.free} ${plan.free === 1 ? "is" : "are"} free. Sign out ${plural(plan.deficit, "session")} to ${escapeHtml(opts.goal || "open it")}.`
+          : `<strong>${opts.subject ? "There's room now." : "Room for every role now."}</strong>`;
         return `<div class="tm_setopen_room${short() ? "" : " tm_setopen_room_ok"}"><div class="tm_setopen_room_head">${head}</div>${sessionsListHTML()}</div>`;
       };
 
@@ -4282,7 +4294,7 @@ import {
               border-top: 6px solid ${accent} !important; box-shadow: 0 8px 32px rgba(0,0,0,0.25) !important;
               font-size: 13.5px !important; color: #16191f !important;
           ">
-            <div style="font-size: 12px !important; font-weight: 600 !important; letter-spacing: 1px !important; text-transform: uppercase !important; color: ${accent} !important; margin-bottom: 8px !important;">Open set · ${escapeHtml(set.name)}</div>
+            <div style="font-size: 12px !important; font-weight: 600 !important; letter-spacing: 1px !important; text-transform: uppercase !important; color: ${accent} !important; margin-bottom: 8px !important;">${escapeHtml(opts.kicker || `Open set · ${set.name}`)}</div>
             ${headline}
             <div class="tm_setopen_roles"></div>
             <div class="tm_setopen_roombox"></div>
@@ -4292,7 +4304,7 @@ import {
                   padding: 7px 14px !important; border: 1px solid ${danger ? "#dc3545" : "#0073bb"} !important;
                   background: ${danger ? "#dc3545" : "#0073bb"} !important; color: white !important; border-radius: 4px !important;
                   cursor: pointer !important; font-weight: 600 !important; font-size: 13px !important;
-              ">Open ${plural(ready.length, "tab")}</button>
+              ">${escapeHtml(opts.confirmText || `Open ${plural(ready.length, "tab")}`)}</button>
             </div>
           </div>
         </div>`);
@@ -4389,17 +4401,38 @@ import {
       }
     });
 
+  // A single sign-in or jump that needs more sessions than AWS has free gets
+  // the Open-set dialog's list of sessions to sign out, its button off until
+  // there's room, rather than AWS's "Session limit reached" page in the new
+  // tab. `ready` is the roles it signs in to ({ roleArn }); one with a live
+  // session counts as kept. The chip's count decides first, so an ordinary
+  // sign-in doesn't wait on AWS; a fresh read confirms before anything is
+  // shown. Resolves null on cancel, else { shown } — with no count to go on
+  // (multi-session off, worker silent) it simply lets the sign-in go ahead.
+  const makeRoomFor = async (ready, opts) => {
+    if (!sessionsKnown) return { shown: false };
+    const keys = ready.map((t) => sessionRoleKey(t.roleArn));
+    if (planSessionRoom(keys, sessionsCache, sessionsLimit || 5).deficit <= 0) return { shown: false };
+    const live = await readLiveSessions();
+    if (!live) return { shown: false };
+    const room = planRoom(ready, live);
+    if (room.plan.deficit <= 0) return { shown: false };
+    const choice = await confirmLaunchSet({ name: opts.name }, ready, [], [], room, opts);
+    return choice ? { shown: true } : null;
+  };
+
   let launchInFlight = false;
 
   // AWS accepts a sign-in page for 5 minutes. Only a set with a tab that
   // signs in needs it fresh — one whose roles are all live opens in their
   // sessions — and it's checked before the dialog too, so a page too old to
   // use doesn't cost the user their sessions.
-  const samlTooOld = (set) => {
+  // `retry` finishes "Sign in again through your identity provider, then …".
+  const samlTooOld = (retry) => {
     const age = samlResponseAgeMs();
     if (age === null || age <= SAML_FRESH_MS) return false;
     showToast(
-      `This sign-in page is ${Math.floor(age / 60000)} minutes old, and AWS only accepts it for 5. Sign in again through your identity provider, then open ${set.name}.`,
+      `This sign-in page is ${Math.floor(age / 60000)} minutes old, and AWS only accepts it for 5. Sign in again through your identity provider, then ${retry}.`,
       "error",
       8000
     );
@@ -4432,7 +4465,7 @@ import {
         const reuse = room ? reuseMapFor(room.plan) : new Map();
         return ready.some((t) => !reuse.has(sessionRoleKey(t.roleArn)));
       };
-      if (needsSignIn() && samlTooOld(set)) return;
+      if (needsSignIn() && samlTooOld(`open ${set.name}`)) return;
       // Nothing to warn about: one click opens the set.
       if (sensitive.length || missing.length || (room && room.plan.deficit > 0)) {
         const choice = await confirmLaunchSet(set, ready, missing, sensitive, room);
@@ -4441,7 +4474,7 @@ import {
       }
       // Again after the dialog, which can sit open a while — and whose Sign out
       // all can end a session the set would have opened in.
-      if (needsSignIn() && samlTooOld(set)) return;
+      if (needsSignIn() && samlTooOld(`open ${set.name}`)) return;
       if (room && room.plan.deficit > 0) {
         showToast(`Not enough free AWS sessions for ${set.name}. Sign some out and try again.`, "error", CONFIG.TOAST_DURATION_LONG);
         return;
@@ -7488,6 +7521,24 @@ import {
     // just opens — here, or in a new tab, as the click asked.
     const [liveSession] = await liveSessionsFor([sessionRoleKey(roleArn)]);
 
+    // A new session at five of five: sign one out here first, not on AWS's
+    // "Session limit reached" page.
+    if (!liveSession) {
+      const where = [serviceNameFor(servicePath || ""), region].filter(Boolean).join(" · ");
+      const room = await makeRoomFor([{ roleArn }], {
+        name: `${accountName} · ${roleName}`,
+        kicker: `Sign in · ${accountName} · ${roleName}`,
+        subject:
+          `<div class="tm_setopen_role"><span class="tm_setopen_role_who">${escapeHtml(accountName)} · ${escapeHtml(roleName)}</span>` +
+          `<span class="tm_setopen_role_where">${escapeHtml(where)}</span></div>`,
+        confirmText: "Sign in",
+        goal: "sign in",
+      });
+      if (!room) return;
+      // The dialog can sit open a while; AWS takes the page for 5 minutes.
+      if (room.shown && samlTooOld(`sign in to ${roleName}`)) return;
+    }
+
     const labelPayload = buildSigninLabel({ accountName, accountId, roleName, env });
     await RecentRolesManager.recordSignIn(roleArn);
     // Awaited: the token must be in storage before the form navigates away,
@@ -8229,6 +8280,26 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     FilterManager.applyFilters();
   };
 
+  // A line the bulk editors can't read used to vanish on Save. Name the lines
+  // under the box instead and save nothing until they're fixed; true when it
+  // did. (The note goes once a later Save finds every line readable.)
+  const showBadLines = (inputSel, bad, form) => {
+    const $input = $(inputSel);
+    const id = `${$input.attr("id")}_err`;
+    let $err = $("#" + id);
+    if (!bad.length) {
+      $err.remove();
+      return false;
+    }
+    if (!$err.length) {
+      $input.after(`<div id="${id}" role="alert" style="color: #c0392b !important; font-size: 13px !important; margin: -4px 0 12px !important;"></div>`);
+      $err = $("#" + id);
+    }
+    const which = bad.length === 1 ? `Line ${bad[0]} isn't` : `Lines ${bad.slice(0, 8).join(", ")}${bad.length > 8 ? "…" : ""} aren't`;
+    $err.text(`${which} in the form ${form} — fix or remove ${bad.length === 1 ? "it" : "them"}, then Save.`);
+    return true;
+  };
+
   const showAccountNamesModal = () => {
     const current = formatAccountNameLines(accountNamesCache);
     const modalHTML = `
@@ -8276,7 +8347,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
 
     $("#tm_account_names_save").on("click", async function () {
-      const map = parseAccountNameLines($("#tm_account_names_input").val());
+      const text = $("#tm_account_names_input").val();
+      if (showBadLines("#tm_account_names_input", badAccountNameLines(text), "123456789012: Name")) return;
+      const map = parseAccountNameLines(text);
       const saved = await AccountNamesManager.save(map);
       if (saved) {
         $("#tm_account_names_modal").remove();
@@ -8311,7 +8384,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                     <p style="margin: 0 0 15px 0 !important; color: #6c757d !important; font-size: 14px !important; line-height: 1.45 !important;">
                         Attach free-text tags to an account + role so you can find it by
                         concept or ticket, not just by name. One per line:
-                        <code>123456789012/Admin: palo alto, OPS-1234</code>. A line with just the
+                        <code>123456789012/Admin: firewall team, OPS-1234</code>. A line with just the
                         account id (<code>123456789012: pci</code>) puts the tags on every role of
                         that account in today's list. Tags may contain spaces, and searching any
                         tag surfaces the role. Leave the box empty to clear all tags.
@@ -8320,7 +8393,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
                         width: 100% !important; height: 220px !important; border: 1px solid #ccc !important;
                         border-radius: 4px !important; padding: 10px !important; font-family: monospace !important;
                         font-size: 13px !important; resize: vertical !important; box-sizing: border-box !important;
-                    " placeholder="123456789012/Admin: palo alto, firewall&#10;999999999999/ReadOnly: splunk, siem">${escapeHtml(current)}</textarea>
+                    " placeholder="123456789012/Admin: firewall team, pci&#10;999999999999/ReadOnly: siem, audit">${escapeHtml(current)}</textarea>
                     <div style="margin-top: 15px !important; text-align: right !important;">
                         <button id="tm_account_tags_cancel" style="
                             padding: 8px 16px !important; margin-right: 10px !important; border: 1px solid #ccc !important;
@@ -8342,7 +8415,9 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     });
 
     $("#tm_account_tags_save").on("click", async function () {
-      const map = parseAccountTagLines($("#tm_account_tags_input").val());
+      const text = $("#tm_account_tags_input").val();
+      if (showBadLines("#tm_account_tags_input", badAccountTagLines(text), "123456789012/RoleName: tag, tag")) return;
+      const map = parseAccountTagLines(text);
       const saved = await AccountTagsManager.save(map);
       // A bare account line means "every role of this account": spread it now.
       if (saved) await AccountTagsManager.migrate(listedTagRoles());
@@ -8452,6 +8527,37 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (!ok) return;
     }
 
+    // Signing in again to an identity that already has a session replaces it
+    // and signs its open tabs out, so a jump uses live sessions where it can:
+    // a destination that's already live just opens, and a live hub switches
+    // role without signing in again. Otherwise the jump signs in to the hub
+    // as it always has.
+    const hubRoleName = String(hubArn).split("/").pop() || "";
+    const [destLive, hubLive] = await liveSessionsFor([`${dest}/${profile.role}`, `${profile.hub}/${hubRoleName}`]);
+    const destSession = destLive;
+    const hubSession = destSession ? null : hubLive;
+
+    // A jump that needs sessions AWS hasn't got free — the destination's, and
+    // the hub's too when that isn't live — makes room first, like a sign-in.
+    // Before anything below is written, so a cancelled jump leaves no trace.
+    if (!destSession) {
+      const room = await makeRoomFor(
+        [{ roleArn: hubArn }, { roleArn: `arn:aws:iam::${dest}:role/${profile.role}` }],
+        {
+          name: `The jump to ${destName || displayName}`,
+          kicker: `Jump · ${destName || displayName}`,
+          subject:
+            `<div class="tm_setopen_role"><span class="tm_setopen_role_who">⤳ ${escapeHtml(destName || displayName)} · ${escapeHtml(profile.role)}</span>` +
+            `<span class="tm_setopen_role_where">via the ${escapeHtml(profile.name)} hub${hubSession ? " (live)" : ", which signs in first"}</span></div>`,
+          confirmText: "Jump",
+          goal: "jump",
+          keptNote: "the jump goes through it",
+        }
+      );
+      if (!room) return;
+      if (room.shown && !hubSession && samlTooOld(`jump to ${destName || displayName}`)) return;
+    }
+
     // Region to land in after the switch-role. AWS otherwise drops a freshly
     // switched role into that identity's own default region — the "random"
     // region users complain about — so we carry the chosen one through to the
@@ -8525,16 +8631,6 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       }
       await chrome.storage.local.set({ hop_pending_jumps: cur });
     });
-
-    // Signing in again to an identity that already has a session replaces it
-    // and signs its open tabs out, so a jump uses live sessions where it can:
-    // a destination that's already live just opens, and a live hub switches
-    // role without signing in again. Otherwise the jump signs in to the hub
-    // as it always has.
-    const hubRoleName = String(hubArn).split("/").pop() || "";
-    const [destLive, hubLive] = await liveSessionsFor([`${dest}/${profile.role}`, `${profile.hub}/${hubRoleName}`]);
-    const destSession = destLive;
-    const hubSession = destSession ? null : hubLive;
 
     // If several console sessions are live, AWS interrupts the switch-role with
     // its "Choose your session" picker. Leave a short-lived note saying which
@@ -10384,7 +10480,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Filter, search, favorite",
             `Narrow the role list from the toolbar — by organisation, environment, account type, role name or <strong>tag</strong> — or use the search box. Each filter row stays on one line: chips that don't fit fold into a <strong>+N</strong> chip (it says <em>· N on</em> if a selected one is inside). Click <strong>+N</strong> to see the ones that didn't fit. <strong>Drag chips along a row to reorder it</strong>; drag one out of <strong>+N</strong> onto the row to keep it in view, or a row chip onto <strong>+N</strong> to tuck it away — like the bookmarks bar. Search is <strong>separator-insensitive</strong> (<code>test 123</code> finds <code>test123</code>) and understands <strong>scoped terms</strong>: <code>tag:</code>, <code>role:</code>, <code>name:</code>, <code>account:</code>, <code>env:</code>, <code>type:</code>, <code>org:</code>. Combine them with a space (<em>and</em>), a comma (<em>or</em>) or a leading <code>-</code> (<em>exclude</em>), with <code>"quotes"</code> for an exact phrase. Focus the box and it pops out with click-to-insert suggestions and a live match count. Star a role to favorite it; the <em>Favorites</em> and <em>Recent</em> chips re-filter quickly. Press <kbd>Esc</kbd> to clear every filter and the search at once.`)}
           ${sectionHTML("Tags",
-            `Tag an account + role with your own labels — <code>palo-alto</code>, <code>prod-network</code>, a ticket number — and organise by them. A tag belongs to that one role, so tagging your Admin role doesn't tag the account's other roles. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
+            `Tag an account + role with your own labels — <code>firewall-team</code>, <code>prod-network</code>, a ticket number — and organise by them. A tag belongs to that one role, so tagging your Admin role doesn't tag the account's other roles. Click the small <strong>tag chip</strong> on any row to add or remove tags inline (autocompleting from tags you already use), or edit in bulk via <em>Tags</em> in the side menu. Tags get a filter row of their own and are searchable with <code>tag:</code>.`)}
           ${sectionHTML("Save a search as a Shortcut",
             `Built a query and filter set you'll want again? Click <strong>☆ save as shortcut</strong> in the search card and name it — it becomes a chip in the <em>Shortcuts</em> row, and one click re-applies the whole view (search <em>and</em> filters). Remove one with its <strong>✕</strong> — click to arm, click again to confirm.`)}
           ${sectionHTML("Launch Sets",
@@ -10400,7 +10496,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Jump to account (role chaining)",
             `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover (<strong>✕</strong> forgets one). The popover stays deliberately small — a quick way in, with <em>Save as a named destination</em> to keep a place; saved destinations live as <strong>⤳ rows in the listing</strong> and are curated under <em>Jump Destinations</em>. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS. Save the places you jump to often as <strong>Jump Destinations</strong> (side menu, or the <em>Save as a named destination</em> tick in the popover) — each becomes a <strong>⤳ row in the listing</strong>, searchable, taggable and favouritable like any row, with its own landing Service and Region picks; a <em>Source</em> filter row and <code>is:jump</code> in search show only them, and a row greys out when its hub role isn't in today's list.`)}
           ${sectionHTML("Active AWS sessions",
-            `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open; a jump and the hub it goes through are one row. <strong>✕</strong> signs a session out and closes its console tabs (one with tabs open asks for a second click), so you can free a slot without leaving the picker; <strong>Sign out idle</strong> signs out every session with no tab open, and <strong>Sign out all sessions</strong> every one. A role you're already signed in to shows <strong>Open</strong> instead of Sign In and opens that session rather than signing in again. All of this needs <strong>AWS multi-session support</strong>, which AWS leaves off until you turn it on: in any AWS console tab, choose your account name at the top right, then <em>Turn on multi-session support</em>. While it's off, the counter says so. Console Hopper only reads session metadata — never cookie contents.`)}
+            `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open; a jump and the hub it goes through are one row. <strong>✕</strong> signs a session out and closes its console tabs (one with tabs open asks for a second click), so you can free a slot without leaving the picker; <strong>Sign out idle</strong> signs out every session with no tab open, and <strong>Sign out all sessions</strong> every one. A role you're already signed in to shows <strong>Open</strong> instead of Sign In and opens that session rather than signing in again, and a sign-in or jump that needs a session when all five are in use lists your sessions to sign out first. All of this needs <strong>AWS multi-session support</strong>, which AWS leaves off until you turn it on: in any AWS console tab, choose your account name at the top right, then <em>Turn on multi-session support</em>. While it's off, the counter says so. Console Hopper only reads session metadata — never cookie contents.`)}
           ${sectionHTML("Rename accounts",
             `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",

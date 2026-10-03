@@ -19,6 +19,7 @@ import {
   normalizeRegionList,
   isValidRegionCode,
   parseAccountNameLines,
+  badAccountNameLines,
   formatAccountNameLines,
   normalizeAccountNames,
   parseAssumeProfileLines,
@@ -27,6 +28,7 @@ import {
   normalizeJumpRecents,
   normalizeTagList,
   parseAccountTagLines,
+  badAccountTagLines,
   formatAccountTagLines,
   normalizeAccountTags,
   migrateAccountTags,
@@ -931,5 +933,19 @@ describe("orderByIds", () => {
   });
   it("ignores stored ids that no longer exist", () => {
     expect(orderByIds(["a", "b"], ["z", "b"], id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("bad bulk-editor lines", () => {
+  it("names Account Names lines the parser would drop", () => {
+    const text = "123456789012: Prod\n\n210987654321=Logs\n12345: Short\n999999999999:\nno colon";
+    expect(badAccountNameLines(text)).toEqual([3, 4, 6]);
+    expect(badAccountNameLines("123456789012: Prod\n  \n")).toEqual([]);
+  });
+
+  it("names Tags lines the parser would drop", () => {
+    const text = "123456789012/Admin: pci, ops\n123456789012: shared\narn:aws:iam::123456789012:role/Admin: x\nops, pci";
+    expect(badAccountTagLines(text)).toEqual([3, 4]);
+    expect(badAccountTagLines("")).toEqual([]);
   });
 });

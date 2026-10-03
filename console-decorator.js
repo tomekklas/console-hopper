@@ -163,10 +163,12 @@
 
     // Title prefix; re-apply if AWS rewrites <title>.
     const prefix = `[${label.account}] `;
+    // Some consoles (Billing and Cost Management) build a new title out of
+    // the old one, carrying our prefix into the middle; keep exactly one, at
+    // the front.
     const ensureTitle = () => {
-      if (!document.title.startsWith(prefix)) {
-        document.title = prefix + document.title;
-      }
+      const want = prefix + document.title.split(prefix).join("");
+      if (document.title !== want) document.title = want;
     };
     ensureTitle();
     const wireTitleObserver = () => {

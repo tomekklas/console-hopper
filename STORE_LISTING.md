@@ -40,14 +40,22 @@ gives every row a star, a service deep-link, and a one-click sign-in,
 and gives every open console tab a colour-coded favicon plus an
 account name in the title.
 
-NEW IN 1.8.1
+NEW IN 1.9.0
 
+• Room before you sign in — signing in to a role, or jumping to an
+account, when all five AWS sessions are in use now lists your sessions
+to sign out first (a hub a jump goes through is kept), instead of
+AWS's "Session limit reached" page in the new tab.
 • Multi-session off? It says so — Console Hopper's session features
 (the session counter, Open on a role you're already signed in to,
 making room for a Launch Set) need AWS multi-session support, which
 AWS leaves off until you turn it on. When it's off, the counter reads
 "Multi-session is off" and shows how to turn it on, instead of showing
 nothing.
+• Fixes — console tabs stay in their region in the first minutes after
+a sign-in too; Account Names and Tags point out lines they can't read
+instead of dropping them; a tab title keeps its account prefix once;
+toasts stack instead of overlapping.
 
 NEW IN 1.8.0
 
@@ -226,11 +234,13 @@ full. Open it to see every session — account, role, region, tab group,
 when it started, how long it has left and how many tabs it still has
 open — and sign any one of them out to free a slot (its console tabs
 close with it), sign out every session that has no tab open, or sign
-out all of them. A jump and the hub it goes through show as one row.
-This needs AWS multi-session support, which is off until you turn it
-on (in any AWS console tab, your account name at the top right → Turn
-on multi-session support); while it's off, the counter says so. Session
-metadata only; cookie contents are never read.
+out all of them. A jump and the hub it goes through show as one row. A
+sign-in or jump that needs a session when all five are in use shows
+the same list first. This needs AWS multi-session support, which is
+off until you turn it on (in any AWS console tab, your account name at
+the top right → Turn on multi-session support); while it's off, the
+counter says so. Session metadata only; cookie contents are never
+read.
 
 • Clear AWS sessions
 One click signs you out of your AWS console sessions by clearing
@@ -573,7 +583,7 @@ own Region. Page content is neither read nor transmitted.
       for the new uses (open in a live session, mark ended groups, session
       list read on tab switch); PRIVACY.md updated 2 October 2026.
 - [ ] Reload the final 1.8.0 build; footer reads v1.8.0.
-- [x] 1.8.1: the sessions chip reads "Multi-session is off" (with how to
+- [x] 1.9.0: the sessions chip reads "Multi-session is off" (with how to
       turn it on, and Don't show again) when AWS lists no sessions while
       console tabs are on plain hosts; checked on the harness in light and
       dark, through each transition (sessions appear, read fails, hidden).
@@ -584,7 +594,7 @@ own Region. Page content is neither read nor transmitted.
       and the chip reads "Multi-session is off". The menu item is "Turn on
       multi-session support"; turning it on moves the live session onto a
       session host and the chip goes back to "1 of 5 sessions".
-- [ ] Reload the final 1.8.1 build; footer reads v1.8.1.
+- [ ] Reload the final 1.9.0 build; footer reads v1.9.0.
 - [x] Five 1280×800 screenshots in `store-assets/`, still current for 1.8.0
       (it adds to the UI rather than changing what they show); reshot for 1.7.0
       (main with Sets column + one-line rows, Launch Sets panel, Edit set,

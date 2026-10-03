@@ -128,7 +128,10 @@ features.
   **Open** instead of Sign In and opens that session rather than signing in
   again (which would sign its tabs out). When a session ends on AWS's
   side while its tabs are still open, their tab group turns grey and reads
-  "Ended · …". Session metadata only; cookie contents are never read.
+  "Ended · …". A sign-in or jump that needs a session when all five are
+  in use shows the same list of sessions to sign out first, instead of
+  AWS's "Session limit reached" page. Session metadata only; cookie
+  contents are never read.
   All of this needs AWS multi-session support, which AWS leaves off until
   you turn it on (your account name at the top right of any console tab →
   *Turn on multi-session support*); while it's off, the counter reads

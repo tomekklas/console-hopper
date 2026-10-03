@@ -3,10 +3,19 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
-## 1.8.1 — 2026-10-03
+## 1.9.0 — 2026-10-03
 
 ### Added
 
+- **A sign-in or jump at five of five makes room first.** Signing in to a
+  role that has no live session, or jumping to an account, when AWS has no
+  session free used to open AWS's "Session limit reached" page in the new
+  tab. Now the picker shows the Open-set dialog's list of your sessions
+  instead, each with its own **Sign out**, and **Sign in** / **Jump** stays
+  off until there's room. A jump whose hub isn't signed in needs two
+  sessions (the hub's and the account's); a live hub it goes through is
+  kept, with no Sign out. With room to spare nothing changes: the check
+  uses the sessions chip's count, so an ordinary sign-in doesn't wait.
 - **The sessions chip says when AWS multi-session support is off.** AWS
   leaves it off until you turn it on, and while it's off there are no
   sessions to list, so the chip used to stay hidden with no reason given.
@@ -34,6 +43,16 @@ All notable changes to Console Hopper are listed here. Dates are in
   the region it asked for) holds the lock off now.
 - A jump destination saved from the Jump popover ("Save as a named
   destination") shows as a ⤳ row straight away, not after the next reload.
+- A console tab's title keeps the account prefix once. Billing and Cost
+  Management builds its title from the previous one, so the prefix used to
+  show up twice ("[123…] Billing … | [123…] Billing …").
+- **Account Names** and **Tags** say which lines they can't read (say,
+  `123456789012=Name`, or a full role ARN) and save nothing until they're
+  fixed or removed. Those lines used to vanish on Save, under a "saved"
+  toast.
+- The open-set dialog marks **Frees enough** only when it tells the rows
+  apart — not on every row when any one sign-out would do.
+- Example tags in the Tags dialog and the help no longer use vendor names.
 - Help & About: the Active AWS sessions section describes the panel as it
   is (Sign out idle / all, Open on a signed-in role, a jump as one row)
   and the multi-session requirement, and no longer mentions a "you"
