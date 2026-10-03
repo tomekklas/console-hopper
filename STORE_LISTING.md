@@ -594,7 +594,16 @@ own Region. Page content is neither read nor transmitted.
       and the chip reads "Multi-session is off". The menu item is "Turn on
       multi-session support"; turning it on moves the live session onto a
       session host and the chip goes back to "1 of 5 sessions".
-- [ ] Reload the final 1.9.0 build; footer reads v1.9.0.
+- [x] 1.9.0 verified live (mock-SAML, real Chrome, 2026-10-03): v1.9.0
+      footer; ⌘-click sign-in with service + region; jump through a hub
+      that wasn't live; set at 4/5 → dialog, two sign-outs, 4 tabs, a
+      role's second tab in its session, hub and jump never restarted;
+      Open at 5/5 (role and jump); a single sign-in at 5/5 → the new room
+      dialog → one sign-out → signed in; region lock corrects IAM → EC2
+      within a minute of a sign-in; Cost Management title has one prefix;
+      ended group greyed; Save open tabs lists real tabs; ✕ closed 3 tabs;
+      Clear AWS sessions signed everything out and left multi-session on.
+- [x] Reload the final 1.9.0 build; footer reads v1.9.0.
 - [x] Five 1280×800 screenshots in `store-assets/`, still current for 1.8.0
       (it adds to the UI rather than changing what they show); reshot for 1.7.0
       (main with Sets column + one-line rows, Launch Sets panel, Edit set,
