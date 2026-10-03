@@ -4,8 +4,9 @@ markdown. The Detailed description field is the separate, already
 paste-ready file in this folder: detailed-description.txt
 
 Changed from 1.8.0: the detailed description (NEW IN 1.9.0 section and
-one sentence under Active AWS sessions) and the tabs justification (one
-clause about multi-session). Every other field is unchanged.
+two sentences under Active AWS sessions) and the tabs justification (one
+clause about multi-session). No permission changes; every other field is
+unchanged.
 
 
 --- Name -------------------------------------------------------------
