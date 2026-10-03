@@ -229,7 +229,7 @@ close with it), sign out every session that has no tab open, or sign
 out all of them. A jump and the hub it goes through show as one row.
 This needs AWS multi-session support, which is off until you turn it
 on (in any AWS console tab, your account name at the top right → Turn
-on multi-session); while it's off, the counter says so. Session
+on multi-session support); while it's off, the counter says so. Session
 metadata only; cookie contents are never read.
 
 • Clear AWS sessions
@@ -579,8 +579,11 @@ own Region. Page content is neither read nor transmitted.
       dark, through each transition (sessions appear, read fails, hidden).
       No permission changes; the tabs justification gains one clause and
       PRIVACY.md one sentence (3 October 2026).
-- [ ] Confirm live what sessions/v1/list returns with multi-session off
-      (fresh browser profile, one SAML sign-in).
+- [x] Confirmed live: with multi-session off, sessions/v1/list answers
+      with AWS's 404 page, the console tab is on the plain regional host,
+      and the chip reads "Multi-session is off". The menu item is "Turn on
+      multi-session support"; turning it on moves the live session onto a
+      session host and the chip goes back to "1 of 5 sessions".
 - [ ] Reload the final 1.8.1 build; footer reads v1.8.1.
 - [x] Five 1280×800 screenshots in `store-assets/`, still current for 1.8.0
       (it adds to the UI rather than changing what they show); reshot for 1.7.0

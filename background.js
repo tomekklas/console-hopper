@@ -598,7 +598,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         plainTabs: sessions.length ? 0 : await countPlainConsoleTabs(),
       })
     )
-    // Not signed in at all, or AWS changed the endpoint — callers treat this as
+    // Not signed in at all, multi-session off (AWS then answers the list with
+    // a 404 page), or AWS changed the endpoint — callers treat this as
     // "unknown" and stay silent rather than guessing a count.
     .catch(async (err) =>
       sendResponse({ ok: false, error: String(err), plainTabs: await countPlainConsoleTabs() })

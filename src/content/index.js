@@ -8788,7 +8788,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           `<p>With it on you can be signed in to up to five roles at once, and Console Hopper counts your sessions, ` +
           `opens roles you're already signed in to, and makes room when a Launch Set needs it.</p>` +
           `<p><b>To turn it on:</b> in any AWS console tab, choose your account name at the top right, then ` +
-          `<b>Turn on multi-session</b>. Your sessions show here once AWS lists them.</p>` +
+          `<b>Turn on multi-session support</b>. Your sessions show here once AWS lists them.</p>` +
         `</div>`
       );
       $("#tm_sess_signout_all").hide();
