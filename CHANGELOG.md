@@ -26,6 +26,12 @@ All notable changes to Console Hopper are listed here. Dates are in
   In" note again; the lookup behind it used a selector the picker's DOM
   helper doesn't support, so it failed quietly.
 - Toasts that appear together stack instead of overlapping.
+- **Keep console tabs in their region** works in the first five minutes
+  after a sign-in too. Every sign-in and Launch Set leaves a hand-off for
+  the tab label, and the region lock mistook it for a jump steering its own
+  landing, so it stood aside: a tab that went to IAM and back in that time
+  stayed in the region AWS picked. Only a jump's hand-off (which carries
+  the region it asked for) holds the lock off now.
 - A jump destination saved from the Jump popover ("Save as a named
   destination") shows as a ⤳ row straight away, not after the next reload.
 - Help & About: the Active AWS sessions section describes the panel as it

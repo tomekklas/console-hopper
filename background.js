@@ -15,7 +15,7 @@
 // region is part of the console hostname, so a corrected tab changes origin
 // and can't carry sessionStorage across the hop.
 
-import { nextTabState, parseConsolePage, planRegionLock } from "./src/shared/region-lock.js";
+import { isLandingHandOff, nextTabState, parseConsolePage, planRegionLock } from "./src/shared/region-lock.js";
 import { LAUNCH_MAX_TABS, isSamlAction, isSessionConsoleUrl, sanitizeLaunchFields, sessionRelayUrl } from "./src/shared/launch.js";
 import { groupSessions } from "./src/shared/sessions.js";
 
@@ -1057,8 +1057,7 @@ async function jumpInFlight(href) {
   if (!m) return false;
   try {
     const res = await chrome.storage.local.get("hop_pending_jumps");
-    const hit = ((res && res.hop_pending_jumps) || {})[m[1]];
-    return !!hit && !!hit.ts && Date.now() - hit.ts <= 5 * 60 * 1000;
+    return isLandingHandOff(((res && res.hop_pending_jumps) || {})[m[1]]);
   } catch (err) {
     return false;
   }

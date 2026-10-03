@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   GLOBAL_SERVICE_KEYS,
+  HANDOFF_TTL_MS,
   LOOP_GUARD_MS,
+  isLandingHandOff,
   nextTabState,
   parseConsolePage,
   planRegionLock,
@@ -358,5 +360,25 @@ describe("a tab's browsing sequence", () => {
     expect(trail[2].url).toBe(
       "https://123456789012-ab12.eu-central-1.console.aws.amazon.com/ec2/home"
     );
+  });
+});
+
+describe("isLandingHandOff", () => {
+  const now = 1_800_000_000_000;
+
+  it("holds the lock off for a fresh jump that steers its region or service", () => {
+    expect(isLandingHandOff({ label: "x", region: FRANKFURT, ts: now - 1000 }, now)).toBe(true);
+    expect(isLandingHandOff({ label: "x", region: "", service: "ec2/home", ts: now - 1000 }, now)).toBe(true);
+  });
+
+  it("ignores a sign-in or Launch Set label hand-off, which steers nothing", () => {
+    expect(isLandingHandOff({ label: "acme-prod", region: "", ts: now - 1000 }, now)).toBe(false);
+    expect(isLandingHandOff({ label: "acme-prod", region: "", ts: now - 1000, remaining: 2 }, now)).toBe(false);
+  });
+
+  it("lets an expired, clock-less or missing entry go", () => {
+    expect(isLandingHandOff({ region: FRANKFURT, ts: now - HANDOFF_TTL_MS - 1 }, now)).toBe(false);
+    expect(isLandingHandOff({ region: FRANKFURT }, now)).toBe(false);
+    expect(isLandingHandOff(undefined, now)).toBe(false);
   });
 });

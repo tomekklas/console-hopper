@@ -54,6 +54,22 @@ export const GLOBAL_SERVICE_KEYS = new Set([
   "account",
 ]);
 
+// How long the picker's hand-off for a console landing stays live
+// (hop_pending_jumps; the decorator honours the same window).
+export const HANDOFF_TTL_MS = 5 * 60 * 1000;
+
+// Whether a hand-off entry means "a jump is steering this account's landing",
+// which is when the lock has to stay out of the way. Only a jump stashes the
+// region (and maybe the service) it asked for; a sign-in's or Launch Set's
+// entry is just the tab label, never consumed when the tab arrives with its
+// own, and must not switch the lock off for that account for five minutes.
+export function isLandingHandOff(entry, now) {
+  const at = typeof now === "number" ? now : Date.now();
+  if (!entry || !entry.ts) return false;
+  if (!entry.region && !entry.service) return false;
+  return at - entry.ts <= HANDOFF_TTL_MS;
+}
+
 // How long a correction we already tried blocks another attempt at the same
 // URL. Long enough to break a redirect ping-pong with AWS, short enough that
 // a user going somewhere and coming back isn't left stranded.
