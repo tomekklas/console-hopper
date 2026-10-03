@@ -15,11 +15,11 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
 
 | The role picker | Launch Sets |
 |---|---|
-| <img src="store-assets/screenshot-1-main.png" alt="Role picker with one-line filter rows, a +N chip and the Sets column"> | <img src="store-assets/screenshot-2-sets.png" alt="Launch Sets panel listing sets with Show, Edit, Archive, Delete and Open"> |
+| <img src="store-assets/screenshot-1-main.png" alt="Role picker with one-line filter rows, the Sets column, and Open on roles already signed in"> | <img src="store-assets/screenshot-2-sets.png" alt="Launch Sets panel listing sets with Show, Edit, Archive, Delete and Open"> |
 
-| Editing a set | Active AWS sessions |
+| A set that won't fit | Active AWS sessions |
 |---|---|
-| <img src="store-assets/screenshot-3-edit.png" alt="Edit set dialog: tabs per role with landing service and region"> | <img src="store-assets/screenshot-4-sessions.png" alt="Sessions panel with Sign out idle and Sign out all sessions"> |
+| <img src="store-assets/screenshot-3-room.png" alt="Open-set dialog listing your sessions to sign out, Open off until the set fits"> | <img src="store-assets/screenshot-4-sessions.png" alt="Sessions panel with a jump as one row, Sign out idle and Sign out all sessions"> |
 
 ## Quick start
 

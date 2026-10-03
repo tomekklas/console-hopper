@@ -3,7 +3,7 @@
 #
 #   shoot.sh <chrome-window-id> <out.png> [scene]
 #
-# scene: main (default) | sets | edit | sessions | dark — see stage.js.
+# scene: main (default) | sets | edit | sessions | dark | room[:N] — see stage.js.
 #
 # Everything that needs Chrome focused happens in ONE shell call: activating
 # Chrome from a separate call hands focus back to the terminal and you
@@ -55,14 +55,18 @@ tell application "Google Chrome"
   set ih to (text item 3 of m) as integer
   set AppleScript's text item delimiters to {""}
   set bounds of w to {0, 120, $VW + ($VW - iw), 120 + $VH + 121 + ($VH - ih)}
-  delay 0.4
-  -- Two passes: the first opens the scene (some of it — the sessions list,
+  -- Bringing the window forward makes the picker re-read its sessions; let
+  -- that land before staging, or it repaints real data over the staged text.
+  delay 3
+  -- Three passes: the first opens the scene (some of it — the sessions list,
   -- the row refit — arrives asynchronously), the second rewrites whatever
-  -- appeared since and runs the leak check on the final frame.
+  -- appeared since, and the third, right before the capture, re-pins the
+  -- staged text and runs the leak check on the final frame.
   execute (active tab of w) javascript js
-  delay 1.5
-  set stageOut to execute (active tab of w) javascript js
+  delay 2.5
+  execute (active tab of w) javascript js
   delay 0.5
+  set stageOut to execute (active tab of w) javascript js
   set geomOut to execute (active tab of w) javascript probe
   return geomOut & "@@" & stageOut
 end tell

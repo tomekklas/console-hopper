@@ -11,7 +11,15 @@
   //   edit      Edit set dialog for the first set
   //   sessions  the Active AWS sessions panel (needs live sessions)
   //   dark      dark theme with the Tags row's +N pop-out open
+  //   room      the Open-set dialog when a set won't fit ("room:N" opens the
+  //             Nth set in the column, default 0) — needs live sessions and a
+  //             set that needs more of them than are free
   var scene = typeof SCENE === "string" ? SCENE : "main";
+  var roomSet = 0;
+  if (/^room(:\d+)?$/.test(scene)) {
+    roomSet = Number((scene.split(":")[1]) || 0);
+    scene = "room";
+  }
 
   var IDS = ["111122223333", "444455556666", "777788889999", "123456789012",
              "222233334444", "555566667777", "888899990000", "333344445555",
@@ -28,15 +36,40 @@
   var SETS = ["OPS-1234", "INC-0419", "OPS-1198", "CHG-2210", "OPS-1301",
               "INC-0442", "CHG-2231", "OPS-1350"];
   var SHORTCUTS = ["Prod network", "PCI accounts", "Sandboxes"];
+  var LABELS = ["audit-review", "INC-0419 triage", "billing-check", "net-debug"];
   var VIA = "via Acme hub · max 1 h";
   var ROLE_POOL = Object.keys(ROLES).map(function (k) { return ROLES[k]; })
     .concat(["Jump", "Hub"]);
 
   // ---- open the scene's UI first, so everything it shows gets rewritten ----
-  document.querySelectorAll('[id$="_modal"]').forEach(function (el) { el.remove(); });
+  // The Open-set dialog is answered, not removed: removing it would leave the
+  // picker waiting on it, and no other set would open until a reload. The
+  // room scene keeps it (the second pass rewrites what the first opened).
+  document.querySelectorAll('[id$="_modal"]').forEach(function (el) {
+    if (el.id === "tm_set_open_modal") {
+      if (scene !== "room") {
+        var cancel = el.querySelector('[data-action="cancel"]');
+        if (cancel) cancel.click(); else el.remove();
+      }
+      return;
+    }
+    el.remove();
+  });
+  document.querySelectorAll("#tm_toasts, .tm_toast").forEach(function (el) { el.remove(); });
   var pop = document.getElementById("tm_sessions_popover");
   if (scene === "dark") document.body.classList.add("tm_theme_dark");
   else document.body.classList.remove("tm_theme_dark");
+
+  // ---- Open / Sign In ----
+  // The extension decides a row's "Open" from the row's VISIBLE account id
+  // and role, so once those are rewritten its next refresh (bringing the
+  // window forward, a console tab changing) would flip every Open back to
+  // Sign In. Record each button's label the first time it is seen with real
+  // text, and pin it on every pass.
+  document.querySelectorAll("#tm_role_list .tm_signin_button").forEach(function (b) {
+    if (!b.dataset.stageLabel) b.dataset.stageLabel = b.textContent;
+    if (b.textContent !== b.dataset.stageLabel) b.textContent = b.dataset.stageLabel;
+  });
 
   // ---- account ids / names / roles ----
   var idMap = {}, nameMap = {}, n = 0;
@@ -57,10 +90,20 @@
     var a = acct(el);
     if (a) el.textContent = idMap[a];
   });
+  // A name that isn't the bare id (an AWS alias, an Account Names entry, a
+  // jump destination's name) also shows in the Open-set dialog and the
+  // sessions panel; remember each one so the text pass below swaps it too.
+  var nameSwap = {};
   document.querySelectorAll(".tm_account_name").forEach(function (el) {
     var a = acct(el);
-    if (a) el.textContent = nameMap[a];
+    if (!a) return;
+    if (!el.dataset.realName) el.dataset.realName = el.textContent.replace(/^\s*⤳\s*/, "").replace(/\s+/g, " ").trim();
+    [el.dataset.realName, el.getAttribute("data-aws-name") || ""].forEach(function (real) {
+      if (real && real.length >= 3 && !/^\d{12}$/.test(real)) nameSwap[real] = nameMap[a];
+    });
+    el.textContent = nameMap[a];
   });
+  var swapKeys = Object.keys(nameSwap).sort(function (x, y) { return y.length - x.length; });
   function mapRole(t) {
     t = (t || "").trim();
     if (ROLES[t]) return ROLES[t];
@@ -141,6 +184,11 @@
     var cp = document.getElementById("tm_chip_pop");
     if (cp) document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   }
+  if (scene === "room" && !document.getElementById("tm_set_open_modal")) {
+    var opens = document.querySelectorAll("#tm_sets_list .tm_set_open, .tm_set_line .tm_set_open");
+    var ob = opens[Math.min(roomSet, opens.length - 1)];
+    if (ob) ob.click();
+  }
   if (scene === "sessions") {
     var pill = document.getElementById("tm_sessions_pill");
     if (pill && !(pop && pop.offsetParent)) pill.click();
@@ -163,6 +211,12 @@
     idleBtn.style.setProperty("display", "inline-block", "important");
   }
 
+  // ---- sessions panel: demo labels ----
+  document.querySelectorAll("#tm_sessions_rows .tm_sess_tr").forEach(function (tr, i) {
+    var lab = tr.children[0];
+    if (lab && lab.textContent.trim() !== "—") lab.textContent = LABELS[i % LABELS.length];
+  });
+
   // ---- generic pass: any real id / CH role / set name left in text or options ----
   // AWS service names must not appear in a store screenshot (flagged on an
   // earlier submission); a saved page on one becomes the plain console.
@@ -175,9 +229,17 @@
     // set named after an account must match before that id is rewritten.
     var t = out.trim();
     if (inSetUI && setMap[t]) return out.replace(t, setMap[t]);
-    var m = inSetUI && t.match(/^(Edit set · |Set: )(.+)$/);
+    var m = inSetUI && t.match(/^(Edit set · |Set: |Open set · )(.+)$/);
     if (m && setMap[m[2]]) return out.replace(m[2], setMap[m[2]]);
+    // Inside a sentence ("<set> needs 3 new sessions …"): only names with a
+    // letter in them, so a set called "111111" can't touch digits elsewhere.
+    if (inSetUI) {
+      Object.keys(setMap).filter(function (real) { return /[A-Za-z]/.test(real) && real.length >= 4; })
+        .sort(function (x, y) { return y.length - x.length; })
+        .forEach(function (real) { out = out.split(real).join(setMap[real]); });
+    }
     realIds.forEach(function (id) { out = out.split(id).join(idMap[id]); });
+    swapKeys.forEach(function (real) { out = out.split(real).join(nameSwap[real]); });
     out = out.replace(/costmanagement\/home[^\s]*/gi, "console/home?region=us-east-1");
     out = out.replace(SERVICE_RE, function (w) { return w[0] === w[0].toUpperCase() ? "Console" : "console"; });
     out = out.replace(/\bCH([A-Z][A-Za-z]+)\b/g, function (_, r) { return mapRole("CH" + r); });
@@ -197,6 +259,13 @@
     var v = scrub(o.textContent, false);
     if (v !== o.textContent) o.textContent = v;
   });
+  // A row whose remembered service got scrubbed would read a bare "Console";
+  // show it on "Console only" instead (display only: no change event, so
+  // nothing is saved).
+  document.querySelectorAll(".tm_service_dropdown").forEach(function (sel) {
+    var o = sel.options[sel.selectedIndex];
+    if (o && o.textContent.trim() === "Console") sel.selectedIndex = 0;
+  });
   document.querySelectorAll(".tm_setm_row[data-set-id]").forEach(function (r) {
     var nm = r.querySelector(".tm_setm_name");
     var demo = setById[r.getAttribute("data-set-id")];
@@ -205,6 +274,25 @@
   document.querySelectorAll(".tm_set_name_input, .tm_set_group_input").forEach(function (el) {
     el.value = mapSet(el.value);
   });
+
+  // The sessions panel repaints itself (a console tab changing, a window
+  // focus) — straight back to real data. Show a static copy of the rewritten
+  // rows for the shot and hide the live list behind it; made once, so a later
+  // pass doesn't copy a repaint.
+  if (scene === "sessions") {
+    var live = document.getElementById("tm_sessions_rows");
+    if (live && !document.getElementById("tm_sessions_rows_shot") && live.querySelector(".tm_sess_tr")) {
+      var copy = live.cloneNode(true);
+      copy.id = "tm_sessions_rows_shot";
+      live.parentNode.insertBefore(copy, live);
+      live.style.setProperty("display", "none", "important");
+    }
+  } else {
+    var oldCopy = document.getElementById("tm_sessions_rows_shot");
+    if (oldCopy) oldCopy.remove();
+    var liveRows = document.getElementById("tm_sessions_rows");
+    if (liveRows) liveRows.style.removeProperty("display");
+  }
 
   // ---- framing ----
   var si = document.getElementById("tm_search_input");
@@ -253,7 +341,8 @@
     sets: "#tm_sets_manage_modal > *",
     edit: "#tm_set_edit_modal > *",
     sessions: "#tm_sessions_popover",
-    dark: "#tm_chip_pop"
+    dark: "#tm_chip_pop",
+    room: "#tm_set_open_modal > *"
   }[scene];
   var fe = focusEl ? document.querySelector(focusEl) : null;
   var vw = window.innerWidth, vh = window.innerHeight;
@@ -291,6 +380,12 @@
       if (v && TAGS.indexOf(v) === -1 && !/^(Direct roles|⤳ Jumps)$/.test(v)) leaks.push("tag not in the demo set: " + v);
     });
   if (/\bCH[A-Z][a-z]/.test(txt)) leaks.push("CH role name still visible");
+  (txt.match(/\b\d{12}\b/g) || []).forEach(function (num) {
+    if (IDS.indexOf(num) === -1) leaks.push("12-digit number not in the demo set: " + num.slice(0, 4) + "…");
+  });
+  swapKeys.forEach(function (real) {
+    if (txt.indexOf(real) !== -1) leaks.push("real account name still visible");
+  });
   if (/\((?:IAM|EC2|S3|Billing)[,)]/.test(txt)) leaks.push("AWS service list in visible text");
   var modalTxt = [].map.call(document.querySelectorAll('[id$="_modal"], #tm_sessions_popover'), function (el) { return el.innerText; }).join(" ");
   var svc = modalTxt.match(SERVICE_RE);

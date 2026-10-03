@@ -4,7 +4,8 @@ Produces a 1280×800 Chrome Web Store screenshot from the live role picker.
 
     ./shoot.sh <chrome-window-id> out.png [scene]
 
-`scene` is `main` (default), `sets`, `edit`, `sessions` or `dark`. The
+`scene` is `main` (default), `sets`, `edit`, `sessions`, `dark` or `room`
+(`room:N` opens the Nth set in the Sets column into its "won't fit" dialog). The
 `sessions` scene needs live sessions: open a Launch Set or two first (within
 five minutes of signing in), and close one set's tabs for an idle row.
 

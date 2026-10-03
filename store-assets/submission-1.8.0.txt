@@ -160,10 +160,10 @@ than changing what they show); reshooting is optional. If you do, the
 new things worth showing are a row reading "Open" and the Launch Set
 confirmation listing sessions to sign out.
 
-screenshot-1-main.png ...... Role picker — one-line filter rows with +N, the Sets column beside them
+screenshot-1-main.png ...... Role picker — filter rows, the Sets column, Open on roles already signed in
 screenshot-2-sets.png ...... Launch Sets panel — sets in order, archive, open
-screenshot-3-edit.png ...... Edit a set — tabs per role with landing service and region
-screenshot-4-sessions.png .. Active AWS sessions — sign out one, the idle ones, or all
+screenshot-3-room.png ...... A set that won't fit — sign sessions out from the list, Open waits for room
+screenshot-4-sessions.png .. Active AWS sessions — a jump as one row; sign out one, the idle ones, or all
 screenshot-5-dark.png ...... Dark theme — a filter row's +N pop-out
 
 

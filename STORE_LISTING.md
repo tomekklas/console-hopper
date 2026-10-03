@@ -336,10 +336,10 @@ package).
 | Field | Spec | File | Shows |
 |---|---|---|---|
 | Store icon | 128 × 128 PNG | ✅ `icons/icon128.png` | — |
-| Screenshot 1 | 1280 × 800 | `store-assets/screenshot-1-main.png` | Role picker — one-line filter rows with +N, the Sets column beside them |
+| Screenshot 1 | 1280 × 800 | `store-assets/screenshot-1-main.png` | Role picker — filter rows, the Sets column, Open on roles already signed in |
 | Screenshot 2 | 1280 × 800 | `store-assets/screenshot-2-sets.png` | Launch Sets panel — sets in order, archive, open |
-| Screenshot 3 | 1280 × 800 | `store-assets/screenshot-3-edit.png` | Edit a set — tabs per role with landing service and region |
-| Screenshot 4 | 1280 × 800 | `store-assets/screenshot-4-sessions.png` | Active AWS sessions — sign out one, the idle ones, or all |
+| Screenshot 3 | 1280 × 800 | `store-assets/screenshot-3-room.png` | A set that won't fit — sign sessions out from the list, Open waits for room |
+| Screenshot 4 | 1280 × 800 | `store-assets/screenshot-4-sessions.png` | Active AWS sessions — a jump as one row; sign out one, the idle ones, or all |
 | Screenshot 5 | 1280 × 800 | `store-assets/screenshot-5-dark.png` | Dark theme — a filter row's +N pop-out |
 | Small promo tile (optional) | 440 × 280 PNG | ✅ `store-assets/promo-small-440x280.png` | Icon + wordmark over the filter rows |
 | Marquee promo tile (optional) | 1400 × 560 PNG | ✅ `store-assets/promo-marquee-1400x560.png` | Wordmark + tagline beside the role picker |
