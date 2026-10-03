@@ -37,6 +37,13 @@ firms, multi-account orgs, anyone with a Control Tower / Landing Zone).
      into `Import Settings` for an AWS Landing-Zone-style starting point,
      then tweak the labels to match your org.
 
+4. **Turn on AWS multi-session support** — in any AWS console tab,
+   choose your account name at the top right, then *Turn on
+   multi-session*. AWS leaves it off, and without it holds one console
+   session at a time (each sign-in replaces the last), so the session
+   counter, **Open** on a signed-in role and multi-role Launch Sets have
+   nothing to work with. The counter says so while it's off.
+
 That's it. On first load you'll see a welcome panel with a tour of the
 features.
 
@@ -122,6 +129,10 @@ features.
   again (which would sign its tabs out). When a session ends on AWS's
   side while its tabs are still open, their tab group turns grey and reads
   "Ended · …". Session metadata only; cookie contents are never read.
+  All of this needs AWS multi-session support, which AWS leaves off until
+  you turn it on (your account name at the top right of any console tab →
+  *Turn on multi-session*); while it's off, the counter reads
+  **Multi-session is off** and explains how.
 - **Clear AWS Sessions** — one click signs you out of all open AWS
   consoles by clearing AWS auth cookies (your console favourites and
   settings are kept).

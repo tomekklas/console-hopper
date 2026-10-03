@@ -1,7 +1,7 @@
 # Privacy Policy — Console Hopper
 
 **Effective date:** 19 May 2026
-**Last updated:** 2 October 2026
+**Last updated:** 3 October 2026
 
 This page explains what Console Hopper (the "extension") does and does
 not do with your data. The short version: **the extension does not
@@ -135,7 +135,7 @@ The extension does **not**:
 | Permission | Why it's requested |
 |---|---|
 | `storage` | To persist your settings (themes, favourites, filters …) locally in `chrome.storage.local`. |
-| `tabs` | To place a newly opened AWS console tab into the correct Chrome tab group; to open a Launch Set's tabs next to the role picker; to open a console tab in a session you're already signed in to; to list your open AWS console tabs when you click **Save open tabs**; to notice a tab group whose AWS session has ended; and to close a console session's tabs when you sign that session out. Only AWS console tab addresses are read, and never transmitted. |
+| `tabs` | To place a newly opened AWS console tab into the correct Chrome tab group; to open a Launch Set's tabs next to the role picker; to open a console tab in a session you're already signed in to; to list your open AWS console tabs when you click **Save open tabs**; to notice a tab group whose AWS session has ended; to tell, when AWS lists no sessions, whether your console tabs' addresses carry a session id (if none do, AWS multi-session support is off and the role picker says how to turn it on); and to close a console session's tabs when you sign that session out. Only AWS console tab addresses are read, and never transmitted. |
 | `tabGroups` | To create and update Chrome tab groups that visually cluster AWS console tabs by account, role, or organisation, and to grey out (and put "Ended" in front of the name of) a group it made whose AWS session has ended. |
 | `cookies` | To delete AWS authentication cookies when you click **Clear AWS Sessions**, signing you out of all AWS consoles at once. The extension only deletes these cookies — it never reads their contents or sends them anywhere. |
 | Host access to `*.aws.amazon.com` (sign-in + console) | To inject the enhanced UI on the SAML sign-in page, set the per-tab favicon/title on console pages, clear AWS session cookies, and call AWS's own session endpoints on `signin.aws.amazon.com` — one to list the console sessions open in your browser (and notice ones that have ended), one to sign a session out when you ask. Requests go only to AWS, from your browser, with the cookies you already have. |

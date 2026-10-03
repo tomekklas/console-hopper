@@ -97,6 +97,7 @@ import {
       SIGNIN_CONFIRM_ROLE_KEYWORDS: "aws_signin_role_keywords",
       SIGNIN_CONFIRM_TYPE_IDS: "aws_signin_type_ids",
       WELCOME_SEEN: "hop_welcome_seen",
+      MULTISESSION_HINT_HIDDEN: "hop_multisession_hint_hidden",
       START_VIEW: "aws_start_view",
       ASSUME_PROFILES: "aws_assume_profiles",
       JUMP_RECENTS: "aws_jump_recents",
@@ -380,6 +381,11 @@ import {
   // on the count acts on it otherwise.
   let sessionsKnown = false;
   let sessionsPopoverOpen = false;
+  // AWS listed no sessions while console tabs sit on plain (un-prefixed)
+  // hosts: multi-session support is off, and the chip says so instead.
+  let sessionsMultiOff = false;
+  const SESSIONS_PILL_TITLE = "AWS allows 5 concurrent console sessions — click to review or sign one out";
+  let multiSessionHintHiddenCache = false;
   let signinConfirmRoleKeywordsCache = ["admin"];
   let signinConfirmTypeIdsCache = [];
   // Recently signed-in roles (newest first); max length controlled by recentLimit.
@@ -945,6 +951,19 @@ import {
         await chrome.storage.local.set({
           [CONFIG.STORAGE_KEYS.SIGNIN_CONFIRM_TYPE_IDS]: JSON.stringify(list),
         });
+        return true;
+      }, false);
+    },
+
+    async getMultiSessionHintHidden() {
+      return await safeStorageOperation(async () => {
+        const result = await chrome.storage.local.get(CONFIG.STORAGE_KEYS.MULTISESSION_HINT_HIDDEN);
+        return result[CONFIG.STORAGE_KEYS.MULTISESSION_HINT_HIDDEN] === true;
+      }, false);
+    },
+    async saveMultiSessionHintHidden(hidden) {
+      return await safeStorageOperation(async () => {
+        await chrome.storage.local.set({ [CONFIG.STORAGE_KEYS.MULTISESSION_HINT_HIDDEN]: !!hidden });
         return true;
       }, false);
     },
@@ -2167,6 +2186,7 @@ import {
       regionLockCache = await StorageManager.getRegionLock();
       homepageUrlCache = await StorageManager.getHomepageUrl();
       pageMaxWidthCache = await StorageManager.getPageMaxWidth();
+      multiSessionHintHiddenCache = await StorageManager.getMultiSessionHintHidden();
       signinConfirmRoleKeywordsCache = await StorageManager.getSigninConfirmRoleKeywords();
       signinConfirmTypeIdsCache = await StorageManager.getSigninConfirmTypeIds();
       debug("General settings cache loaded:", {
@@ -5125,7 +5145,7 @@ import {
                     </div>
                     <div id="tm_sessions_section" style="display: none;">
                         <div id="tm_sessions_bar" style="position: relative;">
-                            <button type="button" id="tm_sessions_pill" title="AWS allows 5 concurrent console sessions — click to review or sign one out">
+                            <button type="button" id="tm_sessions_pill" title="${SESSIONS_PILL_TITLE}">
                                 <span id="tm_sessions_pill_text">sessions</span>
                             </button>
                             <div id="tm_sessions_scrim" style="display: none;"></div>
@@ -5137,6 +5157,7 @@ import {
                                 <div id="tm_sessions_rows"></div>
                                 <div id="tm_sessions_foot">
                                     <div id="tm_sessions_hint">Sign out a session to free a slot for a new sign-in.</div>
+                                    <button type="button" id="tm_sess_hide_multioff" title="Stop showing this when multi-session support is off — the session counter still appears whenever AWS lists sessions" style="display: none;">Don't show again</button>
                                     <button type="button" id="tm_sess_signout_idle" title="Sign out of every session that has no console tab open — needs a second click to confirm" style="display: none;">Sign out idle</button>
                                     <button type="button" id="tm_sess_signout_all" title="Sign out of every AWS console session and close their tabs — needs a second click to confirm">Sign out all sessions</button>
                                 </div>
@@ -5536,6 +5557,27 @@ import {
         body.tm_theme_dark #tm_sess_signout_all { background: #232830 !important; }
         body.tm_theme_dark #tm_sess_signout_all.tm_confirm_del { background: #c0392b !important; color: #fff !important; }
         #tm_sessions_empty { font-size: 13px !important; color: #8a9199 !important; padding: 10px 0 !important; }
+        /* Multi-session off: nothing to count, so the chip turns into a pointer
+           to the fix — informational blue, not the warn/full alarm colours. */
+        #tm_sessions_pill.tm_sessions_info {
+            border-color: #0073bb !important; background: #eef6fb !important; color: #0b4f7c !important;
+        }
+        #tm_sessions_multioff { font-size: 13px !important; line-height: 1.55 !important; color: #16191f !important; padding: 12px 2px 4px !important; max-width: 760px !important; }
+        #tm_sessions_multioff p { margin: 0 0 10px !important; }
+        #tm_sessions_multioff code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-size: 12px !important;
+            background: #f2f4f5 !important; border-radius: 3px !important; padding: 1px 5px !important;
+        }
+        #tm_sess_hide_multioff {
+            border: 1px solid #ccc !important; color: #545b64 !important; background: #fff !important;
+            border-radius: 4px !important; padding: 6px 12px !important; font-size: 12px !important;
+            cursor: pointer !important; white-space: nowrap !important;
+        }
+        #tm_sess_hide_multioff:hover { border-color: #8a9199 !important; color: #16191f !important; }
+        body.tm_theme_dark #tm_sessions_pill.tm_sessions_info { background: #1d2c3a !important; border-color: #2f6690 !important; color: #9cc9ea !important; }
+        body.tm_theme_dark #tm_sessions_multioff { color: #e9ecef !important; }
+        body.tm_theme_dark #tm_sessions_multioff code { background: #2f353d !important; }
+        body.tm_theme_dark #tm_sess_hide_multioff { background: #232830 !important; border-color: #3a4148 !important; color: #c7ccd1 !important; }
         body.tm_theme_dark #tm_sessions_pill { background: #2a2f36 !important; border-color: #3a4148 !important; color: #c7ccd1 !important; }
         body.tm_theme_dark #tm_sessions_pill.tm_sessions_warn { background: #3a3320 !important; border-color: #7a5b12 !important; color: #f0c36d !important; }
         body.tm_theme_dark #tm_sessions_pill.tm_sessions_full { background: #3d2422 !important; border-color: #8a2d24 !important; color: #e8a49c !important; }
@@ -7673,6 +7715,15 @@ import {
     closeSessionsPopover();
   });
 
+  $("body").on("click", "#tm_sess_hide_multioff", function (e) {
+    e.preventDefault();
+    multiSessionHintHiddenCache = true;
+    StorageManager.saveMultiSessionHintHidden(true);
+    leaveMultiSessionOff();
+    closeSessionsPopover();
+    showToast("Hidden — the session counter still appears whenever AWS lists your sessions.", "success", CONFIG.TOAST_DURATION);
+  });
+
   // Two-step confirm, matching shortcut chips, jump rows and tag pills — one
   // stray click must not drop a session someone is working in.
   $("body").on("click", ".tm_sess_del", function (e) {
@@ -8721,12 +8772,32 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     disarmConfirmDelete();
     // The panel may have emptied while open (last ✕, or sign-out-all) — it
     // stays up for the explicit close, and only now does the section go.
-    if (!sessionsCache.length) $("#tm_sessions_section").hide();
+    if (!sessionsCache.length && !sessionsMultiOff) $("#tm_sessions_section").hide();
   };
 
   const renderSessionsRows = () => {
     const $rows = $("#tm_sessions_rows");
     if (!$rows.length) return;
+    if (sessionsMultiOff) {
+      const host = `${GeneralSettingsManager.region()}.console.aws.amazon.com`;
+      $rows.html(
+        `<div id="tm_sessions_multioff">` +
+          `<p>Your console tabs are on plain addresses like <code>${escapeHtml(host)}</code>, with no account number in front. ` +
+          `That means AWS multi-session support is off in this browser: AWS keeps one console session at a time, ` +
+          `each sign-in replaces the last, and there are no sessions to list here.</p>` +
+          `<p>With it on you can be signed in to up to five roles at once, and Console Hopper counts your sessions, ` +
+          `opens roles you're already signed in to, and makes room when a Launch Set needs it.</p>` +
+          `<p><b>To turn it on:</b> in any AWS console tab, choose your account name at the top right, then ` +
+          `<b>Turn on multi-session</b>. Your sessions show here once AWS lists them.</p>` +
+        `</div>`
+      );
+      $("#tm_sess_signout_all").hide();
+      $("#tm_sess_signout_idle").hide();
+      $("#tm_sess_hide_multioff").show();
+      $("#tm_sessions_hint").text("Multi-session support is set per browser.");
+      return;
+    }
+    $("#tm_sess_hide_multioff").hide();
     if (!sessionsCache.length) {
       $rows.html(`<div id="tm_sessions_empty">No active AWS console sessions.</div>`);
       $("#tm_sess_signout_all").hide();
@@ -8810,6 +8881,25 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     $rows.html(header + body);
   };
 
+  // The chip and panel for "multi-session support is off": no count (there is
+  // nothing AWS will list), just what it means and how to turn it on.
+  const showMultiSessionOff = () => {
+    sessionsMultiOff = true;
+    $("#tm_sessions_pill_text").text("Multi-session is off");
+    $("#tm_sessions_pill")
+      .removeClass("tm_sessions_warn tm_sessions_full")
+      .addClass("tm_sessions_info")
+      .attr("title", "AWS multi-session support is off, so there are no sessions to count — click for how to turn it on");
+    $("#tm_sessions_title").text("AWS multi-session support is off");
+    renderSessionsRows();
+    $("#tm_sessions_section").show();
+  };
+  const leaveMultiSessionOff = () => {
+    if (!sessionsMultiOff) return;
+    sessionsMultiOff = false;
+    $("#tm_sessions_pill").removeClass("tm_sessions_info").attr("title", SESSIONS_PILL_TITLE);
+  };
+
   // Pull the live session set and repaint the chip. Silent on failure (signed
   // out, or AWS moved the endpoint) — a wrong count is worse than no count.
   const refreshSessions = ({ keepOpen = false } = {}) => {
@@ -8820,11 +8910,24 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         { type: "hop_list_sessions", region: GeneralSettingsManager.region() },
         (res) => {
           // lastError must be read, or Chrome logs an unchecked-error warning.
-          if (chrome.runtime.lastError || !res || !res.ok) {
+          const failed = !!chrome.runtime.lastError || !res || !res.ok;
+          // AWS listed nothing, yet console tabs are open on plain hosts:
+          // multi-session support is off. Say so rather than show nothing.
+          const multiOff =
+            !!res && Number(res.plainTabs) > 0 && !multiSessionHintHiddenCache &&
+            (failed || !Array.isArray(res.sessions) || !res.sessions.length);
+          if (failed) {
+            if (multiOff) {
+              showMultiSessionOff();
+              return;
+            }
             // While the panel is open, a transient read failure must not make
             // it vanish under the pointer — stale-but-visible beats the
             // fall-through click. Hidden is fine when it's closed anyway.
-            if (!sessionsPopoverOpen) $section.hide();
+            if (!sessionsPopoverOpen) {
+              leaveMultiSessionOff();
+              $section.hide();
+            }
             return;
           }
           sessionsCache = Array.isArray(res.sessions) ? res.sessions : [];
@@ -8832,6 +8935,11 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           sessionsKnown = true;
           markLiveRows();
           if (setPreview) renderSetBar(LaunchSetsManager.find(setPreview.id));
+          if (multiOff) {
+            showMultiSessionOff();
+            return;
+          }
+          leaveMultiSessionOff();
           if (!sessionsCache.length && !sessionsPopoverOpen) {
             $section.hide();
             return;
@@ -11119,6 +11227,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
         [SK.SIGNIN_CONFIRM_ROLE_KEYWORDS]: isStringList,
         [SK.SIGNIN_CONFIRM_TYPE_IDS]:      isStringList,
         [SK.WELCOME_SEEN]: (v) => typeof v === "boolean",
+        [SK.MULTISESSION_HINT_HIDDEN]: (v) => typeof v === "boolean",
         [SK.START_VIEW]: (v) =>
           !!v && typeof v === "object" && !Array.isArray(v) &&
           !!v.filters && typeof v.filters === "object" && !Array.isArray(v.filters) &&

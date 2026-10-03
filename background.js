@@ -563,15 +563,46 @@ async function signOutAwsSession(region, differentiator) {
   return true;
 }
 
+// Console tabs on a host with no session prefix: "{region}.console.aws.amazon.com"
+// rather than "{account}-{id}.{region}.console.aws.amazon.com". With AWS
+// multi-session support on, a signed-in console tab always has the prefix, so
+// these mean it's off. The bare console.aws.amazon.com is left out: it's
+// AWS's landing page either way (and where multi-session is switched on/off).
+async function countPlainConsoleTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://*.console.aws.amazon.com/*" });
+    return tabs.filter((t) => {
+      let host = "";
+      try {
+        host = new URL(t.url).hostname;
+      } catch {
+        return false;
+      }
+      return host !== "console.aws.amazon.com" && !/^\d{12}-/.test(host);
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "hop_list_sessions") return;
+  // plainTabs only matters when AWS lists nothing — that's when the picker
+  // explains multi-session is off instead of showing no count at all.
   listAwsSessions(message.region)
-    .then((sessions) =>
-      sendResponse({ ok: true, sessions, limit: AWS_SESSION_LIMIT })
+    .then(async (sessions) =>
+      sendResponse({
+        ok: true,
+        sessions,
+        limit: AWS_SESSION_LIMIT,
+        plainTabs: sessions.length ? 0 : await countPlainConsoleTabs(),
+      })
     )
     // Not signed in at all, or AWS changed the endpoint — callers treat this as
     // "unknown" and stay silent rather than guessing a count.
-    .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    .catch(async (err) =>
+      sendResponse({ ok: false, error: String(err), plainTabs: await countPlainConsoleTabs() })
+    );
   return true;
 });
 

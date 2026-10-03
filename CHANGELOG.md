@@ -3,6 +3,23 @@
 All notable changes to Console Hopper are listed here. Dates are in
 `YYYY-MM-DD`. Versions follow the value in `manifest.json`.
 
+## 1.8.1 — 2026-10-03
+
+### Added
+
+- **The sessions chip says when AWS multi-session support is off.** AWS
+  leaves it off until you turn it on, and while it's off there are no
+  sessions to list, so the chip used to stay hidden with no reason given.
+  Now, when AWS lists nothing and your console tabs are on plain addresses
+  (no account number in front), it reads **Multi-session is off**; click
+  it for what that means and how to turn it on (your account name at the
+  top right of any console tab → *Turn on multi-session*). **Don't show
+  again** hides it; the normal counter still appears once AWS lists
+  sessions.
+- README and store listing say that the session features (the counter,
+  **Open** on a signed-in role, making room for a set) need AWS
+  multi-session support.
+
 ## 1.8.0 — 2026-10-02
 
 ### Changed

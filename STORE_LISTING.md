@@ -40,6 +40,15 @@ gives every row a star, a service deep-link, and a one-click sign-in,
 and gives every open console tab a colour-coded favicon plus an
 account name in the title.
 
+NEW IN 1.8.1
+
+• Multi-session off? It says so — Console Hopper's session features
+(the session counter, Open on a role you're already signed in to,
+making room for a Launch Set) need AWS multi-session support, which
+AWS leaves off until you turn it on. When it's off, the counter reads
+"Multi-session is off" and shows how to turn it on, instead of showing
+nothing.
+
 NEW IN 1.8.0
 
 • Already signed in? It opens instead — a role you're already signed
@@ -218,7 +227,10 @@ when it started, how long it has left and how many tabs it still has
 open — and sign any one of them out to free a slot (its console tabs
 close with it), sign out every session that has no tab open, or sign
 out all of them. A jump and the hub it goes through show as one row.
-Session metadata only; cookie contents are never read.
+This needs AWS multi-session support, which is off until you turn it
+on (in any AWS console tab, your account name at the top right → Turn
+on multi-session); while it's off, the counter says so. Session
+metadata only; cookie contents are never read.
 
 • Clear AWS sessions
 One click signs you out of your AWS console sessions by clearing
@@ -561,6 +573,15 @@ own Region. Page content is neither read nor transmitted.
       for the new uses (open in a live session, mark ended groups, session
       list read on tab switch); PRIVACY.md updated 2 October 2026.
 - [ ] Reload the final 1.8.0 build; footer reads v1.8.0.
+- [x] 1.8.1: the sessions chip reads "Multi-session is off" (with how to
+      turn it on, and Don't show again) when AWS lists no sessions while
+      console tabs are on plain hosts; checked on the harness in light and
+      dark, through each transition (sessions appear, read fails, hidden).
+      No permission changes; the tabs justification gains one clause and
+      PRIVACY.md one sentence (3 October 2026).
+- [ ] Confirm live what sessions/v1/list returns with multi-session off
+      (fresh browser profile, one SAML sign-in).
+- [ ] Reload the final 1.8.1 build; footer reads v1.8.1.
 - [x] Five 1280×800 screenshots in `store-assets/`, still current for 1.8.0
       (it adds to the UI rather than changing what they show); reshot for 1.7.0
       (main with Sets column + one-line rows, Launch Sets panel, Edit set,
