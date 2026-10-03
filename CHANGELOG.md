@@ -20,6 +20,19 @@ All notable changes to Console Hopper are listed here. Dates are in
   **Open** on a signed-in role, making room for a set) need AWS
   multi-session support.
 
+### Fixed
+
+- Picking a landing service on a row shows its "… selected — click Sign
+  In" note again; the lookup behind it used a selector the picker's DOM
+  helper doesn't support, so it failed quietly.
+- Toasts that appear together stack instead of overlapping.
+- A jump destination saved from the Jump popover ("Save as a named
+  destination") shows as a ⤳ row straight away, not after the next reload.
+- Help & About: the Active AWS sessions section describes the panel as it
+  is (Sign out idle / all, Open on a signed-in role, a jump as one row)
+  and the multi-session requirement, and no longer mentions a "you"
+  marker the panel doesn't have.
+
 ## 1.8.0 — 2026-10-02
 
 ### Changed

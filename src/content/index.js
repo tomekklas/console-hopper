@@ -418,7 +418,14 @@ import {
     const toast = $(
       `<div class="tm_toast ${type}">${sanitizeInput(message)}</div>`
     );
-    $("body").append(toast);
+    // Toasts share one bottom-centre stack, newest at the bottom, so two that
+    // overlap in time sit one above the other instead of on top of each other.
+    let $stack = $("#tm_toasts");
+    if (!$stack.length) {
+      $("body").append('<div id="tm_toasts"></div>');
+      $stack = $("#tm_toasts");
+    }
+    $stack.append(toast);
     setTimeout(() => toast.fadeOut(500, () => toast.remove()), duration);
   };
 
@@ -6809,16 +6816,24 @@ import {
             border-color: #d39e00 !important;
         }
 
-        .tm_toast {
+        #tm_toasts {
             position: fixed !important;
             bottom: 40px !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
+            z-index: 10001 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            gap: 8px !important;
+            pointer-events: none !important;
+        }
+        .tm_toast {
             padding: 10px 20px !important;
             border-radius: 4px !important;
             color: #fff !important;
-            z-index: 10000 !important;
             font-size: 14px !important;
+            pointer-events: auto !important;
         }
 
         .tm_toast.success { background-color: #28a745 !important; }
@@ -7516,7 +7531,7 @@ import {
     await ServicesManager.saveLastService(roleArn, servicePath);
 
     if (servicePath) {
-      const serviceName = $dropdown.find("option:selected").text();
+      const serviceName = $dropdown.find("option:checked").text();
       showToast(`${serviceName} selected - click Sign In`, "info", CONFIG.TOAST_DURATION_SHORT);
     }
   });
@@ -8460,7 +8475,8 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
     const svc = isSafeServicePath(svcRaw) ? svcRaw : "";
 
     // Popover "save as a named destination": mint or refresh the saved entry
-    // so it shows up as a ⤳ row in the listing from the next load on. Only
+    // so it shows up as a ⤳ row in the listing (at once — a new-tab jump
+    // leaves this page open). Only
     // for jumps typed into the popover form — row and recents clicks aren't
     // form submissions, and must not act on a leftover tick. Patch only what
     // the form actually holds: an empty label or unpicked region must not
@@ -8470,6 +8486,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
       if (label) patch.label = label;
       if (isValidRegionCode(pickedRegion)) patch.region = pickedRegion;
       await JumpDestinationsManager.upsert(dest, profile.name, patch);
+      renderJumpDestinationRows();
     }
 
     // A ⤳ row's dropdown picks become that row's memory — but only now, past
@@ -10383,7 +10400,7 @@ IAM: &quot;iam/home&quot;">${currentServices}</textarea>
           ${sectionHTML("Jump to account (role chaining)",
             `For accounts you can only reach by <strong>assuming a role from a hub</strong>. Configure your orgs once via <em>Jump Profiles</em> in the side menu (one per line: <code>Org name | hub account id | role to assume | region</code>; the region is optional, and the hub may name its own role as <code>id/HubRole</code> when that account has more than one) — a <strong>⤳ Jump to account</strong> button then appears in the search column. Pick the org, type the 12-digit destination account, choose the region to land in (defaults to your General Settings region, and remembers your last jump), optionally add a session label, and Jump: Console Hopper signs into the hub and opens AWS's Switch Role pre-filled — one click there and you're in, in the region you picked rather than whichever one AWS defaults that account to. The new console tab is titled with your session label, and your last jumps are one click away in the popover (<strong>✕</strong> forgets one). The popover stays deliberately small — a quick way in, with <em>Save as a named destination</em> to keep a place; saved destinations live as <strong>⤳ rows in the listing</strong> and are curated under <em>Jump Destinations</em>. When you have more than one console session open, AWS interrupts the jump to ask which one to switch from — and it doesn't reliably pre-select the right one, which is what causes “the selected session doesn't have permission to switch to that role”. Console Hopper picks the hub session and submits the pre-filled form for you, so a jump stays one click. It only does this during a jump you started, only when exactly one session matches the hub, and only for the destination you typed; anything ambiguous is left untouched for you to decide. Note: the hub must be in your current role list, the hub→target trust must already exist in AWS, and chained sessions are capped at 1 hour by AWS. Save the places you jump to often as <strong>Jump Destinations</strong> (side menu, or the <em>Save as a named destination</em> tick in the popover) — each becomes a <strong>⤳ row in the listing</strong>, searchable, taggable and favouritable like any row, with its own landing Service and Region picks; a <em>Source</em> filter row and <code>is:jump</code> in search show only them, and a row greys out when its hub role isn't in today's list.`)}
           ${sectionHTML("Active AWS sessions",
-            `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open. <strong>✕</strong> signs an individual session out (click twice to confirm) so you can free a slot without leaving the picker — the session you signed in with is marked <em>you</em> and can't be closed from here. <em>Clear AWS sessions</em> in the side menu still signs them all out at once. Console Hopper only reads session metadata — never cookie contents.`)}
+            `AWS allows <strong>5 concurrent console sessions</strong> per browser profile, and normally only tells you once you've hit the wall. A counter sits at the bottom of the right column — it turns amber with one slot left and red when you're full. Click it for the full list, oldest first: the session label you gave the jump, account and role, which <strong>region</strong> and <strong>tab group</strong> its tabs are in, when it started, <strong>how long until it expires</strong>, and how many tabs it still has open; a jump and the hub it goes through are one row. <strong>✕</strong> signs a session out and closes its console tabs (one with tabs open asks for a second click), so you can free a slot without leaving the picker; <strong>Sign out idle</strong> signs out every session with no tab open, and <strong>Sign out all sessions</strong> every one. A role you're already signed in to shows <strong>Open</strong> instead of Sign In and opens that session rather than signing in again. All of this needs <strong>AWS multi-session support</strong>, which AWS leaves off until you turn it on: in any AWS console tab, choose your account name at the top right, then <em>Turn on multi-session support</em>. While it's off, the counter says so. Console Hopper only reads session metadata — never cookie contents.`)}
           ${sectionHTML("Rename accounts",
             `Give specific accounts a friendlier name via <em>Account Names</em> (one per line, e.g. <code>123456789012: Prod Logging</code>). The custom name <strong>replaces</strong> the AWS account name in the list and is used for filtering, grouping and tab titles. Saving updates the list immediately. Tip: click the <strong>account-ID button</strong> on any row to copy the 12-digit id.`)}
           ${sectionHTML("Sign in your way",
